@@ -8,24 +8,18 @@ runs:
   using: "composite"
   steps:
     - name: Format
-      uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: --all -- --check
-
-    - name: Install cargo-audit
-      uses: actions-rs/cargo@v1
-      with:
-        command: install
-        args: cargo-audit
+      shell: bash
+      run: |
+        cargo fmt --all -- --check
 
     - name: Audit dependencies
-      uses: actions-rs/cargo@v1
-      with:
-        command: audit
+      shell: bash
+      run: |
+        cargo install cargo-audit
+        cargo audit
 
     - name: Clippy
-      uses: actions-rs/cargo@v1
-      with:
-        command: clippy
-        args: --all-targets -- -D warnings
+      shell: bash
+      run: |
+        cargo install cargo-clippy
+        cargo clippy --all-targets -- -D warnings
