@@ -21,5 +21,4 @@ runs:
     - name: Clippy
       shell: bash
       run: |
-        cargo install cargo-clippy
         cargo clippy --all-targets -- -D warnings
