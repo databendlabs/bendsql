@@ -37,12 +37,11 @@ jobs:
           curl https://sh.rustup.rs -sSf | sh -s -- -y
       - name: Test
         run: |
-          cargo test --all-features -- --show-output
+          cargo test --all-features --lib -- --show-output
 
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
       - run: |
-          cd tests
-          make docker-compose
+          make -C tests
