@@ -37,27 +37,8 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    services:
-      databend:
-        image: datafuselabs/databend
-        env:
-          QUERY_DEFAULT_USER: databend
-          QUERY_DEFAULT_PASSWORD: databend
-          MINIO_ENABLED: true
-        ports:
-          - 8000:8000
-          - 9000:9000
     steps:
       - uses: actions/checkout@v3
-      - name: Verify Service Running
-        run: |
-          cid=$(docker ps -a | grep databend | cut -d' ' -f1)
-          docker logs ${cid}
-          curl -v http://localhost:8000/v1/health
-      - name: Test
-        uses: actions-rs/cargo@v1
-        env:
-          TEST_DATABEND_DSN: "databend://databend:databend@localhost:8000/default?sslmode=disable"
-        with:
-          command: test
-          args: --all-features -- --show-output
+      - run: |
+          cd tests
+          make docker-compose
