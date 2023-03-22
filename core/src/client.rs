@@ -47,7 +47,7 @@ impl fmt::Display for StageLocation {
 impl TryFrom<&str> for StageLocation {
     type Error = anyhow::Error;
     fn try_from(s: &str) -> Result<Self> {
-        if !s.starts_with("@") {
+        if !s.starts_with('@') {
             return Err(anyhow!("Invalid stage location: {}", s));
         }
         let mut parts = s.splitn(2, '/');

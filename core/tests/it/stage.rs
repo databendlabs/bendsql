@@ -33,7 +33,7 @@ async fn upload_to_stage(client: APIClient) {
     file.read_to_end(&mut buf).unwrap();
     let path = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
     let stage_location = format!("@~/{}/sample.csv", path);
-    let _ = client
+    client
         .upload_to_stage(stage_location.as_str(), bytes::Bytes::from(buf))
         .await
         .unwrap();
