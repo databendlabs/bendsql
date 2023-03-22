@@ -14,8 +14,9 @@
 
 use std::io::Read;
 
-use crate::common::DEFAULT_DSN;
 use databend_client::APIClient;
+
+use crate::common::DEFAULT_DSN;
 
 fn get_dsn(presigned: bool) -> String {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
