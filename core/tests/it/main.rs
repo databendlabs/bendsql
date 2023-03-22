@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+static DEFAULT_DSN: &str = "databend://root:@localhost:8000/default?sslmode=disable";
+
 #[tokio::test]
 async fn simple_select() {
-    let dsn = option_env!("TEST_DATABEND_DSN")
-        .unwrap_or("databend://root:@localhost:8000/default?sslmode=disable");
+    let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let client = databend_client::APIClient::from_dsn(dsn).unwrap();
     let resp = client.query("select 15532".into()).await.unwrap();
     assert_eq!(resp.data.len(), 1);
