@@ -150,7 +150,7 @@ impl APIClient {
         Ok(client)
     }
 
-    pub async fn query(&self, sql: String) -> Result<QueryResponse> {
+    pub async fn query(&self, sql: &str) -> Result<QueryResponse> {
         let req = QueryRequest::new(sql)
             .with_pagination(self.make_pagination())
             .with_session(self.make_session());
@@ -300,7 +300,7 @@ impl APIClient {
 
     async fn get_presigned_url(&self, stage_location: &str) -> Result<PresignedResponse> {
         let resp = self
-            .query(format!("PRESIGN UPLOAD {}", stage_location))
+            .query(format!("PRESIGN UPLOAD {}", stage_location).as_str())
             .await?;
         if resp.data.len() != 1 {
             return Err(anyhow!("Empty response from server for presigned request"));
