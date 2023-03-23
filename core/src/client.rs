@@ -351,7 +351,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_parse_dsn() -> Result<()> {
+    fn parse_dsn() -> Result<()> {
         let dsn = "databend://username:password@app.databend.com/test?wait_time_secs=10&max_rows_in_buffer=5000000&max_rows_per_page=10000&warehouse=wh&sslmode=disable";
         let client = APIClient::from_dsn(dsn)?;
         assert_eq!(client.host, "app.databend.com");
@@ -364,6 +364,23 @@ mod test {
         assert_eq!(client.max_rows_per_page, Some(10000));
         assert_eq!(client.tenant, None);
         assert_eq!(client.warehouse, Some("wh".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_stage() -> Result<()> {
+        let location = "@stage_name/path/to/file";
+        let stage_location = StageLocation::try_from(location)?;
+        assert_eq!(stage_location.name, "stage_name");
+        assert_eq!(stage_location.path, "path/to/file");
+        Ok(())
+    }
+
+    #[test]
+    fn parse_stage_fail() -> Result<()> {
+        let location = "stage_name/path/to/file";
+        let stage_location = StageLocation::try_from(location);
+        assert_eq!(stage_location.is_err(), true);
         Ok(())
     }
 }

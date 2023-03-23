@@ -89,7 +89,7 @@ mod test {
     use anyhow::Result;
 
     #[test]
-    fn test_build_request() -> Result<()> {
+    fn build_request() -> Result<()> {
         let req = QueryRequest::new("select 1".to_string())
             .with_session(Some(SessionConfig {
                 database: Some("default".to_string()),
