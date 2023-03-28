@@ -9,10 +9,10 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Install Rust (Stable)
-      shell: bash
-      run:
-        curl https://sh.rustup.rs -sSf | sh -s -- -y
+    # - name: Install Rust (Stable)
+    #   shell: bash
+    #   run:
+    #     curl https://sh.rustup.rs -sSf | sh -s -- -y
     - name: Cache Cargo
       uses: actions/cache@v3
       with:
