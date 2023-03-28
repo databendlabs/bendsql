@@ -14,9 +14,8 @@
 
 use anyhow::{anyhow, Error, Result};
 use databend_client::response::SchemaField;
-use enum_as_inner::EnumAsInner;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumberDataType {
     UInt8,
     UInt16,
@@ -30,13 +29,13 @@ pub enum NumberDataType {
     Float64,
 }
 
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+// #[derive(Debug, Clone, PartialEq, Eq)]
 // pub struct DecimalSize {
 //     pub precision: u8,
 //     pub scale: u8,
 // }
 
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner)]
+// #[derive(Debug, Clone, PartialEq, Eq)]
 // pub enum DecimalDataType {
 //     Decimal128(DecimalSize),
 //     Decimal256(DecimalSize),

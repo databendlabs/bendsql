@@ -14,11 +14,10 @@
 
 use anyhow::{anyhow, Error, Result};
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
-use enum_as_inner::EnumAsInner;
 
 use crate::schema::{DataType, NumberDataType};
 
-#[derive(Clone, Debug, PartialEq, EnumAsInner)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum NumberValue {
     Int8(i8),
     Int16(i16),
