@@ -41,5 +41,5 @@ services:
 
 volumes:
   rustup:
-  cargo:
+  cargo_registry:
   target:
