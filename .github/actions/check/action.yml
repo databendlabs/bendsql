@@ -18,7 +18,7 @@ runs:
     - name: Audit dependencies
       shell: bash
       run: |
-        cargo install cargo-audit
+        # cargo install cargo-audit
         cargo audit
 
     - name: Clippy
