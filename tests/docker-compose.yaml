@@ -18,23 +18,28 @@ services:
       - minio
     healthcheck:
       test: "curl -f localhost:8080/v1/health || exit 1"
-  test:
+  prepare:
     image: rust
-    command: cargo test --target-dir /target --test *
-    working_dir: /workdir
+    command: rustup default stable
+    working_dir: /workspace
     environment:
-      - RUST_BACKTRACE=1
-      - TEST_DATABEND_DSN=databend://databend:databend@databend:8000/default?sslmode=disable
-      # - HTTPS_PROXY=http://172.24.0.1:7890
+      - RUSTUP_HOME=/workspace/.integration/rustup
+      - CARGO_HOME=/workspace/.integration/cargo
     volumes:
-      - ../:/workdir
-      - cargo_registry:/usr/local/cargo/registry
-      - rustup:/usr/local/rustup
-      - target:/target
+      - ../:/workspace
     depends_on:
       - databend
-
-volumes:
-  cargo_registry:
-  rustup:
-  target:
+  test:
+    image: rust
+    command: cargo test --target-dir .integration/target --test *
+    working_dir: /workspace
+    environment:
+      - RUST_BACKTRACE=1
+      - RUSTUP_HOME=/workspace/.integration/rustup
+      - CARGO_HOME=/workspace/.integration/cargo
+      - TEST_DATABEND_DSN=databend://databend:databend@databend:8000/default?sslmode=disable
+      # - HTTPS_PROXY=http://172.27.0.1:7890
+    volumes:
+      - ../:/workspace
+    depends_on:
+      - prepare
