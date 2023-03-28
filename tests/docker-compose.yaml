@@ -33,7 +33,7 @@ services:
     volumes:
       - ../:/workspace
       - rustup:/usr/local/rustup
-      - cargo_registry:/usr/local/cargo/registry
+      - ${HOME}/.cargo/registry:/usr/local/cargo/registry
       - target:/target
     depends_on:
       databend:
@@ -41,5 +41,4 @@ services:
 
 volumes:
   rustup:
-  cargo_registry:
   target:
