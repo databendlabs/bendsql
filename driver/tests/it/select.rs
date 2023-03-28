@@ -39,7 +39,7 @@ async fn select_boolean() {
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (bool,) = row.try_into().unwrap();
-    assert_eq!(val, true);
+    assert!(val);
 }
 
 #[tokio::test]
