@@ -380,7 +380,7 @@ mod test {
     fn parse_stage_fail() -> Result<()> {
         let location = "stage_name/path/to/file";
         let stage_location = StageLocation::try_from(location);
-        assert_eq!(stage_location.is_err(), true);
+        assert!(stage_location.is_err());
         Ok(())
     }
 }

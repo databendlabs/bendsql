@@ -41,7 +41,7 @@ impl DatabencConnection {
     }
 
     async fn wait_for_data(&self, pre: QueryResponse) -> Result<QueryResponse> {
-        if pre.data.len() > 0 {
+        if !pre.data.is_empty() {
             return Ok(pre);
         }
         let mut result = pre;

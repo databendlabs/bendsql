@@ -90,10 +90,6 @@ impl TryFrom<SchemaFieldList> for Vec<DataType> {
     type Error = Error;
 
     fn try_from(fields: SchemaFieldList) -> Result<Self> {
-        fields
-            .0
-            .into_iter()
-            .map(|field| DataType::try_from(field))
-            .collect()
+        fields.0.into_iter().map(DataType::try_from).collect()
     }
 }

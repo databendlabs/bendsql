@@ -13,7 +13,6 @@
 // limitations under the License.
 
 mod conn;
-mod from_row;
 mod rows;
 mod schema;
 mod value;

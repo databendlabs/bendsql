@@ -72,3 +72,23 @@ impl TryFrom<Value> for String {
         }
     }
 }
+
+impl TryFrom<Value> for bool {
+    type Error = Error;
+    fn try_from(val: Value) -> Result<Self> {
+        match val {
+            Value::Boolean(b) => Ok(b),
+            _ => Err(anyhow!("Error converting value to bool")),
+        }
+    }
+}
+
+impl TryFrom<Value> for i8 {
+    type Error = Error;
+    fn try_from(val: Value) -> Result<Self> {
+        match val {
+            Value::Number(NumberValue::Int8(i)) => Ok(i),
+            _ => Err(anyhow!("Error converting value to i8")),
+        }
+    }
+}

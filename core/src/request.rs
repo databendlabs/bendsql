@@ -55,7 +55,7 @@ pub struct StageAttachmentConfig {
 }
 
 impl QueryRequest<'_> {
-    pub fn new<'a>(sql: &'a str) -> QueryRequest<'a> {
+    pub fn new(sql: &'_ str) -> QueryRequest {
         QueryRequest {
             session: None,
             sql,

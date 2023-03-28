@@ -20,9 +20,9 @@ use crate::common::DEFAULT_DSN;
 async fn simple_select() {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let conn = DatabencConnection::create(dsn).unwrap();
-    let row = conn.query_row("select 15532".into()).await.unwrap();
+    let row = conn.query_row("select 15532").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
-    let (val,): (String,) = row.into_typed().unwrap();
+    let (val,): (String,) = row.try_into().unwrap();
     assert_eq!(val, "15532");
 }
