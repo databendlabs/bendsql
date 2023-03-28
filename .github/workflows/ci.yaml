@@ -35,9 +35,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cache-key: build
-      - name: Test
-        run: |
-          cargo build
+      - run: cargo build
 
   unit:
     runs-on: ubuntu-latest
@@ -46,9 +44,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cache-key: unit
-      - name: Test
-        run: |
-          cargo test --all-features --lib -- --show-output
+      - run: cargo test --all-features --lib -- --show-output
 
   integration:
     runs-on: ubuntu-latest
@@ -57,5 +53,4 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cache-key: integration
-      - run: |
-          make -C tests
+      - run: make -C tests
