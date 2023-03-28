@@ -29,7 +29,6 @@ services:
     environment:
       - RUST_BACKTRACE=1
       - TEST_DATABEND_DSN=databend://databend:databend@databend:8000/default?sslmode=disable
-      # - HTTPS_PROXY=http://172.27.0.1:7890
     volumes:
       - ../:/workspace
       - rustup:/usr/local/rustup
