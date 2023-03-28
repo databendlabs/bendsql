@@ -3,4 +3,3 @@ target/
 Cargo.lock
 
 /tests/data
-/.integration

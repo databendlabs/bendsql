@@ -24,19 +24,22 @@ services:
       timeout: 1s
   test:
     image: rust
-    command: cargo test --target-dir .integration/target --test *
+    command: cargo test --target-dir /target --test *
     working_dir: /workspace
     environment:
       - RUST_BACKTRACE=1
-      - CARGO_HOME=/workspace/.integration/cargo
       - TEST_DATABEND_DSN=databend://databend:databend@databend:8000/default?sslmode=disable
       # - HTTPS_PROXY=http://172.27.0.1:7890
     volumes:
       - ../:/workspace
       - rustup:/usr/local/rustup
+      - cargo_registry:/usr/local/cargo/registry
+      - target:/target
     depends_on:
       databend:
         condition: service_healthy
 
 volumes:
   rustup:
+  cargo:
+  target:
