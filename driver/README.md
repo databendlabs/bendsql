@@ -30,6 +30,7 @@ conn.exec(&sql_insert).await.unwrap();
 let sql_select = "SELECT * FROM books;";
 let row = conn.query_row(&sql_select).await.unwrap();
 let (title,author,date): (String,String,i32) = row.try_into().unwrap();
+println!("{} {} {}", title, author, date);
 ```
 
 ### query iter
@@ -38,7 +39,7 @@ let (title,author,date): (String,String,i32) = row.try_into().unwrap();
 let sql_select = "SELECT * FROM books;";
 let mut rows = conn.query_iter(&sql_select).await.unwrap();
 while let Some(row) = rows.next().await {
-    let row = row.unwrap();
-    let (title,author,date): (String,String,chrono::NaiveDate) = row.try_into().unwrap();
+    let (title,author,date): (String,String,chrono::NaiveDate) = row.unwrap().try_into().unwrap();
+    println!("{} {} {}", title, author, date);
 }
 ```
