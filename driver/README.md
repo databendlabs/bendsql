@@ -12,7 +12,7 @@ Databend Driver for Rust
 
 ```rust
 let dsn = "databend://root:@localhost:8000/default?sslmode=disable";
-let conn = DatabendConnection::create(dsn).unwrap()
+let conn = DatabendConnection::create(dsn).unwrap();
 
 let sql_create = "CREATE TABLE books (
     title VARCHAR,
@@ -36,8 +36,8 @@ let (title,author,date): (String,String,NaiveDate) = row.try_into().unwrap();
 
 ```rust
 let sql_select = "SELECT * FROM books;";
-let mut iter = conn.query_iter(&sql_select).await.unwrap();
-while let Some(row) = iter.next().await {
+let mut rows = conn.query_iter(&sql_select).await.unwrap();
+while let Some(row) = rows.next().await {
     let row = row.unwrap();
     let (title,author,date): (String,String,NaiveDate) = row.try_into().unwrap();
 }
