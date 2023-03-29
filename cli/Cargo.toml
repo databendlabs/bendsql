@@ -9,8 +9,8 @@ edition = "2021"
 arrow = "35.0.0"
 arrow-cast = { version = "35.0.0", features = ["prettyprint"] }
 arrow-flight = { version = "35.0.0", features = ["flight-sql-experimental"] }
+atty = "0.2.14"
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
-isatty = "0.1.9"
 rustyline = "11.0.0"
 shlex = "1.1.0"
 tokio = { version = "1.26", features = [
