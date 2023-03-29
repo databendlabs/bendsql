@@ -29,8 +29,7 @@ conn.exec(sql_insert).await.unwrap();
 ### query row
 
 ```rust
-let sql_select = "SELECT * FROM books;";
-let row = conn.query_row(sql_select).await.unwrap();
+let row = conn.query_row("SELECT * FROM books;").await.unwrap();
 let (title,author,date): (String,String,i32) = row.try_into().unwrap();
 println!("{} {} {}", title, author, date);
 ```
@@ -38,8 +37,7 @@ println!("{} {} {}", title, author, date);
 ### query iter
 
 ```rust
-let sql_select = "SELECT * FROM books;";
-let mut rows = conn.query_iter(sql_select).await.unwrap();
+let mut rows = conn.query_iter("SELECT * FROM books;").await.unwrap();
 while let Some(row) = rows.next().await {
     let (title,author,date): (String,String,chrono::NaiveDate) = row.unwrap().try_into().unwrap();
     println!("{} {} {}", title, author, date);
