@@ -11,6 +11,8 @@ Databend Driver for Rust
 ### exec
 
 ```rust
+use databend_driver::DatabendConnection;
+
 let dsn = "databend://root:@localhost:8000/default?sslmode=disable";
 let conn = DatabendConnection::create(dsn).unwrap();
 
