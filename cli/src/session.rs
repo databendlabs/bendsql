@@ -146,7 +146,7 @@ impl Session {
         let ticket = flight_info.endpoint[0]
             .ticket
             .as_ref()
-            .ok_or_else(|| ArrowError::IoError("Ticket is emtpy".to_string()))?;
+            .ok_or_else(|| ArrowError::IoError("Ticket is empty".to_string()))?;
 
         let flight_data = self.client.do_get(ticket.clone()).await?;
         let flight_data: Vec<FlightData> = flight_data.try_collect().await.unwrap();
