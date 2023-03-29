@@ -21,16 +21,16 @@ let sql_create = "CREATE TABLE books (
     author VARCHAR,
     date Date
 );";
-conn.exec(&sql_create).await.unwrap();
+conn.exec(sql_create).await.unwrap();
 let sql_insert = "INSERT INTO books VALUES ('The Little Prince', 'Antoine de Saint-Exupéry', '1943-04-06');";
-conn.exec(&sql_insert).await.unwrap();
+conn.exec(sql_insert).await.unwrap();
 ```
 
 ### query row
 
 ```rust
 let sql_select = "SELECT * FROM books;";
-let row = conn.query_row(&sql_select).await.unwrap();
+let row = conn.query_row(sql_select).await.unwrap();
 let (title,author,date): (String,String,i32) = row.try_into().unwrap();
 println!("{} {} {}", title, author, date);
 ```
@@ -39,7 +39,7 @@ println!("{} {} {}", title, author, date);
 
 ```rust
 let sql_select = "SELECT * FROM books;";
-let mut rows = conn.query_iter(&sql_select).await.unwrap();
+let mut rows = conn.query_iter(sql_select).await.unwrap();
 while let Some(row) = rows.next().await {
     let (title,author,date): (String,String,chrono::NaiveDate) = row.unwrap().try_into().unwrap();
     println!("{} {} {}", title, author, date);
