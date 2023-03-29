@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow::{error::ArrowError, record_batch::RecordBatch};
+use arrow::{datatypes::DataType, error::ArrowError, record_batch::RecordBatch};
 use comfy_table::{Cell, CellAlignment, Table};
 
 use arrow_cast::display::{ArrayFormatter, FormatOptions};
@@ -43,8 +43,12 @@ fn create_table(
 
     let mut header = Vec::new();
     for field in schema.fields() {
-        let cell = Cell::new(format!("{}\n{}", field.name(), field.data_type()))
-            .set_alignment(CellAlignment::Center);
+        let cell = Cell::new(format!(
+            "{}\n{}",
+            field.name(),
+            normalize_datatype(field.data_type())
+        ))
+        .set_alignment(CellAlignment::Center);
         header.push(cell);
     }
     table.set_header(header);
@@ -74,28 +78,10 @@ fn create_table(
     Ok(table)
 }
 
-// fn create_column(
-//     field: &str,
-//     columns: &[ArrayRef],
-//     options: &FormatOptions,
-// ) -> Result<Table, ArrowError> {
-//     let mut table = Table::new();
-//     table.load_preset("||--+-++|    ++++++");
-
-//     if columns.is_empty() {
-//         return Ok(table);
-//     }
-
-//     let header = vec![Cell::new(field)];
-//     table.set_header(header);
-
-//     for col in columns {
-//         let formatter = ArrayFormatter::try_new(col.as_ref(), options)?;
-//         for row in 0..col.len() {
-//             let cells = vec![Cell::new(formatter.value(row))];
-//             table.add_row(cells);
-//         }
-//     }
-
-//     Ok(table)
-// }
+// LargeUtf8 --> String
+fn normalize_datatype(ty: &DataType) -> String {
+    match ty {
+        DataType::LargeUtf8 => "String".to_owned(),
+        _ => format!("{ty}"),
+    }
+}
