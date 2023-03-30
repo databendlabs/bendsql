@@ -163,7 +163,7 @@ impl Session {
             .collect::<Result<Vec<RecordBatch>, ArrowError>>()?;
 
         if is_repl {
-            print_batches(QueryKind::from(query), batches.as_slice())?;
+            print_batches(batches.as_slice())?;
 
             println!();
 
@@ -235,6 +235,7 @@ fn normalize_record_batch(batch: &RecordBatch) -> Result<RecordBatch, ArrowError
     RecordBatch::try_new(Arc::new(schema), columns)
 }
 
+#[allow(dead_code)]
 pub enum QueryKind {
     Query,
     Explain,

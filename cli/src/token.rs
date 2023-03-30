@@ -37,7 +37,7 @@ impl<'a> Token<'a> {
         Token {
             source,
             kind: TokenKind::EOI,
-            span: (source.len()..source.len()).into(),
+            span: (source.len()..source.len()),
         }
     }
 
@@ -79,7 +79,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             Some(kind) => Some(Ok(Token {
                 source: self.source,
                 kind,
-                span: self.lexer.span().into(),
+                span: self.lexer.span(),
             })),
             None if !self.eoi => {
                 self.eoi = true;

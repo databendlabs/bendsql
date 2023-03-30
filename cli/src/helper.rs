@@ -27,11 +27,9 @@ use rustyline::Context;
 use rustyline::Helper;
 use rustyline::Result;
 
-use crate::token;
 use crate::token::all_reserved_keywords;
 use crate::token::tokenize_sql;
 use crate::token::TokenKind;
-use crate::token::Tokenizer;
 
 pub struct CliHelper {
     completer: FilenameCompleter,
@@ -50,26 +48,23 @@ impl Highlighter for CliHelper {
         let tokens = tokenize_sql(line);
         let mut line = line.to_owned();
 
-        match tokens {
-            Ok(tokens) => {
-                for token in tokens.iter().rev() {
-                    if TokenKind::is_keyword(&token.kind)
-                        || TokenKind::is_reserved_ident(&token.kind, false)
-                        || TokenKind::is_reserved_function_name(&token.kind)
-                    {
-                        line.replace_range(
-                            token.span.clone(),
-                            &format!("\x1b[1;32m{}\x1b[0m", token.text()),
-                        );
-                    } else if TokenKind::is_literal(&token.kind) {
-                        line.replace_range(
-                            token.span.clone(),
-                            &format!("\x1b[1;33m{}\x1b[0m", token.text()),
-                        );
-                    }
+        if let Ok(tokens) = tokens {
+            for token in tokens.iter().rev() {
+                if TokenKind::is_keyword(&token.kind)
+                    || TokenKind::is_reserved_ident(&token.kind, false)
+                    || TokenKind::is_reserved_function_name(&token.kind)
+                {
+                    line.replace_range(
+                        token.span.clone(),
+                        &format!("\x1b[1;32m{}\x1b[0m", token.text()),
+                    );
+                } else if TokenKind::is_literal(&token.kind) {
+                    line.replace_range(
+                        token.span.clone(),
+                        &format!("\x1b[1;33m{}\x1b[0m", token.text()),
+                    );
                 }
             }
-            _ => {}
         }
 
         Cow::Owned(line)
