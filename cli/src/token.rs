@@ -995,7 +995,6 @@ impl TokenKind {
             // | TokenKind::IFNULL
             | TokenKind::IN
             // | TokenKind::INITIALLY
-            // | TokenKind::INOUT
             | TokenKind::INT
             | TokenKind::INTEGER
             | TokenKind::INTERVAL
