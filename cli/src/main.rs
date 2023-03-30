@@ -15,6 +15,7 @@
 mod display;
 mod helper;
 mod session;
+mod token;
 
 use std::time::Duration;
 
