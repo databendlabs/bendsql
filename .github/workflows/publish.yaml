@@ -14,5 +14,5 @@ jobs:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
     - uses: actions/checkout@v3
-    - name: Publish Crates
-      run: cargo release publish
+    - run: cargo install cargo-release
+    - run: cargo release publish
