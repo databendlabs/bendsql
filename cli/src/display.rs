@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 use tonic::Streaming;
 
-use indicatif::{ProgressBar, ProgressState, ProgressStyle};
+use indicatif::{HumanBytes, ProgressBar, ProgressState, ProgressStyle};
 
 #[async_trait::async_trait]
 pub trait ChunkDisplay {
@@ -63,7 +63,7 @@ impl ReplDisplay {
 impl ChunkDisplay for ReplDisplay {
     async fn display(&mut self) -> Result<(), ArrowError> {
         let mut batches = Vec::new();
-        let mut progress: ProgressValue;
+        let mut progress = ProgressValue::default();
 
         while let Some(datum) = self.stream.next().await {
             match datum {
@@ -71,39 +71,28 @@ impl ChunkDisplay for ReplDisplay {
                     if datum.app_metadata[..] == [0x01] {
                         progress = serde_json::from_slice(&datum.data_body)
                             .map_err(|err| ArrowError::ExternalError(Box::new(err)))?;
-
-                        match self.progress.as_mut() {
-                            Some(pb) => {
-                                pb.set_position(progress.read_bytes as u64);
-                                pb.set_message(format!(
-                                    "{}/{} ({} rows/s)",
-                                    humanize_count(progress.read_rows as f64),
-                                    humanize_count(progress.total_rows as f64),
-                                    humanize_count(
-                                        progress.read_rows as f64 / pb.elapsed().as_secs_f64()
-                                    )
-                                ));
-                            }
-                            None => {
-                                let pb = ProgressBar::new(progress.total_bytes as u64);
-                                pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] {bytes}/{total_bytes}({bytes_per_sec}) {msg} {wide_bar:.green/blue} ({eta})")
+                        if self.progress.as_mut().is_none() {
+                            let pb = ProgressBar::new(progress.total_bytes as u64);
+                            pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] {msg} {wide_bar:.cyan/blue} ({eta})")
                                 .unwrap()
                                 .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
                                 .progress_chars("██-"));
-
-                                pb.set_position(progress.read_bytes as u64);
-                                pb.set_message(format!(
-                                    "{}/{} ({} rows/s)",
-                                    humanize_count(progress.read_rows as f64),
-                                    humanize_count(progress.total_rows as f64),
-                                    humanize_count(
-                                        progress.read_rows as f64 / pb.elapsed().as_secs_f64()
-                                    )
-                                ));
-
-                                self.progress = Some(pb);
-                            }
+                            self.progress = Some(pb);
                         }
+
+                        let pb = self.progress.as_mut().unwrap();
+                        pb.set_position(progress.read_bytes as u64);
+                        pb.set_message(format!(
+                            "{}/{} ({} rows/s), {}/{} ({} /s)",
+                            humanize_count(progress.read_rows as f64),
+                            humanize_count(progress.total_rows as f64),
+                            humanize_count(progress.read_rows as f64 / pb.elapsed().as_secs_f64()),
+                            HumanBytes(progress.read_bytes as u64),
+                            HumanBytes(progress.total_bytes as u64),
+                            HumanBytes(
+                                (progress.read_bytes as f64 / pb.elapsed().as_secs_f64()) as u64
+                            )
+                        ));
                     } else {
                         let dicitionaries_by_id = HashMap::new();
                         let batch = flight_data_to_arrow_batch(
@@ -132,9 +121,13 @@ impl ChunkDisplay for ReplDisplay {
         println!();
 
         println!(
-            "{} rows in set ({:.3} sec)",
+            "{} rows result set in {:.3} sec. Processed {} rows, {} ({} rows/s, {}/s)",
             self.rows,
-            self.start.elapsed().as_secs_f64()
+            self.start.elapsed().as_secs_f64(),
+            humanize_count(progress.total_rows as f64),
+            HumanBytes(progress.total_rows as u64),
+            humanize_count(progress.total_rows as f64 / self.start.elapsed().as_secs_f64()),
+            HumanBytes((progress.total_bytes as f64 / self.start.elapsed().as_secs_f64()) as u64),
         );
         println!();
 
