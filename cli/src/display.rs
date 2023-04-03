@@ -76,7 +76,7 @@ impl ChunkDisplay for ReplDisplay {
                             pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] {msg} {wide_bar:.cyan/blue} ({eta})")
                                 .unwrap()
                                 .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
-                                .progress_chars("██-"));
+                                .progress_chars("█▓▒░ "));
                             self.progress = Some(pb);
                         }
 
