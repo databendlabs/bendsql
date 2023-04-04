@@ -46,6 +46,10 @@ tonic = { version = "0.8", default-features = false, features = [
     "tls",
     "prost",
 ] }
+toml = "0.7.3"
+humantime-serde = "1.1.1"
+itertools = "0.10.5"
+sqlformat = "0.2.1"
 
 [[bin]]
 name = "bendsql"
