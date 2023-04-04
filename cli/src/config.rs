@@ -60,14 +60,13 @@ impl Config {
             return Self::default();
         }
 
-        let config = match toml::from_str(&std::fs::read_to_string(path).unwrap()) {
+        match toml::from_str(&std::fs::read_to_string(path).unwrap()) {
             Ok(config) => config,
             Err(e) => {
                 eprintln!("Failed to load config: {}, will use default config", e);
                 Self::default()
             }
-        };
-        config
+        }
     }
 }
 
