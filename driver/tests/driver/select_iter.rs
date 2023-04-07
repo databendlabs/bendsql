@@ -12,21 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use anyhow::Result;
 use databend_driver::{new_connection, Connection};
 use tokio_stream::StreamExt;
 
 use crate::common::DEFAULT_DSN;
 
-fn prepare(name: &str) -> (Box<dyn Connection>, String) {
+async fn prepare(name: &str) -> (Box<dyn Connection>, String) {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let table = format!("{}_{}", name, chrono::Utc::now().timestamp());
-    let conn = new_connection(dsn).unwrap();
+    let conn = new_connection(dsn).await.unwrap();
     (conn, table)
 }
 
 #[tokio::test]
 async fn select_iter() {
-    let (conn, table) = prepare("select_iter");
+    let (mut conn, table) = prepare("select_iter").await;
     let sql_create = format!(
         "CREATE TABLE `{}` (
 		i64 Int64,
@@ -38,7 +39,7 @@ async fn select_iter() {
 		a8  Array(UInt8),
 		d   Date,
 		t   DateTime
-    )",
+    );",
         table
     );
     conn.exec(&sql_create).await.unwrap();
@@ -113,8 +114,26 @@ async fn select_iter() {
 }
 
 #[tokio::test]
+async fn select_numbers() {
+    let (mut conn, _) = prepare("select_numbers").await;
+    let rows = conn.query_iter("select * from NUMBERS(5)").await.unwrap();
+    let ret: Vec<Result<(u64,)>> = rows
+        .map(|r| match r {
+            Ok(r) => match r.try_into() {
+                Ok(r) => Ok(r),
+                Err(e) => Err(anyhow::anyhow!("{}", e)),
+            },
+            Err(e) => Err(e),
+        })
+        .collect()
+        .await;
+    let result: Vec<u64> = ret.into_iter().map(|r| r.unwrap().0).collect();
+    assert_eq!(result, vec![0, 1, 2, 3, 4]);
+}
+
+#[tokio::test]
 async fn select_sleep() {
-    let (conn, _) = prepare("select_sleep");
+    let (mut conn, _) = prepare("select_sleep").await;
     let mut rows = conn.query_iter("select SLEEP(2);").await.unwrap();
     let mut result = vec![];
     while let Some(row) = rows.next().await {

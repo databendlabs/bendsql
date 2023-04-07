@@ -17,14 +17,14 @@ use databend_driver::{new_connection, Connection};
 
 use crate::common::DEFAULT_DSN;
 
-fn prepare() -> Box<dyn Connection> {
+async fn prepare() -> Box<dyn Connection> {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
-    new_connection(dsn).unwrap()
+    new_connection(dsn).await.unwrap()
 }
 
 #[tokio::test]
 async fn select_string() {
-    let conn = prepare();
+    let mut conn = prepare().await;
     let row = conn.query_row("select 'hello'").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
@@ -34,7 +34,7 @@ async fn select_string() {
 
 #[tokio::test]
 async fn select_boolean() {
-    let conn = prepare();
+    let mut conn = prepare().await;
     let row = conn.query_row("select true").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
@@ -44,7 +44,7 @@ async fn select_boolean() {
 
 #[tokio::test]
 async fn select_u16() {
-    let conn = prepare();
+    let mut conn = prepare().await;
     let row = conn.query_row("select to_uint16(15532)").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
@@ -54,7 +54,7 @@ async fn select_u16() {
 
 #[tokio::test]
 async fn select_f64() {
-    let conn = prepare();
+    let mut conn = prepare().await;
     let row = conn
         .query_row("select to_float64(3.1415925)")
         .await
@@ -67,7 +67,7 @@ async fn select_f64() {
 
 #[tokio::test]
 async fn select_date() {
-    let conn = prepare();
+    let mut conn = prepare().await;
     let row = conn
         .query_row("select to_date('2023-03-28')")
         .await
@@ -86,7 +86,7 @@ async fn select_date() {
 
 #[tokio::test]
 async fn select_datetime() {
-    let conn = prepare();
+    let mut conn = prepare().await;
     let row = conn
         .query_row("select to_datetime('2023-03-28 12:34:56.789')")
         .await
@@ -110,7 +110,7 @@ async fn select_datetime() {
 
 #[tokio::test]
 async fn select_array() {
-    let conn = prepare();
+    let mut conn = prepare().await;
     let row = conn.query_row("select [1, 2, 3, 4, 5]").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
@@ -120,9 +120,34 @@ async fn select_array() {
 }
 
 #[tokio::test]
+async fn select_multiple_columns() {
+    let mut conn = prepare().await;
+    let row = conn
+        .query_row("select to_uint8(1), to_float64(2.2), '3'")
+        .await
+        .unwrap();
+    assert!(row.is_some());
+    let row = row.unwrap();
+    let (v1, v2, v3): (u8, f64, String) = row.try_into().unwrap();
+    assert_eq!(v1, 1);
+    assert_eq!(v2, 2.2);
+    assert_eq!(v3, "3");
+}
+
+#[tokio::test]
+async fn select_multiple_rows() {
+    let mut conn = prepare().await;
+    let row = conn.query_row("select * from numbers(3)").await.unwrap();
+    assert!(row.is_some());
+    let row = row.unwrap();
+    let (val,): (u64,) = row.try_into().unwrap();
+    assert_eq!(val, 0);
+}
+
+#[tokio::test]
 async fn select_sleep() {
-    let conn = prepare();
-    let row = conn.query_row("select SLEEP(2);").await.unwrap();
+    let mut conn = prepare().await;
+    let row = conn.query_row("select SLEEP(3);").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (u8,) = row.try_into().unwrap();

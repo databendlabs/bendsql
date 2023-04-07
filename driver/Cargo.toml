@@ -9,12 +9,14 @@ keywords = ["databend", "database", "sdk"]
 repository = "https://github.com/datafuselabs/databend-client"
 
 [features]
-default = ["rustls"]
+default = ["rustls", "flight-sql"]
 
 # Enable rustls for TLS support
 rustls = ["databend-client/rustls"]
 # Enable native-tls for TLS support
 native-tls = ["databend-client/native-tls"]
+
+flight-sql = ["dep:arrow", "dep:arrow-cast", "dep:arrow-flight", "dep:tonic"]
 
 [dependencies]
 anyhow = "1.0.70"
@@ -25,5 +27,19 @@ dyn-clone = "1.0.11"
 http = "0.2.9"
 tokio = { version = "1.26.0", features = ["macros"] }
 tokio-stream = "0.1.12"
+url = { version = "2.3.1", default-features = false }
+serde = { version = "1.0.156", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.94", default-features = false, features = ["std"] }
+
+arrow = { version = "36.0.0", optional = true }
+arrow-cast = { version = "36.0.0", features = ["prettyprint"], optional = true }
+arrow-flight = { version = "36.0.0", features = ["flight-sql-experimental"], optional = true }
+tonic = { version = "0.8.3", default-features = false, features = [
+    "transport",
+    "codegen",
+    "tls",
+    "tls-roots",
+    "prost",
+], optional = true }
 
 [dev-dependencies]

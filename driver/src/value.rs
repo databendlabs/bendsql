@@ -41,10 +41,10 @@ pub enum Value {
     Decimal(String),
     Timestamp(i64),
     Date(i32),
-    Array(Vec<Value>),
-    Map(Vec<(Value, Value)>),
-    Tuple(Vec<Value>),
-    Variant,
+    // Array(Vec<Value>),
+    // Map(Vec<(Value, Value)>),
+    // Tuple(Vec<Value>),
+    // Variant,
     // Generic(usize, Vec<u8>),
 }
 
@@ -70,10 +70,10 @@ impl Value {
             Self::Timestamp(_) => DataType::Timestamp,
             Self::Date(_) => DataType::Date,
             // TODO:(everpcpc) fix nested type
-            Self::Array(_) => DataType::Array(Box::new(DataType::Null)),
-            Self::Map(_) => DataType::Map(Box::new(DataType::Null)),
-            Self::Tuple(_) => DataType::Tuple(vec![]),
-            Self::Variant => DataType::Variant,
+            // Self::Array(_) => DataType::Array(Box::new(DataType::Null)),
+            // Self::Map(_) => DataType::Map(Box::new(DataType::Null)),
+            // Self::Tuple(_) => DataType::Tuple(vec![]),
+            // Self::Variant => DataType::Variant,
         }
     }
 }
@@ -286,5 +286,11 @@ impl TryFrom<Value> for NaiveDate {
             }
             _ => Err(anyhow!("Error converting value to NaiveDate")),
         }
+    }
+}
+
+impl From<u8> for Value {
+    fn from(v: u8) -> Self {
+        Value::Number(NumberValue::UInt8(v))
     }
 }

@@ -25,11 +25,12 @@ services:
   test:
     image: rust
     # command: cargo test --target-dir /target --test * -- --show-output
-    command: cargo test --target-dir /target --test *
+    command: cargo test --target-dir /target --test driver -- --show-output
     working_dir: /workspace
     environment:
       - RUST_BACKTRACE=1
       - TEST_DATABEND_DSN=databend://databend:databend@databend:8000/default?sslmode=disable
+      # - TEST_DATABEND_DSN=databend+flight://databend:databend@databend:8900/default?sslmode=disable
     volumes:
       - ../:/workspace
       - rustup:/usr/local/rustup
