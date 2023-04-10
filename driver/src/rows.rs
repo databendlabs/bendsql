@@ -85,7 +85,6 @@ impl TryFrom<RecordBatch> for Rows {
             let mut row: Vec<Value> = Vec::new();
             for j in 0..schema.fields().len() {
                 let v = batch.column(j);
-                println!("==> row value: {:?}", v);
                 let field = schema.field(j);
                 let value = Value::try_from((field, v, i))?;
                 row.push(value);

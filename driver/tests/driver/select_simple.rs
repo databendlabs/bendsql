@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime};
+use chrono::NaiveDate;
+// use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use databend_driver::{new_connection, Connection};
 
 use crate::common::DEFAULT_DSN;
@@ -84,29 +85,30 @@ async fn select_date() {
     }
 }
 
-#[tokio::test]
-async fn select_datetime() {
-    let mut conn = prepare().await;
-    let row = conn
-        .query_row("select to_datetime('2023-03-28 12:34:56.789')")
-        .await
-        .unwrap();
-    assert!(row.is_some());
-    let row = row.unwrap();
-    {
-        let (val,): (i64,) = row.clone().try_into().unwrap();
-        assert_eq!(val, 1680006896789000);
-    }
-    {
-        let (val,): (NaiveDateTime,) = row.try_into().unwrap();
-        assert_eq!(
-            val,
-            DateTime::parse_from_rfc3339("2023-03-28T12:34:56.789Z")
-                .unwrap()
-                .naive_utc()
-        );
-    }
-}
+// TODO:(everpcpc) tmp disable for https://github.com/datafuselabs/databend/pull/10999
+// #[tokio::test]
+// async fn select_datetime() {
+//     let mut conn = prepare().await;
+//     let row = conn
+//         .query_row("select to_datetime('2023-03-28 12:34:56.789')")
+//         .await
+//         .unwrap();
+//     assert!(row.is_some());
+//     let row = row.unwrap();
+//     {
+//         let (val,): (i64,) = row.clone().try_into().unwrap();
+//         assert_eq!(val, 1680006896789000);
+//     }
+//     {
+//         let (val,): (NaiveDateTime,) = row.try_into().unwrap();
+//         assert_eq!(
+//             val,
+//             DateTime::parse_from_rfc3339("2023-03-28T12:34:56.789Z")
+//                 .unwrap()
+//                 .naive_utc()
+//         );
+//     }
+// }
 
 // TODO:(everpcoc) parse to real array
 // #[tokio::test]
