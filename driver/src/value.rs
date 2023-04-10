@@ -22,7 +22,7 @@ use {
     arrow_array::{
         Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Float32Array, Float64Array,
         Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray, LargeStringArray,
-        StringArray, TimestampNanosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+        StringArray, TimestampMicrosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
     arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
     std::sync::Arc,
@@ -216,16 +216,17 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                 Some(array) => Ok(Value::String(array.value(seq).to_string())),
                 None => Err(anyhow!("cannot convert {:?} to large string", array)),
             },
+            // we only support timestamp in microsecond in databend
             ArrowDataType::Timestamp(unit, tz) => {
-                match array.as_any().downcast_ref::<TimestampNanosecondArray>() {
+                match array.as_any().downcast_ref::<TimestampMicrosecondArray>() {
                     Some(array) => {
-                        let m = match unit {
-                            TimeUnit::Second => 1_000_000_000,
-                            TimeUnit::Millisecond => 1_000_000,
-                            TimeUnit::Microsecond => 1_000,
-                            TimeUnit::Nanosecond => 1,
-                        };
-                        let ts = array.value(seq) * m;
+                        if unit != &TimeUnit::Microsecond {
+                            return Err(anyhow!(
+                                "unsupported timestamp unit: {:?}, only support microsecond",
+                                unit
+                            ));
+                        }
+                        let ts = array.value(seq);
                         match tz {
                             None => Ok(Value::Timestamp(ts)),
                             Some(tz) => Err(anyhow!("non-UTC timezone not supported: {:?}", tz)),
