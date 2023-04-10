@@ -12,24 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
-
 use anyhow::{anyhow, Error, Ok, Result};
-use arrow::array::AsArray;
-use arrow_array::{
-    BinaryArray, Date32Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
-    LargeBinaryArray, LargeStringArray, StringArray, TimestampNanosecondArray, UInt16Array,
-    UInt32Array, UInt64Array, UInt8Array,
-};
-use arrow_schema::TimeUnit;
+
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
 
 #[cfg(feature = "flight-sql")]
 use {
-    arrow_array::Array as ArrowArray,
-    arrow_array::{BooleanArray, Int8Array},
-    arrow_schema::DataType as ArrowDataType,
-    arrow_schema::Field as ArrowField,
+    arrow_array::{
+        Array as ArrowArray, AsArray, BinaryArray, BooleanArray, Date32Array, Float32Array,
+        Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray,
+        LargeStringArray, StringArray, TimestampNanosecondArray, UInt16Array, UInt32Array,
+        UInt64Array, UInt8Array,
+    },
+    arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
+    std::sync::Arc,
 };
 
 use crate::schema::{DataType, NumberDataType};
@@ -149,6 +145,7 @@ impl TryFrom<(DataType, String)> for Value {
     }
 }
 
+#[cfg(feature = "flight-sql")]
 impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
     type Error = Error;
     fn try_from(

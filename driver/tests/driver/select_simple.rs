@@ -116,7 +116,6 @@ async fn select_datetime() {
 //     assert!(row.is_some());
 //     let row = row.unwrap();
 //     let (val,): (String,) = row.try_into().unwrap();
-//     // TODO: fix parse to real array
 //     assert_eq!(val, "[1,2,3,4,5]");
 // }
 
