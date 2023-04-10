@@ -17,10 +17,9 @@ use std::sync::Arc;
 use anyhow::{anyhow, Error, Ok, Result};
 use arrow::array::AsArray;
 use arrow_array::{
-    BinaryArray, Date32Array, Date64Array, Float32Array, Float64Array, Int16Array, Int32Array,
-    Int64Array, LargeBinaryArray, LargeStringArray, StringArray, Time32MillisecondArray,
-    Time64NanosecondArray, TimestampNanosecondArray, UInt16Array, UInt32Array, UInt64Array,
-    UInt8Array,
+    BinaryArray, Date32Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array,
+    LargeBinaryArray, LargeStringArray, StringArray, TimestampNanosecondArray, UInt16Array,
+    UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow_schema::TimeUnit;
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
@@ -57,9 +56,10 @@ pub enum Value {
     Number(NumberValue),
     // TODO:(everpcpc) Decimal(DecimalValue),
     Decimal(String),
+    /// Microseconds from 1970-01-01 00:00:00 UTC
     Timestamp(i64),
     Date(i32),
-    Array(Vec<Value>),
+    // Array(Vec<Value>),
     // Map(Vec<(Value, Value)>),
     // Tuple(Vec<Value>),
     // Variant,
@@ -87,8 +87,8 @@ impl Value {
             Self::Decimal(_) => DataType::Decimal,
             Self::Timestamp(_) => DataType::Timestamp,
             Self::Date(_) => DataType::Date,
-            Self::Array(v) => DataType::Array(Box::new(v[0].get_type())),
             // TODO:(everpcpc) fix nested type
+            // Self::Array(v) => DataType::Array(Box::new(v[0].get_type())),
             // Self::Map(_) => DataType::Map(Box::new(DataType::Null)),
             // Self::Tuple(_) => DataType::Tuple(vec![]),
             // Self::Variant => DataType::Variant,
@@ -137,7 +137,7 @@ impl TryFrom<(DataType, String)> for Value {
             DataType::Decimal => Ok(Self::Decimal(v)),
             DataType::Timestamp => Ok(Self::Timestamp(
                 chrono::NaiveDateTime::parse_from_str(&v, "%Y-%m-%d %H:%M:%S%.6f")?
-                    .timestamp_nanos(),
+                    .timestamp_micros(),
             )),
             DataType::Date => Ok(Self::Date(
                 // 719_163 is the number of days from 0000-01-01 to 1970-01-01
@@ -241,43 +241,13 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                 Some(array) => Ok(Value::Date(array.value(seq))),
                 None => Err(anyhow!("cannot convert {:?} to date", array)),
             },
-            ArrowDataType::Date64 => match array.as_any().downcast_ref::<Date64Array>() {
-                Some(array) => Ok(Value::Timestamp(array.value(seq) * 1_000_000)),
-                None => Err(anyhow!("cannot convert {:?} to date", array)),
-            },
-            ArrowDataType::Time32(unit) => {
-                match array.as_any().downcast_ref::<Time32MillisecondArray>() {
-                    Some(array) => {
-                        let m = match unit {
-                            TimeUnit::Second => 1_000_000_000,
-                            TimeUnit::Millisecond => 1_000_000,
-                            TimeUnit::Microsecond => 1_000,
-                            TimeUnit::Nanosecond => 1,
-                        };
-                        let ts = array.value(seq) * m;
-                        Ok(Value::Timestamp(ts as i64))
-                    }
-                    None => Err(anyhow!("cannot convert {:?} to timestamp", array)),
-                }
+            ArrowDataType::Date64
+            | ArrowDataType::Time32(_)
+            | ArrowDataType::Time64(_)
+            | ArrowDataType::Interval(_)
+            | ArrowDataType::Duration(_) => {
+                Err(anyhow!("unsupported data type: {:?}", array.data_type()))
             }
-            ArrowDataType::Time64(unit) => {
-                match array.as_any().downcast_ref::<Time64NanosecondArray>() {
-                    Some(array) => {
-                        let m = match unit {
-                            TimeUnit::Second => 1_000_000_000,
-                            TimeUnit::Millisecond => 1_000_000,
-                            TimeUnit::Microsecond => 1_000,
-                            TimeUnit::Nanosecond => 1,
-                        };
-                        let ts = array.value(seq) * m;
-                        Ok(Value::Timestamp(ts))
-                    }
-                    None => Err(anyhow!("cannot convert {:?} to timestamp", array)),
-                }
-            }
-
-            // Duration(TimeUnit),
-            // Interval(IntervalUnit),
             ArrowDataType::List(_) | ArrowDataType::LargeList(_) => {
                 let v = array.as_list_opt::<i64>().unwrap().value(seq);
                 Ok(Value::String(format!("{:?}", v)))
@@ -420,8 +390,8 @@ impl TryFrom<Value> for NaiveDateTime {
     fn try_from(val: Value) -> Result<Self> {
         match val {
             Value::Timestamp(i) => {
-                let secs = i / 1_000_000_000;
-                let nanos = (i % 1_000_000_000) as u32;
+                let secs = i / 1_000_000;
+                let nanos = ((i % 1_000_000) * 1000) as u32;
                 let t = NaiveDateTime::from_timestamp_opt(secs, nanos);
                 match t {
                     Some(t) => Ok(t),

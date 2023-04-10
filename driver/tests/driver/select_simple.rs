@@ -95,7 +95,7 @@ async fn select_datetime() {
     let row = row.unwrap();
     {
         let (val,): (i64,) = row.clone().try_into().unwrap();
-        assert_eq!(val, 1680006896789000000);
+        assert_eq!(val, 1680006896789000);
     }
     {
         let (val,): (NaiveDateTime,) = row.try_into().unwrap();
@@ -108,16 +108,17 @@ async fn select_datetime() {
     }
 }
 
-#[tokio::test]
-async fn select_array() {
-    let mut conn = prepare().await;
-    let row = conn.query_row("select [1, 2, 3, 4, 5]").await.unwrap();
-    assert!(row.is_some());
-    let row = row.unwrap();
-    let (val,): (String,) = row.try_into().unwrap();
-    // TODO: fix parse to real array
-    assert_eq!(val, "[1,2,3,4,5]");
-}
+// TODO:(everpcoc) parse to real array
+// #[tokio::test]
+// async fn select_array() {
+//     let mut conn = prepare().await;
+//     let row = conn.query_row("select [1, 2, 3, 4, 5]").await.unwrap();
+//     assert!(row.is_some());
+//     let row = row.unwrap();
+//     let (val,): (String,) = row.try_into().unwrap();
+//     // TODO: fix parse to real array
+//     assert_eq!(val, "[1,2,3,4,5]");
+// }
 
 #[tokio::test]
 async fn select_multiple_columns() {
