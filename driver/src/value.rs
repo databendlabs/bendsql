@@ -18,11 +18,11 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime};
 
 #[cfg(feature = "flight-sql")]
 use {
+    arrow::array::AsArray,
     arrow_array::{
-        Array as ArrowArray, AsArray, BinaryArray, BooleanArray, Date32Array, Float32Array,
-        Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray,
-        LargeStringArray, StringArray, TimestampNanosecondArray, UInt16Array, UInt32Array,
-        UInt64Array, UInt8Array,
+        Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Float32Array, Float64Array,
+        Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray, LargeStringArray,
+        StringArray, TimestampNanosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
     arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
     std::sync::Arc,
