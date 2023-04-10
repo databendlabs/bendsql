@@ -12,8 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use anyhow::{anyhow, Error, Result};
+use std::sync::Arc;
+
+use anyhow::{anyhow, Error, Ok, Result};
+use arrow::array::AsArray;
+use arrow_array::{
+    BinaryArray, Date32Array, Date64Array, Float32Array, Float64Array, Int16Array, Int32Array,
+    Int64Array, LargeBinaryArray, LargeStringArray, StringArray, Time32MillisecondArray,
+    Time64NanosecondArray, TimestampNanosecondArray, UInt16Array, UInt32Array, UInt64Array,
+    UInt8Array,
+};
+use arrow_schema::TimeUnit;
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
+
+#[cfg(feature = "flight-sql")]
+use {
+    arrow_array::Array as ArrowArray,
+    arrow_array::{BooleanArray, Int8Array},
+    arrow_schema::DataType as ArrowDataType,
+    arrow_schema::Field as ArrowField,
+};
 
 use crate::schema::{DataType, NumberDataType};
 
@@ -41,7 +59,7 @@ pub enum Value {
     Decimal(String),
     Timestamp(i64),
     Date(i32),
-    // Array(Vec<Value>),
+    Array(Vec<Value>),
     // Map(Vec<(Value, Value)>),
     // Tuple(Vec<Value>),
     // Variant,
@@ -69,8 +87,8 @@ impl Value {
             Self::Decimal(_) => DataType::Decimal,
             Self::Timestamp(_) => DataType::Timestamp,
             Self::Date(_) => DataType::Date,
+            Self::Array(v) => DataType::Array(Box::new(v[0].get_type())),
             // TODO:(everpcpc) fix nested type
-            // Self::Array(_) => DataType::Array(Box::new(DataType::Null)),
             // Self::Map(_) => DataType::Map(Box::new(DataType::Null)),
             // Self::Tuple(_) => DataType::Tuple(vec![]),
             // Self::Variant => DataType::Variant,
@@ -127,6 +145,149 @@ impl TryFrom<(DataType, String)> for Value {
             )),
             // TODO:(everpcpc) handle complex types
             _ => Ok(Self::String(v)),
+        }
+    }
+}
+
+impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
+    type Error = Error;
+    fn try_from(
+        (field, array, seq): (&ArrowField, &Arc<dyn ArrowArray>, usize),
+    ) -> std::result::Result<Self, Self::Error> {
+        match field.data_type() {
+            ArrowDataType::Null => Ok(Value::Null),
+            ArrowDataType::Boolean => match array.as_any().downcast_ref::<BooleanArray>() {
+                Some(array) => Ok(Value::Boolean(array.value(seq))),
+                None => Err(anyhow!("cannot convert {:?} to boolean", array)),
+            },
+            ArrowDataType::Int8 => match array.as_any().downcast_ref::<Int8Array>() {
+                Some(array) => Ok(Value::Number(NumberValue::Int8(array.value(seq)))),
+                None => Err(anyhow!("cannot convert {:?} to int8", array)),
+            },
+            ArrowDataType::Int16 => match array.as_any().downcast_ref::<Int16Array>() {
+                Some(array) => Ok(Value::Number(NumberValue::Int16(array.value(seq)))),
+                None => Err(anyhow!("cannot convert {:?} to int16", array)),
+            },
+            ArrowDataType::Int32 => match array.as_any().downcast_ref::<Int32Array>() {
+                Some(array) => Ok(Value::Number(NumberValue::Int32(array.value(seq)))),
+                None => Err(anyhow!("cannot convert {:?} to int32", array)),
+            },
+            ArrowDataType::Int64 => match array.as_any().downcast_ref::<Int64Array>() {
+                Some(array) => Ok(Value::Number(NumberValue::Int64(array.value(seq)))),
+                None => Err(anyhow!("cannot convert {:?} to int64", array)),
+            },
+            ArrowDataType::UInt8 => match array.as_any().downcast_ref::<UInt8Array>() {
+                Some(array) => Ok(Value::Number(NumberValue::UInt8(array.value(seq)))),
+                None => Err(anyhow!("cannot convert {:?} to uint8", array)),
+            },
+            ArrowDataType::UInt16 => match array.as_any().downcast_ref::<UInt16Array>() {
+                Some(array) => Ok(Value::Number(NumberValue::UInt16(array.value(seq)))),
+                None => Err(anyhow!("cannot convert {:?} to uint16", array)),
+            },
+            ArrowDataType::UInt32 => match array.as_any().downcast_ref::<UInt32Array>() {
+                Some(array) => Ok(Value::Number(NumberValue::UInt32(array.value(seq)))),
+                None => Err(anyhow!("cannot convert {:?} to uint32", array)),
+            },
+            ArrowDataType::UInt64 => match array.as_any().downcast_ref::<UInt64Array>() {
+                Some(array) => Ok(Value::Number(NumberValue::UInt64(array.value(seq)))),
+                None => Err(anyhow!("cannot convert {:?} to uint64", array)),
+            },
+            ArrowDataType::Float32 => match array.as_any().downcast_ref::<Float32Array>() {
+                Some(array) => Ok(Value::Number(NumberValue::Float32(array.value(seq)))),
+                None => Err(anyhow!("cannot convert {:?} to float32", array)),
+            },
+            ArrowDataType::Float64 => match array.as_any().downcast_ref::<Float64Array>() {
+                Some(array) => Ok(Value::Number(NumberValue::Float64(array.value(seq)))),
+                None => Err(anyhow!("cannot convert {:?} to float64", array)),
+            },
+
+            ArrowDataType::Binary => match array.as_any().downcast_ref::<BinaryArray>() {
+                Some(array) => Ok(Value::String(String::from_utf8(array.value(seq).to_vec())?)),
+                None => Err(anyhow!("cannot convert {:?} to binary", array)),
+            },
+            ArrowDataType::LargeBinary | ArrowDataType::FixedSizeBinary(_) => {
+                match array.as_any().downcast_ref::<LargeBinaryArray>() {
+                    Some(array) => Ok(Value::String(String::from_utf8(array.value(seq).to_vec())?)),
+                    None => Err(anyhow!("cannot convert {:?} to large binary", array)),
+                }
+            }
+            ArrowDataType::Utf8 => match array.as_any().downcast_ref::<StringArray>() {
+                Some(array) => Ok(Value::String(array.value(seq).to_string())),
+                None => Err(anyhow!("cannot convert {:?} to string", array)),
+            },
+            ArrowDataType::LargeUtf8 => match array.as_any().downcast_ref::<LargeStringArray>() {
+                Some(array) => Ok(Value::String(array.value(seq).to_string())),
+                None => Err(anyhow!("cannot convert {:?} to large string", array)),
+            },
+            ArrowDataType::Timestamp(unit, tz) => {
+                match array.as_any().downcast_ref::<TimestampNanosecondArray>() {
+                    Some(array) => {
+                        let m = match unit {
+                            TimeUnit::Second => 1_000_000_000,
+                            TimeUnit::Millisecond => 1_000_000,
+                            TimeUnit::Microsecond => 1_000,
+                            TimeUnit::Nanosecond => 1,
+                        };
+                        let ts = array.value(seq) * m;
+                        match tz {
+                            None => Ok(Value::Timestamp(ts)),
+                            Some(tz) => Err(anyhow!("non-UTC timezone not supported: {:?}", tz)),
+                        }
+                    }
+                    None => Err(anyhow!("cannot convert {:?} to timestamp", array)),
+                }
+            }
+            ArrowDataType::Date32 => match array.as_any().downcast_ref::<Date32Array>() {
+                Some(array) => Ok(Value::Date(array.value(seq))),
+                None => Err(anyhow!("cannot convert {:?} to date", array)),
+            },
+            ArrowDataType::Date64 => match array.as_any().downcast_ref::<Date64Array>() {
+                Some(array) => Ok(Value::Timestamp(array.value(seq) * 1_000_000)),
+                None => Err(anyhow!("cannot convert {:?} to date", array)),
+            },
+            ArrowDataType::Time32(unit) => {
+                match array.as_any().downcast_ref::<Time32MillisecondArray>() {
+                    Some(array) => {
+                        let m = match unit {
+                            TimeUnit::Second => 1_000_000_000,
+                            TimeUnit::Millisecond => 1_000_000,
+                            TimeUnit::Microsecond => 1_000,
+                            TimeUnit::Nanosecond => 1,
+                        };
+                        let ts = array.value(seq) * m;
+                        Ok(Value::Timestamp(ts as i64))
+                    }
+                    None => Err(anyhow!("cannot convert {:?} to timestamp", array)),
+                }
+            }
+            ArrowDataType::Time64(unit) => {
+                match array.as_any().downcast_ref::<Time64NanosecondArray>() {
+                    Some(array) => {
+                        let m = match unit {
+                            TimeUnit::Second => 1_000_000_000,
+                            TimeUnit::Millisecond => 1_000_000,
+                            TimeUnit::Microsecond => 1_000,
+                            TimeUnit::Nanosecond => 1,
+                        };
+                        let ts = array.value(seq) * m;
+                        Ok(Value::Timestamp(ts))
+                    }
+                    None => Err(anyhow!("cannot convert {:?} to timestamp", array)),
+                }
+            }
+
+            // Duration(TimeUnit),
+            // Interval(IntervalUnit),
+            ArrowDataType::List(_) | ArrowDataType::LargeList(_) => {
+                let v = array.as_list_opt::<i64>().unwrap().value(seq);
+                Ok(Value::String(format!("{:?}", v)))
+            }
+            // Struct(Vec<Field>),
+            // Decimal128(u8, i8),
+            // Decimal256(u8, i8),
+            // Map(Box<Field>, bool),
+            // RunEndEncoded(Box<Field>, Box<Field>),
+            _ => Err(anyhow!("unsupported data type: {:?}", array.data_type())),
         }
     }
 }

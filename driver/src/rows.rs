@@ -14,14 +14,14 @@
 
 use std::pin::Pin;
 
-use anyhow::{anyhow, Context, Error, Result};
+use anyhow::{anyhow, Error, Result};
 use serde::Deserialize;
 use tokio_stream::Stream;
 
 #[cfg(feature = "flight-sql")]
 use arrow::record_batch::RecordBatch;
 
-use crate::schema::{DataType, NumberDataType};
+use crate::schema::DataType;
 use crate::value::Value;
 
 pub type RowIterator = Pin<Box<dyn Stream<Item = Result<Row>>>>;
@@ -86,17 +86,9 @@ impl TryFrom<RecordBatch> for Rows {
             for j in 0..schema.fields().len() {
                 let v = batch.column(j);
                 println!("==> row value: {:?}", v);
-                // let field = schema.field(j);
-                let value = v
-                    .as_any()
-                    // TODO:(everpcpc)
-                    .downcast_ref::<arrow::array::UInt8Array>()
-                    .with_context(|| "Downcast empty")?
-                    .value(i);
-                row.push(Value::try_from((
-                    DataType::Number(NumberDataType::UInt8),
-                    value.to_string(),
-                ))?);
+                let field = schema.field(j);
+                let value = Value::try_from((field, v, i))?;
+                row.push(value);
             }
             rows.push(Row(row));
         }
