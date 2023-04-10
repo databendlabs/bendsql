@@ -9,7 +9,7 @@ keywords = ["databend", "database", "sdk"]
 repository = "https://github.com/datafuselabs/databend-client"
 
 [features]
-default = ["rustls", "flight-sql"]
+default = ["rustls"]
 
 # Enable rustls for TLS support
 rustls = ["databend-client/rustls"]
