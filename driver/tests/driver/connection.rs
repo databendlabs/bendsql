@@ -12,25 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// use databend_driver::new_connection;
+use databend_driver::new_connection;
 
-// use crate::common::DEFAULT_DSN;
+use crate::common::DEFAULT_DSN;
 
-// TODO:(everpcpc) fix for flight
-// #[tokio::test]
-// async fn trait_with_clone() {
-//     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
-//     let mut conn = new_connection(dsn).await.unwrap();
-//     let row = conn.query_row("select 'hello'").await.unwrap();
-//     assert!(row.is_some());
-//     let row = row.unwrap();
-//     let (val,): (String,) = row.try_into().unwrap();
-//     assert_eq!(val, "hello");
+#[tokio::test]
+async fn trait_with_clone() {
+    let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
+    let mut conn = new_connection(dsn).await.unwrap();
+    let row = conn.query_row("select 'hello'").await.unwrap();
+    assert!(row.is_some());
+    let row = row.unwrap();
+    let (val,): (String,) = row.try_into().unwrap();
+    assert_eq!(val, "hello");
 
-//     let mut conn2 = conn.clone();
-//     let row = conn2.query_row("select 'world'").await.unwrap();
-//     assert!(row.is_some());
-//     let row = row.unwrap();
-//     let (val,): (String,) = row.try_into().unwrap();
-//     assert_eq!(val, "world");
-// }
+    let mut conn2 = conn.clone();
+    let row = conn2.query_row("select 'world'").await.unwrap();
+    assert!(row.is_some());
+    let row = row.unwrap();
+    let (val,): (String,) = row.try_into().unwrap();
+    assert_eq!(val, "world");
+}
