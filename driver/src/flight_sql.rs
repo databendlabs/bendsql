@@ -85,11 +85,17 @@ impl Connection for FlightSQLConnection {
             .with_context(|| anyhow!("Invalid Message: Cannot get header as Schema"))?;
         let schema = Arc::new(fb_to_schema(ipc_schema));
 
-        let datum = flight_data
+        let dicitionaries_by_id = HashMap::new();
+        let mut datum = flight_data
             .try_next()
             .await?
             .with_context(|| "No flight data in stream")?;
-        let dicitionaries_by_id = HashMap::new();
+        while datum.app_metadata[..] == [0x01] {
+            datum = flight_data
+                .try_next()
+                .await?
+                .with_context(|| "No flight data in stream")?;
+        }
         let batch = flight_data_to_arrow_batch(&datum, schema.clone(), &dicitionaries_by_id)?;
         let rows = Rows::try_from(batch)?;
         Ok(rows.into_iter().next())
