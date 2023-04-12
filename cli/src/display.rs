@@ -184,7 +184,7 @@ impl ChunkDisplay for FormatDisplay {
             .quote_style(csv::QuoteStyle::NonNumeric)
             .from_writer(std::io::stdout());
         for row in rows {
-            let values: Vec<String> = row.values().iter().map(|v| format!("{}", v)).collect();
+            let values: Vec<String> = row.values().iter().map(|v| v.to_string()).collect();
             wtr.write_record(values)?;
         }
         Ok(())
