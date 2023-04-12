@@ -70,10 +70,7 @@ pub enum DataType {
 
 impl DataType {
     pub fn is_numeric(&self) -> bool {
-        match self {
-            DataType::Number(_) => true,
-            _ => false,
-        }
+        matches!(self, DataType::Number(_))
     }
 }
 
@@ -280,7 +277,7 @@ impl TryFrom<ArrowSchemaRef> for Schema {
         let fields = schema_ref
             .fields()
             .iter()
-            .map(|f| Field::try_from(f))
+            .map(Field::try_from)
             .collect::<Result<Vec<_>>>()?;
         Ok(Self(fields))
     }

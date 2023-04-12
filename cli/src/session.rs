@@ -155,7 +155,7 @@ impl Session {
         let kind = QueryKind::from(query);
 
         if kind == QueryKind::Update {
-            let _rows = self.conn.exec(query).await?;
+            self.conn.exec(query).await?;
             if is_repl {
                 println!(
                     "{} affected in ({:.3} sec)",

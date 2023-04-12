@@ -109,7 +109,7 @@ struct ConnectionArgs {
 }
 
 impl ConnectionArgs {
-    fn to_dsn(self) -> Result<String> {
+    fn get_dsn(self) -> Result<String> {
         let mut dsn = url::Url::parse("databend://")?;
         dsn.set_host(Some(&self.host))?;
         _ = dsn.set_port(Some(self.port));
@@ -179,7 +179,7 @@ pub async fn main() -> Result<()> {
                 flight: args.flight,
                 args: config.connection.args.clone(),
             };
-            conn_args.to_dsn()?
+            conn_args.get_dsn()?
         }
     };
 

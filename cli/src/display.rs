@@ -122,7 +122,7 @@ impl<'a> ChunkDisplay for ReplDisplay<'a> {
         if let Some(pb) = self.progress.take() {
             pb.finish_and_clear();
         }
-        print_rows(self.schema.clone(), &rows, &self.settings)?;
+        print_rows(self.schema.clone(), &rows, self.settings)?;
 
         println!();
 
