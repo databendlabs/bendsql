@@ -14,7 +14,7 @@ async-trait = "0.1.68"
 atty = "0.2.14"
 clap = { version = "4.1.0", features = ["derive", "env"] }
 comfy-table = "6.1.4"
-databend-driver = { path = "../driver", version = "0.2.4", features = ["rustls", "flight-sql"] }
+databend-driver = { path = "../driver", version = "0.2.5", features = ["rustls", "flight-sql"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 humantime-serde = "1.1.1"
 url = { version = "2.3.1", default-features = false }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::io::BufRead;
+use std::sync::Arc;
 
 use anyhow::Result;
 use databend_driver::{new_connection, Connection};
@@ -169,10 +170,11 @@ impl Session {
         let (schema, data) = self.conn.query_iter_ext(query).await?;
 
         if is_repl {
-            let mut displayer = ReplDisplay::new(&self.settings, query, start, schema, data);
+            let mut displayer =
+                ReplDisplay::new(&self.settings, query, start, Arc::new(schema), data);
             displayer.display().await?;
         } else {
-            let mut displayer = FormatDisplay::new(schema, data);
+            let mut displayer = FormatDisplay::new(Arc::new(schema), data);
             displayer.display().await?;
         }
 

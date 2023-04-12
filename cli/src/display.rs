@@ -18,10 +18,9 @@ use anyhow::Result;
 
 use comfy_table::{Cell, CellAlignment, Table};
 
-use databend_driver::{Row, RowProgressIterator, RowWithProgress, Schema};
+use databend_driver::{Row, RowProgressIterator, RowWithProgress, ScanProgress, SchemaRef};
 use futures::StreamExt;
 use rustyline::highlight::Highlighter;
-use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 
 use indicatif::{HumanBytes, ProgressBar, ProgressState, ProgressStyle};
@@ -37,7 +36,7 @@ pub trait ChunkDisplay {
 pub struct ReplDisplay<'a> {
     settings: &'a Settings,
     query: &'a str,
-    schema: Schema,
+    schema: SchemaRef,
     data: RowProgressIterator,
 
     rows: usize,
@@ -50,7 +49,7 @@ impl<'a> ReplDisplay<'a> {
         settings: &'a Settings,
         query: &'a str,
         start: Instant,
-        schema: Schema,
+        schema: SchemaRef,
         data: RowProgressIterator,
     ) -> Self {
         Self {
@@ -69,7 +68,7 @@ impl<'a> ReplDisplay<'a> {
 impl<'a> ChunkDisplay for ReplDisplay<'a> {
     async fn display(&mut self) -> Result<()> {
         let mut rows: Vec<Row> = Vec::new();
-        let mut progress = ProgressValue::default();
+        let mut progress = ScanProgress::default();
 
         if self.settings.display_pretty_sql {
             let format_sql = format_query(self.query);
@@ -79,7 +78,8 @@ impl<'a> ChunkDisplay for ReplDisplay<'a> {
 
         while let Some(line) = self.data.next().await {
             match line {
-                Ok(RowWithProgress::Progress(progress)) => {
+                Ok(RowWithProgress::Progress(pg)) => {
+                    progress = pg;
                     if self.progress.as_mut().is_none() {
                         let pb = ProgressBar::new(progress.total_bytes as u64);
                         let progress_color = &self.settings.progress_color;
@@ -122,7 +122,7 @@ impl<'a> ChunkDisplay for ReplDisplay<'a> {
         if let Some(pb) = self.progress.take() {
             pb.finish_and_clear();
         }
-        print_rows(&rows, &self.settings)?;
+        print_rows(self.schema.clone(), &rows, &self.settings)?;
 
         println!();
 
@@ -147,25 +147,16 @@ impl<'a> ChunkDisplay for ReplDisplay<'a> {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Default)]
-struct ProgressValue {
-    pub total_rows: usize,
-    pub total_bytes: usize,
-
-    pub read_rows: usize,
-    pub read_bytes: usize,
-}
-
 pub struct FormatDisplay {
-    schema: Schema,
+    _schema: SchemaRef,
     data: RowProgressIterator,
     rows: usize,
 }
 
 impl FormatDisplay {
-    pub fn new(schema: Schema, data: RowProgressIterator) -> Self {
+    pub fn new(schema: SchemaRef, data: RowProgressIterator) -> Self {
         Self {
-            schema,
+            _schema: schema,
             data,
             rows: 0,
         }
@@ -175,10 +166,10 @@ impl FormatDisplay {
 #[async_trait::async_trait]
 impl ChunkDisplay for FormatDisplay {
     async fn display(&mut self) -> Result<()> {
-        let rows = Vec::new();
+        let mut rows = Vec::new();
         while let Some(line) = self.data.next().await {
             match line {
-                Ok(RowWithProgress::Progress(progress)) => {}
+                Ok(RowWithProgress::Progress(_)) => {}
                 Ok(RowWithProgress::Row(row)) => {
                     rows.push(row);
                     self.rows += 1;
@@ -228,37 +219,28 @@ impl ChunkDisplay for FormatDisplay {
 //     RecordBatch::try_new(Arc::new(schema), columns)
 // }
 
-fn print_rows(results: &[Row], settings: &Settings) -> Result<()> {
-    // TODO:(everpcpc) format
-    println!("{:?}", results);
-    // let options = FormatOptions::default().with_display_error(true);
-    // println!("{}", create_table(results, &options)?);
+fn print_rows(schema: SchemaRef, results: &[Row], _settings: &Settings) -> Result<()> {
+    println!("{}", create_table(schema, results)?);
     Ok(())
 }
 
 /// Convert a series of rows into a table
-fn create_table(results: &[Row], options: &FormatOptions) -> Result<Table> {
+fn create_table(schema: SchemaRef, results: &[Row]) -> Result<Table> {
     let mut table = Table::new();
     table.load_preset("││──├─┼┤│    ──┌┐└┘");
     if results.is_empty() {
         return Ok(table);
     }
 
-    let schema = results[0].schema();
-
     let mut header = Vec::with_capacity(schema.fields().len());
     let mut aligns = Vec::with_capacity(schema.fields().len());
     for field in schema.fields() {
-        let cell = Cell::new(format!(
-            "{}\n{}",
-            field.name(),
-            normalize_datatype(field.data_type())
-        ))
-        .set_alignment(CellAlignment::Center);
+        let cell = Cell::new(format!("{}\n{}", field.name, field.data_type,))
+            .set_alignment(CellAlignment::Center);
 
         header.push(cell);
 
-        if field.data_type().is_numeric() {
+        if field.data_type.is_numeric() {
             aligns.push(CellAlignment::Right);
         } else {
             aligns.push(CellAlignment::Left);
@@ -266,21 +248,14 @@ fn create_table(results: &[Row], options: &FormatOptions) -> Result<Table> {
     }
     table.set_header(header);
 
-    for batch in results {
-        let formatters = batch
-            .columns()
-            .iter()
-            .map(|c| ArrayFormatter::try_new(c.as_ref(), options))
-            .collect::<Result<Vec<_>, ArrowError>>()?;
-
-        for row in 0..batch.num_rows() {
-            let mut cells = Vec::new();
-            for (formatter, align) in formatters.iter().zip(aligns.iter()) {
-                let cell = Cell::new(formatter.value(row)).set_alignment(*align);
-                cells.push(cell);
-            }
-            table.add_row(cells);
+    for row in results {
+        let mut cells = Vec::new();
+        let values = row.values();
+        for (idx, align) in aligns.iter().enumerate() {
+            let cell = Cell::new(&values[idx]).set_alignment(*align);
+            cells.push(cell);
         }
+        table.add_row(cells);
     }
 
     Ok(table)
