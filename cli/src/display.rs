@@ -169,18 +169,24 @@ impl ChunkDisplay for FormatDisplay {
         let mut rows = Vec::new();
         while let Some(line) = self.data.next().await {
             match line {
-                Ok(RowWithProgress::Progress(_)) => {}
                 Ok(RowWithProgress::Row(row)) => {
                     rows.push(row);
                     self.rows += 1;
                 }
+                Ok(_) => {}
                 Err(err) => {
                     eprintln!("error: {}", err);
                 }
             }
         }
-        // TODO:(everpcpc) format
-        println!("{:?}", rows);
+        let mut wtr = csv::WriterBuilder::new()
+            .delimiter(b'\t')
+            .quote_style(csv::QuoteStyle::NonNumeric)
+            .from_writer(std::io::stdout());
+        for row in rows {
+            let values: Vec<String> = row.values().iter().map(|v| format!("{}", v)).collect();
+            wtr.write_record(values)?;
+        }
         Ok(())
     }
 
@@ -188,36 +194,6 @@ impl ChunkDisplay for FormatDisplay {
         self.rows
     }
 }
-
-// fn normalize_record_batch(batch: &RecordBatch) -> Result<RecordBatch> {
-//     let num_columns = batch.num_columns();
-//     let mut columns = Vec::with_capacity(num_columns);
-//     let mut fields = Vec::with_capacity(num_columns);
-
-//     for i in 0..num_columns {
-//         let field = batch.schema().field(i).clone();
-//         let array = batch.column(i);
-//         if let Some(binary_array) = array.as_any().downcast_ref::<LargeBinaryArray>() {
-//             let data = binary_array.data().clone();
-//             let builder = ArrayDataBuilder::from(data).data_type(DataType::LargeUtf8);
-//             let data = builder.build()?;
-
-//             let utf8_array = LargeStringArray::from(data);
-
-//             columns.push(Arc::new(utf8_array) as Arc<dyn Array>);
-//             fields.push(
-//                 Field::new(field.name(), DataType::LargeUtf8, field.is_nullable())
-//                     .with_metadata(field.metadata().clone()),
-//             );
-//         } else {
-//             columns.push(array.clone());
-//             fields.push(field);
-//         }
-//     }
-
-//     let schema = Schema::new(fields);
-//     RecordBatch::try_new(Arc::new(schema), columns)
-// }
 
 fn print_rows(schema: SchemaRef, results: &[Row], _settings: &Settings) -> Result<()> {
     println!("{}", create_table(schema, results)?);
@@ -260,29 +236,6 @@ fn create_table(schema: SchemaRef, results: &[Row]) -> Result<Table> {
 
     Ok(table)
 }
-
-// // LargeUtf8 --> String
-// fn normalize_datatype(ty: &DataType) -> String {
-//     match ty {
-//         DataType::LargeUtf8 => "String".to_owned(),
-//         _ => format!("{ty}"),
-//     }
-// }
-
-// pub(crate) fn format_error(error: ArrowError) -> String {
-//     match error {
-//         ArrowError::IoError(err) => {
-//             static START: &str = "Code:";
-//             static END: &str = ". at";
-
-//             let message_index = err.find(START).unwrap_or(0);
-//             let message_end_index = err.find(END).unwrap_or(err.len());
-//             let message = &err[message_index..message_end_index];
-//             message.replace("\\n", "\n")
-//         }
-//         other => format!("{}", other),
-//     }
-// }
 
 pub fn humanize_count(num: f64) -> String {
     if num == 0.0 {

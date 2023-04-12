@@ -14,10 +14,10 @@ async-trait = "0.1.68"
 atty = "0.2.14"
 clap = { version = "4.1.0", features = ["derive", "env"] }
 comfy-table = "6.1.4"
+csv = "1.2.1"
 databend-driver = { path = "../driver", version = "0.2.5", features = ["rustls", "flight-sql"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 humantime-serde = "1.1.1"
-url = { version = "2.3.1", default-features = false }
 indicatif = "0.17.3"
 itertools = "0.10.5"
 logos = "0.13.0"
@@ -36,6 +36,7 @@ tokio = { version = "1.26", features = [
     "parking_lot",
 ] }
 toml = "0.7.3"
+url = { version = "2.3.1", default-features = false }
 
 [[bin]]
 name = "bendsql"
