@@ -49,7 +49,7 @@ struct Args {
     user: Option<String>,
 
     #[clap(short = 'p', long, env = "BENDSQL_PASSWORD")]
-    password: String,
+    password: Option<String>,
 
     #[clap(short = 'D', long, help = "Database name")]
     database: Option<String>,
@@ -101,7 +101,7 @@ struct ConnectionArgs {
     host: String,
     port: u16,
     user: String,
-    password: String,
+    password: Option<String>,
     database: Option<String>,
     tls: bool,
     flight: bool,
@@ -114,7 +114,9 @@ impl ConnectionArgs {
         dsn.set_host(Some(&self.host))?;
         _ = dsn.set_port(Some(self.port));
         _ = dsn.set_username(&self.user);
-        _ = dsn.set_password(Some(&self.password));
+        if let Some(password) = self.password {
+            _ = dsn.set_password(Some(&password))
+        };
         if let Some(database) = self.database {
             dsn.set_path(&database);
         }
