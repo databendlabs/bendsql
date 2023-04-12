@@ -112,16 +112,16 @@ impl ConnectionArgs {
     fn to_dsn(self) -> Result<String> {
         let mut dsn = url::Url::parse("databend://")?;
         dsn.set_host(Some(&self.host))?;
-        dsn.set_port(Some(self.port));
-        dsn.set_username(&self.user);
-        dsn.set_password(Some(&self.password));
+        _ = dsn.set_port(Some(self.port));
+        _ = dsn.set_username(&self.user);
+        _ = dsn.set_password(Some(&self.password));
         if let Some(database) = self.database {
             dsn.set_path(&database);
         }
         if self.flight {
-            dsn.set_scheme("databend+flight");
+            _ = dsn.set_scheme("databend+flight");
         } else if self.tls {
-            dsn.set_scheme("databend+https");
+            _ = dsn.set_scheme("databend+https");
         }
         let mut query = url::form_urlencoded::Serializer::new(String::new());
         if !self.args.is_empty() {
@@ -167,7 +167,7 @@ pub async fn main() -> Result<()> {
             for (k, v) in args.set {
                 config.connection.args.insert(k, v);
             }
-            let connArgs = ConnectionArgs {
+            let conn_args = ConnectionArgs {
                 host: config.connection.host.clone(),
                 port: config.connection.port,
                 user: config.connection.user.clone(),
@@ -177,7 +177,7 @@ pub async fn main() -> Result<()> {
                 flight: args.flight,
                 args: config.connection.args.clone(),
             };
-            connArgs.to_dsn()?
+            conn_args.to_dsn()?
         }
     };
 
