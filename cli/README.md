@@ -1,6 +1,11 @@
-# bendsql &emsp; 
+# BendSQL
 
-## Install 
+Databend Native Command Line Tool
+
+[![crates.io](https://img.shields.io/crates/v/bendsql.svg)](https://crates.io/crates/bendsql)
+![License](https://img.shields.io/crates/l/bendsql.svg)
+
+## Install
 
 ```sh
 cargo install bendsql
@@ -9,50 +14,79 @@ cargo install bendsql
 ## Usage
 
 ```
-> bendsql --help
-Usage: bendsql <--user <USER>|--password <PASSWORD>|--host <HOST>|--port <PORT>>
+❯ bendsql --help
+Databend Native Command Line Tool
+
+Usage: bendsql [OPTIONS]
+
+Options:
+      --help                 Print help information
+      --flight               Using flight sql protocol
+      --tls                  Enable TLS
+  -h, --host <HOST>          Databend Server host, Default: 127.0.0.1
+  -P, --port <PORT>          Databend Server port, Default: 8000
+  -u, --user <USER>          Default: root
+  -p, --password <PASSWORD>  [env: BENDSQL_PASSWORD=]
+  -D, --database <DATABASE>  Database name
+      --set <SET>            Settings
+      --dsn <DSN>            Data source name [env: BENDSQL_DSN=]
+  -n, --non-interactive      Force non-interactive mode
+  -q, --query <QUERY>        Query to execute
+  -d, --data <DATA>          Data to load, @file or @- for stdin
+  -f, --format <FORMAT>      Data format to load [default: csv]
+  -o, --output <OUTPUT>      Output format [default: table]
+      --progress             Show progress for data loading in stderr
+  -V, --version              Print version
 ```
 
 ## Examples
 
 ### REPL
 ```sql
-❯ bendsql -h arch -u sundy -p abc --port 8900
-Welcome to Arrow CLI.
-Connecting to http://arch:8900/ as user sundy.
+❯ bendsql
+Welcome to BendSQL.
+Connecting to localhost:8000 as user root.
 
-arch :) select avg(number) from numbers(10);
+bendsql> select avg(number) from numbers(10);
 
-select avg(number) from numbers(10);
+SELECT
+  avg(number)
+FROM
+  numbers(10);
 
-+-------------+
-| avg(number) |
-+-------------+
-| 4.5         |
-+-------------+
+┌───────────────────┐
+│    avg(number)    │
+│ Nullable(Float64) │
+├───────────────────┤
+│ 4.5               │
+└───────────────────┘
 
-1 rows in set (0.036 sec)
+1 row in 0.259 sec. Processed 10 rows, 10B (38.59 rows/s, 308B/s)
 
-arch :) show tables like 'c%';
+bendsql> show tables like 'd%';
 
-show tables like 'c%';
+SHOW TABLES LIKE 'd%';
 
-+-------------------+
-| tables_in_default |
-+-------------------+
-| customer          |
-+-------------------+
+┌───────────────────┐
+│ tables_in_default │
+│       String      │
+├───────────────────┤
+│ data              │
+│ data2             │
+│ data3             │
+│ data4             │
+└───────────────────┘
 
-1 rows in set (0.030 sec)
+4 rows in 0.106 sec. Processed 0 rows, 0B (0 rows/s, 0B/s)
 
-arch :) exit
+bendsql> exit
 Bye
 ```
 
 ### StdIn Pipe
 
 ```bash
-❯ echo "select number from numbers(3)" | bendsql -h arch -u sundy -p abc --port 8900
+❯ echo "select number from numbers(3)" | bendsql -h localhost --port 8900 --flight
 0
 1
 2
@@ -64,4 +98,3 @@ Bye
 - basic auto-completion
 - select query support
 - TBD
-
