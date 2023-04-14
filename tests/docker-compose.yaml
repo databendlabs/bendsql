@@ -52,7 +52,7 @@ services:
     depends_on:
       databend:
         condition: service_healthy
-  test-flight-sql:
+  test-bensql:
     image: rust
     command: bash cli/test.sh http && bash cli/test.sh flight
     working_dir: /workspace
