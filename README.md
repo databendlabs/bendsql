@@ -4,11 +4,11 @@ Databend Native Client in Rust
 
 ## Components
 
-- [**core**](core): RestAPI rust client
+- [**core**](core): Databend RestAPI rust client
 
-- [**driver**](driver): Unified SQL client for RestAPI and FlightSQL
+- [**driver**](driver): Databend unified SQL client for RestAPI and FlightSQL
 
-- [**cli**](cli): Native CLI for Databend
+- [**cli**](cli): Databend native CLI
 
 
 ## Installation for BendSQL
