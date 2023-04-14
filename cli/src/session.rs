@@ -47,11 +47,8 @@ impl Session {
                 "Trying connect to {}:{} as user {}.",
                 info.host, info.port, info.user
             );
-            let row = conn.query_row("select version()").await?;
-            if let Some(row) = row {
-                let (version,): (String,) = row.try_into()?;
-                println!("Connected to {}", version);
-            }
+            let version = conn.version().await?;
+            println!("Connected to {}", version);
             println!();
         }
 
