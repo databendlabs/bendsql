@@ -60,6 +60,7 @@ services:
       - RUST_BACKTRACE=1
       - DATABEND_USER=databend
       - DATABEND_PASSWORD=databend
+      - DATABEND_HOST=databend
     volumes:
       - ../:/workspace
       - rustup:/usr/local/rustup

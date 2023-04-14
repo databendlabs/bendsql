@@ -12,7 +12,7 @@ cargo build --bin bendsql
 for f in `ls cli/tests/*.sql`;do
 	echo "Testing -- ${f}"
 	suite=`echo $f | sed -e 's#cli/tests/##'  | sed -e 's#.sql##'`
-	cat $f | ./target/debug/bendsql -u ${DATABEND_USER} -p ${DATABEND_PASSWORD} --port ${port} -h127.0.0.1 ${extra} > /tmp/${suite}.output 2>&1
+	cat $f | ./target/debug/bendsql -u ${DATABEND_USER} -p ${DATABEND_PASSWORD} --port ${port} -h${DATABEND_HOST} ${extra} > /tmp/${suite}.output 2>&1
 	diff /tmp/${suite}.output cli/tests/${suite}.result
 	
 	ret_code=$?
