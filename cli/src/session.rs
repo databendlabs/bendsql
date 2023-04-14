@@ -39,14 +39,16 @@ pub struct Session {
 
 impl Session {
     pub async fn try_new(dsn: String, settings: Settings, is_repl: bool) -> Result<Self> {
-        let conn = new_connection(&dsn).await?;
+        let mut conn = new_connection(&dsn).await?;
         let info = conn.info();
         if is_repl {
             println!("Welcome to BendSQL.");
             println!(
-                "Connecting to {}:{} as user {}.",
+                "Trying connect to {}:{} as user {}.",
                 info.host, info.port, info.user
             );
+            let version = conn.version().await?;
+            println!("Connected to {}", version);
             println!();
         }
 
@@ -158,14 +160,17 @@ impl Session {
         let kind = QueryKind::from(query);
 
         if kind == QueryKind::Update {
-            self.conn.exec(query).await?;
+            let affected = self.conn.exec(query).await?;
             if is_repl {
-                println!(
-                    "{} affected in ({:.3} sec)",
-                    // FIXME:(everpcpc)
-                    0,
-                    start.elapsed().as_secs_f64()
-                );
+                if affected > 0 {
+                    println!(
+                        "{} rows affected in ({:.3} sec)",
+                        affected,
+                        start.elapsed().as_secs_f64()
+                    );
+                } else {
+                    println!("Processed in ({:.3} sec)", start.elapsed().as_secs_f64());
+                }
                 println!();
             }
             return Ok(false);
@@ -205,7 +210,7 @@ fn get_history_path() -> String {
     )
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum QueryKind {
     Query,
     Update,
