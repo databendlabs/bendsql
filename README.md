@@ -13,7 +13,7 @@ Databend Native Client in Rust
 
 ## Installation for BendSQL
 
-With cargo:
+With Cargo:
 ```bash
 cargo install bendsql
 ```
@@ -42,7 +42,7 @@ make test
 
 ### integration tests
 
-** Note: Docker and Docker Compose needed **
+**Note: Docker and Docker Compose needed**
 
 ```bash
 make integration-tests
