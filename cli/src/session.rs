@@ -207,7 +207,7 @@ impl Session {
 
 fn get_history_path() -> String {
     format!(
-        "{}/.databend_history",
+        "{}/.bendsql_history",
         std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
     )
 }
