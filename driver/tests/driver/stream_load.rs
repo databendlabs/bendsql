@@ -28,6 +28,11 @@ async fn stream_load(presigned: bool, file_type: &str) {
     } else {
         new_connection(&format!("{}&presigned_url_disabled=1", dsn)).unwrap()
     };
+    let info = client.info();
+    if info.handler == "FlightSQL" {
+        // NOTE: FlightSQL does not support stream load
+        return;
+    }
 
     let file = File::open(format!("tests/driver/data/books.{}", file_type))
         .await
