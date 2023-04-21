@@ -65,7 +65,7 @@ impl InputFormat {
             _ => {}
         }
         for (k, v) in opts {
-            options.insert(&k, &v);
+            options.insert(k, v);
         }
         options
     }
@@ -260,15 +260,17 @@ pub async fn main() -> Result<()> {
             Some(data) => {
                 let options = args.format.get_options(&args.format_opt);
                 if data.starts_with('@') {
-                    let fname = &data[1..];
-                    match fname {
-                        "-" => session.stream_load_stdin(&query, options).await?,
-                        _ => {
+                    match data.strip_prefix('@') {
+                        Some("-") => session.stream_load_stdin(&query, options).await?,
+                        Some(fname) => {
                             let path = std::path::Path::new(fname);
                             if !path.exists() {
                                 return Err(anyhow!("file not found: {}", fname));
                             }
                             session.stream_load_file(&query, path, options).await?
+                        }
+                        None => {
+                            return Err(anyhow!("invalid data input: {}", data));
                         }
                     }
                 } else {

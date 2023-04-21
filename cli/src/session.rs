@@ -23,7 +23,7 @@ use rustyline::config::Builder;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::{CompletionType, Editor};
-use tokio::fs::File;
+use tokio::fs::{remove_dir_all, File};
 use tokio::io::AsyncWriteExt;
 use tokio::time::Instant;
 
@@ -203,8 +203,8 @@ impl Session {
         options: BTreeMap<&str, &str>,
     ) -> Result<()> {
         let dir = std::env::temp_dir();
+        // TODO:(everpcpc) write by chunks
         let mut lines = std::io::stdin().lock().lines();
-
         let tmp_file = dir.join(format!("bendsql_{}", chrono::Utc::now().timestamp_nanos()));
         {
             let mut file = File::open(&tmp_file).await?;
@@ -215,6 +215,7 @@ impl Session {
             file.flush().await?;
         }
         self.stream_load_file(query, &tmp_file, options).await?;
+        remove_dir_all(dir).await?;
         Ok(())
     }
 
@@ -234,8 +235,8 @@ impl Session {
             .await?;
 
         println!(
-            "{:?} rows loaded in ({:.3} sec)",
-            progress,
+            "{} rows written in ({:.3} sec)",
+            progress.write_rows,
             start.elapsed().as_secs_f64()
         );
 
