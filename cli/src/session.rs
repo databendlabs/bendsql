@@ -166,7 +166,7 @@ impl Session {
             }
             None => line.to_string(),
         };
-        if query.ends_with(";") {
+        if query.ends_with(';') {
             Some(query)
         } else {
             self.query = Some(query);
