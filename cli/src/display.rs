@@ -191,28 +191,15 @@ fn print_rows(schema: SchemaRef, results: &[Row], _settings: &Settings) -> Resul
 }
 
 fn format_read_progress(progress: &QueryProgress, elapsed: f64) -> String {
-    let mut s = String::new();
-    s.push_str(&format!(
-        "{} rows, {} processed, ({} rows/s, {}/s)",
+    format!(
+        "Processing {}/{} ({} rows/s), {}/{} ({}/s)",
+        humanize_count(progress.read_rows as f64),
         humanize_count(progress.total_rows as f64),
+        humanize_count(progress.read_rows as f64 / elapsed),
+        HumanBytes(progress.read_bytes as u64),
         HumanBytes(progress.total_bytes as u64),
-        humanize_count(progress.total_rows as f64 / elapsed),
-        HumanBytes((progress.total_bytes as f64 / elapsed) as u64)
-    ));
-    s
-}
-
-// TODO:(everpcpc)
-fn _format_write_progress(progress: &QueryProgress, elapsed: f64) -> String {
-    let mut s = String::new();
-    s.push_str(&format!(
-        "{} rows, {} written, ({} rows/s., {}/s.)",
-        humanize_count(progress.write_rows as f64),
-        HumanBytes(progress.write_bytes as u64),
-        humanize_count(progress.write_rows as f64 / elapsed),
-        HumanBytes((progress.write_bytes as f64 / elapsed) as u64)
-    ));
-    s
+        HumanBytes((progress.read_bytes as f64 / elapsed) as u64)
+    )
 }
 
 fn display_read_progress(pb: Option<ProgressBar>, current: &QueryProgress) -> ProgressBar {
