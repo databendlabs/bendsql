@@ -14,4 +14,4 @@ ${BENDSQL} \
     --data=@cli/tests/data/ontime_200.csv.gz
 
 echo "SELECT COUNT(*) FROM test_ontime;" | ${BENDSQL} --output=tsv
-echo 'SELECT * FROM test_ontime LIMIT 1;' | ${BENDSQL} --format=csv --output=csv
+echo 'SELECT * FROM test_ontime LIMIT 1;' | ${BENDSQL} --output=csv
