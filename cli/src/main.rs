@@ -45,7 +45,7 @@ impl InputFormat {
                 options.insert("type", "CSV");
                 options.insert("record_delimiter", "\n");
                 options.insert("field_delimiter", ",");
-                options.insert("quote_character", "\"");
+                options.insert("quote", "\"");
                 options.insert("escape", "\"");
                 options.insert("skip_header", "0");
                 options.insert("compression", "NONE");

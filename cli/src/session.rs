@@ -23,7 +23,7 @@ use rustyline::config::Builder;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::{CompletionType, Editor};
-use tokio::fs::{remove_dir_all, File};
+use tokio::fs::{remove_file, File};
 use tokio::io::AsyncWriteExt;
 use tokio::time::Instant;
 
@@ -207,7 +207,7 @@ impl Session {
         let mut lines = std::io::stdin().lock().lines();
         let tmp_file = dir.join(format!("bendsql_{}", chrono::Utc::now().timestamp_nanos()));
         {
-            let mut file = File::open(&tmp_file).await?;
+            let mut file = File::create(&tmp_file).await?;
             while let Some(Ok(line)) = lines.next() {
                 file.write_all(line.as_bytes()).await?;
                 file.write_all(b"\n").await?;
@@ -215,7 +215,7 @@ impl Session {
             file.flush().await?;
         }
         self.stream_load_file(query, &tmp_file, options).await?;
-        remove_dir_all(dir).await?;
+        remove_file(tmp_file).await?;
         Ok(())
     }
 
@@ -225,21 +225,16 @@ impl Session {
         file: &Path,
         options: BTreeMap<&str, &str>,
     ) -> Result<()> {
-        let start = Instant::now();
+        let _start = Instant::now();
         let file = File::open(file).await?;
         let metadata = file.metadata().await?;
 
-        let progress = self
+        let _progress = self
             .conn
             .stream_load(query, Box::new(file), metadata.len(), Some(options), None)
             .await?;
 
-        println!(
-            "{} rows written in ({:.3} sec)",
-            progress.write_rows,
-            start.elapsed().as_secs_f64()
-        );
-
+        // TODO:(everpcpc) show progress
         Ok(())
     }
 
