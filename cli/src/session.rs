@@ -29,7 +29,7 @@ use tokio::time::Instant;
 
 use crate::ast::{TokenKind, Tokenizer};
 use crate::config::Settings;
-use crate::display::{ChunkDisplay, FormatDisplay, ReplDisplay};
+use crate::display::{format_write_progress, ChunkDisplay, FormatDisplay, ReplDisplay};
 use crate::helper::CliHelper;
 
 pub struct Session {
@@ -240,19 +240,26 @@ impl Session {
     pub async fn stream_load_file(
         &mut self,
         query: &str,
-        file: &Path,
+        file_path: &Path,
         options: BTreeMap<&str, &str>,
     ) -> Result<()> {
-        let _start = Instant::now();
-        let file = File::open(file).await?;
+        let start = Instant::now();
+        let file = File::open(file_path).await?;
         let metadata = file.metadata().await?;
 
-        let _progress = self
+        let progress = self
             .conn
             .stream_load(query, Box::new(file), metadata.len(), Some(options), None)
             .await?;
 
         // TODO:(everpcpc) show progress
+        if self.settings.show_progress {
+            eprintln!(
+                "==> Stream Loaded {}:\n    {}",
+                file_path.display(),
+                format_write_progress(&progress, start.elapsed().as_secs_f64())
+            );
+        }
         Ok(())
     }
 

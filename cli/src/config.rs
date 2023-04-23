@@ -34,6 +34,9 @@ pub struct Settings {
     pub prompt: String,
     pub progress_color: String,
     pub output_format: OutputFormat,
+    /// Show progress [bar] when executing queries.
+    /// Only works in non-interactive mode.
+    pub show_progress: bool,
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize)]
@@ -82,6 +85,7 @@ impl Default for Settings {
             progress_color: "cyan".to_string(),
             prompt: "bendsql> ".to_string(),
             output_format: OutputFormat::Table,
+            show_progress: false,
         }
     }
 }

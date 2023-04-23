@@ -219,6 +219,16 @@ fn format_read_progress(progress: &QueryProgress, elapsed: f64) -> String {
     )
 }
 
+pub fn format_write_progress(progress: &QueryProgress, elapsed: f64) -> String {
+    format!(
+        "Written {} ({} rows/s), {} ({}/s)",
+        humanize_count(progress.write_rows as f64),
+        humanize_count(progress.write_rows as f64 / elapsed),
+        HumanBytes(progress.write_bytes as u64),
+        HumanBytes((progress.write_bytes as f64 / elapsed) as u64)
+    )
+}
+
 fn display_read_progress(pb: Option<ProgressBar>, current: &QueryProgress) -> ProgressBar {
     let pb = pb.unwrap_or_else(|| {
         let pbn = ProgressBar::new(current.total_bytes as u64);

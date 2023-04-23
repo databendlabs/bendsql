@@ -229,6 +229,7 @@ pub async fn main() -> Result<()> {
         }
     };
     config.settings.output_format = args.output;
+    config.settings.show_progress = args.progress;
 
     let is_repl = atty::is(atty::Stream::Stdin) && !args.non_interactive && args.query.is_none();
     let mut session = session::Session::try_new(dsn, config.settings, is_repl).await?;
