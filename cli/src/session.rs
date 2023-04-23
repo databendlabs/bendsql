@@ -39,6 +39,7 @@ pub struct Session {
 
     settings: Settings,
     prompt: String,
+    query: Option<String>,
 }
 
 impl Session {
@@ -69,6 +70,7 @@ impl Session {
             is_repl,
             settings,
             prompt,
+            query: None,
         })
     }
 
@@ -81,7 +83,6 @@ impl Session {
     }
 
     pub async fn handle_repl(&mut self) {
-        let mut query = "".to_owned();
         let config = Builder::new()
             .completion_prompt_limit(5)
             .completion_type(CompletionType::Circular)
@@ -92,13 +93,33 @@ impl Session {
         rl.load_history(&get_history_path()).ok();
 
         loop {
-            match rl.readline(&self.prompt) {
-                Ok(line) if line.starts_with("--") => {
-                    continue;
-                }
+            let prompt = if self.query.is_none() {
+                &self.prompt
+            } else {
+                "    -> "
+            };
+            match rl.readline(prompt) {
                 Ok(line) => {
-                    let line = line.trim_end();
-                    query.push_str(&line.replace("\\\n", ""));
+                    if let Some(query) = self.append_query(&line) {
+                        let _ = rl.add_history_entry(&query);
+                        match self.handle_query(true, &query).await {
+                            Ok(true) => {
+                                break;
+                            }
+                            Ok(false) => {}
+                            Err(e) => {
+                                if e.to_string().contains("Unauthenticated") {
+                                    if let Err(e) = self.reconnect().await {
+                                        eprintln!("Reconnect error: {}", e);
+                                    } else if let Err(e) = self.handle_query(true, &query).await {
+                                        eprintln!("{}", e);
+                                    }
+                                } else {
+                                    eprintln!("{}", e);
+                                }
+                            }
+                        }
+                    }
                 }
                 Err(e) => match e {
                     ReadlineError::Io(err) => {
@@ -113,44 +134,43 @@ impl Session {
                     _ => {}
                 },
             }
-            if !query.is_empty() {
-                let _ = rl.add_history_entry(query.trim_end());
-                match self.handle_query(true, &query).await {
-                    Ok(true) => {
-                        break;
-                    }
-                    Ok(false) => {}
-                    Err(e) => {
-                        if e.to_string().contains("Unauthenticated") {
-                            if let Err(e) = self.reconnect().await {
-                                eprintln!("Reconnect error: {}", e);
-                            } else if let Err(e) = self.handle_query(true, &query).await {
-                                eprintln!("{}", e);
-                            }
-                        } else {
-                            eprintln!("{}", e);
-                        }
-                    }
-                }
-            }
-            query.clear();
         }
-
         println!("Bye");
         let _ = rl.save_history(&get_history_path());
     }
 
     pub async fn handle_stdin(&mut self) {
         let mut lines = std::io::stdin().lock().lines();
-        // TODO support multi line
         while let Some(Ok(line)) = lines.next() {
-            let line = line.trim_end();
-            if line.is_empty() {
-                continue;
+            if let Some(query) = self.append_query(&line) {
+                if let Err(e) = self.handle_query(false, &query).await {
+                    eprintln!("{}", e);
+                }
             }
-            if let Err(e) = self.handle_query(false, line).await {
-                eprintln!("{}", e);
+        }
+    }
+
+    fn append_query(&mut self, line: &str) -> Option<String> {
+        let line = line.trim();
+        if line.is_empty() {
+            return None;
+        }
+        if line.starts_with("--") {
+            return None;
+        }
+        let query = match self.query.take() {
+            Some(mut query) => {
+                query.push(' ');
+                query.push_str(&line.replace("\\\n", ""));
+                query
             }
+            None => line.to_string(),
+        };
+        if query.ends_with(";") {
+            Some(query)
+        } else {
+            self.query = Some(query);
+            None
         }
     }
 
@@ -160,9 +180,7 @@ impl Session {
         }
 
         let start = Instant::now();
-
         let kind = QueryKind::from(query);
-
         match kind {
             QueryKind::Update => {
                 let affected = self.conn.exec(query).await?;
