@@ -24,8 +24,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
 use clap::{CommandFactory, Parser, ValueEnum};
-use config::Config;
-use serde::Deserialize;
+use config::{Config, OutputFormat};
 
 /// Supported file format and options:
 /// https://databend.rs/doc/sql-reference/file-format-options
@@ -70,13 +69,6 @@ impl InputFormat {
         }
         options
     }
-}
-
-#[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize)]
-pub enum OutputFormat {
-    Table,
-    CSV,
-    TSV,
 }
 
 #[derive(Debug, Parser, PartialEq)]

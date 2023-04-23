@@ -16,9 +16,8 @@
 
 use std::{collections::BTreeMap, path::Path};
 
+use clap::ValueEnum;
 use serde::Deserialize;
-
-use crate::OutputFormat;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {
@@ -35,6 +34,13 @@ pub struct Settings {
     pub prompt: String,
     pub progress_color: String,
     pub output_format: OutputFormat,
+}
+
+#[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize)]
+pub enum OutputFormat {
+    Table,
+    CSV,
+    TSV,
 }
 
 #[derive(Clone, Debug, Deserialize)]

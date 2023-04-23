@@ -25,7 +25,11 @@ use tokio::time::Instant;
 
 use indicatif::{HumanBytes, ProgressBar, ProgressState, ProgressStyle};
 
-use crate::{ast::format_query, config::Settings, helper::CliHelper, OutputFormat};
+use crate::{
+    ast::format_query,
+    config::{OutputFormat, Settings},
+    helper::CliHelper,
+};
 
 #[async_trait::async_trait]
 pub trait ChunkDisplay {
