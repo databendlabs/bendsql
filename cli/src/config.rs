@@ -18,6 +18,8 @@ use std::{collections::BTreeMap, path::Path};
 
 use serde::Deserialize;
 
+use crate::OutputFormat;
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -32,6 +34,7 @@ pub struct Settings {
     pub display_pretty_sql: bool,
     pub prompt: String,
     pub progress_color: String,
+    pub output_format: OutputFormat,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -72,6 +75,7 @@ impl Default for Settings {
             display_pretty_sql: true,
             progress_color: "cyan".to_string(),
             prompt: "bendsql> ".to_string(),
+            output_format: OutputFormat::Table,
         }
     }
 }
