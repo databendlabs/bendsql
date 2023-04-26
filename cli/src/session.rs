@@ -185,6 +185,7 @@ impl Session {
             return vec![line.to_owned()];
         }
 
+        self.query.push(' ');
         self.query.push_str(line);
 
         let mut queries = Vec::new();
