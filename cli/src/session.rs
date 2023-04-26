@@ -178,10 +178,8 @@ impl Session {
             return vec![];
         }
 
-        if self.query.is_empty() {
-            if line.starts_with('.') || line == "exit" || line == "quit" {
-                return vec![line.to_owned()];
-            }
+        if self.query.is_empty() && (line.starts_with('.') || line == "exit" || line == "quit") {
+            return vec![line.to_owned()];
         }
 
         self.query.push_str(line);
