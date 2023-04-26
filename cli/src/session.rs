@@ -80,14 +80,8 @@ impl Session {
             "> ".to_owned()
         } else {
             let info = self.conn.info();
-            let tokens = info.host.split('.').collect::<Vec<_>>();
-            let host = if tokens.len() >= 2 {
-                tokens[..2].join(".")
-            } else {
-                info.host
-            };
             let mut prompt = self.settings.prompt.clone();
-            prompt = prompt.replace("{host}", &host);
+            prompt = prompt.replace("{host}", &info.host);
             prompt = prompt.replace("{user}", &info.user);
             prompt = prompt.replace("{port}", &info.port.to_string());
             format!("{} ", prompt.trim_end())
