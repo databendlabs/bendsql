@@ -124,6 +124,8 @@ impl Session {
                                     }
                                 } else {
                                     eprintln!("{}", e);
+                                    self.query.clear();
+                                    break;
                                 }
                             }
                         }
@@ -155,6 +157,7 @@ impl Session {
             for query in queries {
                 if let Err(e) = self.handle_query(false, &query).await {
                     eprintln!("{}", e);
+                    return;
                 }
             }
         }
