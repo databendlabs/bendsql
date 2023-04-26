@@ -104,7 +104,7 @@ impl Session {
         rl.set_helper(Some(CliHelper::new()));
         rl.load_history(&get_history_path()).ok();
 
-        loop {
+        'F: loop {
             match rl.readline(&self.prompt()) {
                 Ok(line) => {
                     let queries = self.append_query(&line);
@@ -112,7 +112,7 @@ impl Session {
                         let _ = rl.add_history_entry(&query);
                         match self.handle_query(true, &query).await {
                             Ok(true) => {
-                                break;
+                                break 'F;
                             }
                             Ok(false) => {}
                             Err(e) => {
@@ -121,11 +121,9 @@ impl Session {
                                         eprintln!("Reconnect error: {}", e);
                                     } else if let Err(e) = self.handle_query(true, &query).await {
                                         eprintln!("{}", e);
-                                        return;
                                     }
                                 } else {
                                     eprintln!("{}", e);
-                                    return;
                                 }
                             }
                         }
@@ -157,7 +155,6 @@ impl Session {
             for query in queries {
                 if let Err(e) = self.handle_query(false, &query).await {
                     eprintln!("{}", e);
-                    return;
                 }
             }
         }
@@ -179,6 +176,12 @@ impl Session {
         }
         if line.starts_with("--") {
             return vec![];
+        }
+
+        if self.query.is_empty() {
+            if line.starts_with('.') || line == "exit" || line == "quit" {
+                return vec![line.to_owned()];
+            }
         }
 
         self.query.push_str(line);
