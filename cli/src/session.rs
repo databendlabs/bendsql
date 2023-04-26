@@ -77,7 +77,7 @@ impl Session {
 
     fn prompt(&self) -> String {
         if !self.query.is_empty() {
-            "".to_owned()
+            "> ".to_owned()
         } else {
             let info = self.conn.info();
             let tokens = info.host.split('.').collect::<Vec<_>>();
