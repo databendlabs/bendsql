@@ -181,7 +181,7 @@ impl Session {
             }
             None => line.to_string(),
         };
-        if query.ends_with(';') || query.starts_with(".") {
+        if query.ends_with(';') || query.starts_with('.') {
             Some(query)
         } else {
             self.query = Some(query);
@@ -195,7 +195,7 @@ impl Session {
             return Ok(true);
         }
 
-        if is_repl && query.starts_with(".") {
+        if is_repl && query.starts_with('.') {
             let query = query
                 .trim_start_matches(".")
                 .split_whitespace()
