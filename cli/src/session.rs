@@ -188,12 +188,9 @@ impl Session {
         let mut start = 0;
 
         while let Some(Ok(token)) = tokenizer.next() {
-            match token.kind {
-                TokenKind::SemiColon => {
-                    queries.push(self.query[start..token.span.end].to_owned());
-                    start = token.span.end;
-                }
-                _ => {}
+            if token.kind == TokenKind::SemiColon {
+                queries.push(self.query[start..token.span.end].to_owned());
+                start = token.span.end;
             }
         }
         if start != 0 {
