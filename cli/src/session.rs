@@ -17,6 +17,7 @@ use std::io::BufRead;
 use std::path::Path;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use anyhow::Result;
 use databend_driver::{new_connection, Connection};
 use rustyline::config::Builder;
@@ -28,6 +29,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::Instant;
 
 use crate::ast::{TokenKind, Tokenizer};
+use crate::config::OutputFormat;
 use crate::config::Settings;
 use crate::display::{format_write_progress, ChunkDisplay, FormatDisplay, ReplDisplay};
 use crate::helper::CliHelper;
@@ -38,7 +40,6 @@ pub struct Session {
     is_repl: bool,
 
     settings: Settings,
-    prompt: String,
     query: Option<String>,
 }
 
@@ -57,26 +58,11 @@ impl Session {
             println!();
         }
 
-        let mut prompt = settings.prompt.clone();
-
-        {
-            let tokens = info.host.split('.').collect::<Vec<_>>();
-            let host = if tokens.len() >= 2 {
-                tokens[..2].join(".")
-            } else {
-                info.host
-            };
-            prompt = prompt.replace("{host}", &host);
-            prompt = prompt.replace("{user}", &info.user);
-            prompt = prompt.replace("{port}", &info.port.to_string());
-        }
-
         Ok(Self {
             dsn,
             conn,
             is_repl,
             settings,
-            prompt,
             query: None,
         })
     }
@@ -86,6 +72,25 @@ impl Session {
             self.handle_repl().await;
         } else {
             self.handle_stdin().await;
+        }
+    }
+
+    fn prompt(&self) -> String {
+        if self.query.is_some() {
+            "".to_owned()
+        } else {
+            let info = self.conn.info();
+            let tokens = info.host.split('.').collect::<Vec<_>>();
+            let host = if tokens.len() >= 2 {
+                tokens[..2].join(".")
+            } else {
+                info.host
+            };
+            let mut prompt = self.settings.prompt.clone();
+            prompt = prompt.replace("{host}", &host);
+            prompt = prompt.replace("{user}", &info.user);
+            prompt = prompt.replace("{port}", &info.port.to_string());
+            format!("{} ", prompt.trim_end())
         }
     }
 
@@ -100,12 +105,7 @@ impl Session {
         rl.load_history(&get_history_path()).ok();
 
         loop {
-            let prompt = if self.query.is_none() {
-                &self.prompt
-            } else {
-                ""
-            };
-            match rl.readline(prompt) {
+            match rl.readline(&self.prompt()) {
                 Ok(line) => {
                     if let Some(query) = self.append_query(&line) {
                         let _ = rl.add_history_entry(&query);
@@ -181,7 +181,7 @@ impl Session {
             }
             None => line.to_string(),
         };
-        if query.ends_with(';') {
+        if query.ends_with(';') || query.starts_with(".") {
             Some(query)
         } else {
             self.query = Some(query);
@@ -193,6 +193,20 @@ impl Session {
         let query = query.trim_end_matches(';').trim();
         if is_repl && (query == "exit" || query == "quit") {
             return Ok(true);
+        }
+
+        if is_repl && query.starts_with(".") {
+            let query = query
+                .trim_start_matches(".")
+                .split_whitespace()
+                .collect::<Vec<_>>();
+            if query.len() != 2 {
+                return Err(anyhow!(
+                    "Control command error, must be syntax of `.cmd_name cmd_value`."
+                ));
+            }
+            self.settings.inject_ctrl_cmd(query[0], query[1])?;
+            return Ok(false);
         }
 
         let start = Instant::now();
@@ -217,7 +231,7 @@ impl Session {
             QueryKind::Query | QueryKind::Explain => {
                 let (schema, data) = self.conn.query_iter_ext(query).await?;
 
-                if is_repl {
+                if is_repl && self.settings.output_format == OutputFormat::Table {
                     let mut displayer =
                         ReplDisplay::new(&self.settings, query, start, Arc::new(schema), data);
                     displayer.display().await?;
