@@ -40,7 +40,7 @@ pub struct Session {
     is_repl: bool,
 
     settings: Settings,
-    query: Option<String>,
+    query: String,
 }
 
 impl Session {
@@ -63,7 +63,7 @@ impl Session {
             conn,
             is_repl,
             settings,
-            query: None,
+            query: String::new(),
         })
     }
 
@@ -76,7 +76,7 @@ impl Session {
     }
 
     fn prompt(&self) -> String {
-        if self.query.is_some() {
+        if !self.query.is_empty() {
             "".to_owned()
         } else {
             let info = self.conn.info();
@@ -107,7 +107,8 @@ impl Session {
         loop {
             match rl.readline(&self.prompt()) {
                 Ok(line) => {
-                    if let Some(query) = self.append_query(&line) {
+                    let queries = self.append_query(&line);
+                    for query in queries {
                         let _ = rl.add_history_entry(&query);
                         match self.handle_query(true, &query).await {
                             Ok(true) => {
@@ -120,9 +121,11 @@ impl Session {
                                         eprintln!("Reconnect error: {}", e);
                                     } else if let Err(e) = self.handle_query(true, &query).await {
                                         eprintln!("{}", e);
+                                        return;
                                     }
                                 } else {
                                     eprintln!("{}", e);
+                                    return;
                                 }
                             }
                         }
@@ -133,7 +136,7 @@ impl Session {
                         eprintln!("io err: {err}");
                     }
                     ReadlineError::Interrupted => {
-                        self.query = None;
+                        self.query.clear();
                         println!("^C");
                     }
                     ReadlineError::Eof => {
@@ -150,43 +153,53 @@ impl Session {
     pub async fn handle_stdin(&mut self) {
         let mut lines = std::io::stdin().lock().lines();
         while let Some(Ok(line)) = lines.next() {
-            if let Some(query) = self.append_query(&line) {
+            let queries = self.append_query(&line);
+            for query in queries {
                 if let Err(e) = self.handle_query(false, &query).await {
                     eprintln!("{}", e);
+                    return;
                 }
             }
         }
 
         // if the last query is not finished with `;`, we need to execute it.
-        if let Some(query) = self.query.take() {
+        let query = self.query.trim().to_owned();
+        if !query.is_empty() {
+            self.query.clear();
             if let Err(e) = self.handle_query(false, &query).await {
                 eprintln!("{}", e);
             }
         }
     }
 
-    fn append_query(&mut self, line: &str) -> Option<String> {
+    fn append_query(&mut self, line: &str) -> Vec<String> {
         let line = line.trim();
         if line.is_empty() {
-            return None;
+            return vec![];
         }
         if line.starts_with("--") {
-            return None;
+            return vec![];
         }
-        let query = match self.query.take() {
-            Some(mut query) => {
-                query.push(' ');
-                query.push_str(&line.replace("\\\n", ""));
-                query
+
+        self.query.push_str(line);
+
+        let mut queries = Vec::new();
+        let mut tokenizer = Tokenizer::new(&self.query);
+        let mut start = 0;
+
+        while let Some(Ok(token)) = tokenizer.next() {
+            match token.kind {
+                TokenKind::SemiColon => {
+                    queries.push(self.query[start..token.span.end].to_owned());
+                    start = token.span.end;
+                }
+                _ => {}
             }
-            None => line.to_string(),
-        };
-        if query.ends_with(';') || query.starts_with('.') {
-            Some(query)
-        } else {
-            self.query = Some(query);
-            None
         }
+        if start != 0 {
+            self.query = self.query[start..].trim().to_owned();
+        }
+        queries
     }
 
     pub async fn handle_query(&mut self, is_repl: bool, query: &str) -> Result<bool> {
@@ -197,7 +210,7 @@ impl Session {
 
         if is_repl && query.starts_with('.') {
             let query = query
-                .trim_start_matches(".")
+                .trim_start_matches('.')
                 .split_whitespace()
                 .collect::<Vec<_>>();
             if query.len() != 2 {
