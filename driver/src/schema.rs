@@ -139,7 +139,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
 
     fn try_from(desc: &TypeDesc) -> Result<Self> {
         let dt = match desc.name {
-            "Null" => DataType::Null,
+            "Null" | "NULL" => DataType::Null,
             "Boolean" => DataType::Boolean,
             "String" => DataType::String,
             "Int8" => DataType::Number(NumberDataType::Int8),
