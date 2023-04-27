@@ -136,6 +136,9 @@ struct Args {
 
     #[clap(long, help = "Show progress for data loading in stderr")]
     progress: bool,
+
+    #[clap(long, help = "Only show execution time without results")]
+    time: bool,
 }
 
 /// Parse a single key-value pair
@@ -247,6 +250,10 @@ pub async fn main() -> Result<()> {
         config.settings.output_format = OutputFormat::Table;
     } else {
         config.settings.output_format = OutputFormat::TSV;
+    }
+
+    if args.time {
+        config.settings.output_format = OutputFormat::Time;
     }
 
     let mut session = session::Session::try_new(dsn, config.settings, is_repl).await?;

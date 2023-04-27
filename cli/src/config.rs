@@ -50,6 +50,8 @@ pub enum OutputFormat {
     Table,
     CSV,
     TSV,
+    Time,
+    Null,
 }
 
 impl Settings {
@@ -64,6 +66,8 @@ impl Settings {
                     "table" => OutputFormat::Table,
                     "csv" => OutputFormat::CSV,
                     "tsv" => OutputFormat::TSV,
+                    "null" => OutputFormat::Null,
+                    "time" => OutputFormat::Time,
                     _ => return Err(anyhow!("Unknown output format: {}", cmd_value)),
                 }
             }
