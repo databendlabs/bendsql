@@ -20,7 +20,7 @@ mod display;
 mod helper;
 mod session;
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, io::stdin};
 
 use anyhow::{anyhow, Result};
 use clap::{CommandFactory, Parser, ValueEnum};
@@ -268,13 +268,11 @@ pub async fn main() -> Result<()> {
             if args.non_interactive {
                 return Err(anyhow!("no query specified"));
             }
-            session.handle_stdin().await
+            session.handle_reader(stdin().lock()).await
         }
         Some(query) => match args.data {
             None => {
-                if let Err(e) = session.handle_query(false, &query).await {
-                    eprintln!("{}", e);
-                }
+                session.handle_reader(std::io::Cursor::new(query)).await;
             }
             Some(data) => {
                 let options = args.format.get_options(&args.format_opt);
