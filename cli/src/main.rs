@@ -251,10 +251,7 @@ pub async fn main() -> Result<()> {
     } else {
         config.settings.output_format = OutputFormat::TSV;
     }
-
-    if args.time {
-        config.settings.output_format = OutputFormat::Time;
-    }
+    config.settings.time = args.time;
 
     let mut session = session::Session::try_new(dsn, config.settings, is_repl).await?;
 
