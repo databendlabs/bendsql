@@ -256,7 +256,7 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                 )))
             }
         };
-        if f.is_nullable() {
+        if f.is_nullable() && !matches!(dt, DataType::Null) {
             dt = DataType::Nullable(Box::new(dt));
         }
         Ok(Field {
