@@ -230,15 +230,15 @@ impl Session {
                 let affected = self.conn.exec(query).await?;
                 if is_repl {
                     if affected > 0 {
-                        println!(
+                        eprintln!(
                             "{} rows affected in ({:.3} sec)",
                             affected,
                             start.elapsed().as_secs_f64()
                         );
                     } else {
-                        println!("Processed in ({:.3} sec)", start.elapsed().as_secs_f64());
+                        eprintln!("Processed in ({:.3} sec)", start.elapsed().as_secs_f64());
                     }
-                    println!();
+                    eprintln!();
                 }
                 Ok(false)
             }
