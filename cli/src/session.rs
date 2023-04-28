@@ -146,6 +146,7 @@ impl Session {
     }
 
     pub async fn handle_reader<R: BufRead>(&mut self, r: R) {
+        let start = Instant::now();
         let mut lines = r.lines();
         while let Some(Ok(line)) = lines.next() {
             let queries = self.append_query(&line);
@@ -164,6 +165,9 @@ impl Session {
             if let Err(e) = self.handle_query(false, &query).await {
                 eprintln!("{}", e);
             }
+        }
+        if self.settings.time {
+            println!("{:.3}", start.elapsed().as_secs_f64());
         }
     }
 
@@ -300,13 +304,13 @@ impl Session {
         self.conn = new_connection(&self.dsn)?;
         if self.is_repl {
             let info = self.conn.info();
-            println!(
+            eprintln!(
                 "Trying reconnect to {}:{} as user {}.",
                 info.host, info.port, info.user
             );
             let version = self.conn.version().await?;
-            println!("Connected to {}", version);
-            println!();
+            eprintln!("Connected to {}", version);
+            eprintln!();
         }
         Ok(())
     }
