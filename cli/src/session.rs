@@ -209,7 +209,7 @@ impl Session {
                 TokenKind::Comment => {
                     in_comment = true;
                 }
-                TokenKind::Newline => {
+                TokenKind::Newline | TokenKind::EOI => {
                     in_comment = false;
                 }
                 _ => {
