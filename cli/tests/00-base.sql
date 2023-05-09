@@ -13,12 +13,8 @@ select '1';select 2; select 1+2;
 
 select /* ignore this block */ 'with comment';
 
-/* ignore this block
+/* ignore this block /* /*
 select 'in comment block';
-*/
-
-/* ignore this block /* nested comment */
-select 'in nested comment block';
 */
 
 select 'bye';

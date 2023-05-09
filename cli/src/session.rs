@@ -42,7 +42,7 @@ pub struct Session {
 
     settings: Settings,
     query: String,
-    comment_block_level: usize,
+    in_comment_block: bool,
 }
 
 impl Session {
@@ -66,7 +66,7 @@ impl Session {
             is_repl,
             settings,
             query: String::new(),
-            comment_block_level: 0,
+            in_comment_block: false,
         })
     }
 
@@ -200,20 +200,20 @@ impl Session {
         while let Some(Ok(token)) = tokenizer.next() {
             match token.kind {
                 TokenKind::CommentBlockStart => {
-                    self.comment_block_level += 1;
+                    self.in_comment_block = true;
                     start = token.span.end;
                     continue;
                 }
                 TokenKind::CommentBlockEnd => {
-                    if self.comment_block_level == 0 {
+                    if !self.in_comment_block {
                         panic!("Unexpected comment block end");
                     }
-                    self.comment_block_level -= 1;
+                    self.in_comment_block = false;
                     start = token.span.end;
                     continue;
                 }
                 _ => {
-                    if self.comment_block_level > 0 {
+                    if self.in_comment_block {
                         start = token.span.end;
                         continue;
                     }
@@ -239,7 +239,7 @@ impl Session {
                     unreachable!("Comment block should be handled before")
                 }
                 _ => {
-                    if !in_comment && self.comment_block_level == 0 {
+                    if !in_comment && !self.in_comment_block {
                         self.query.push_str(&line[start..token.span.end]);
                     }
                 }
