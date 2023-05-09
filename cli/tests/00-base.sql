@@ -11,5 +11,15 @@ select '1';select 2; select 1+2;
 
 -- ignore this line
 
+select /* ignore this block */ 'with comment';
+
+/* ignore this block
+select 'in comment block';
+*/
+
+/* ignore this block /* nested comment */
+select 'in nested comment block';
+*/
+
 select 'bye';
 drop table test;
