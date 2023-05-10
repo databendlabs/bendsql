@@ -31,7 +31,7 @@ use crate::QueryProgress;
 
 #[derive(Clone)]
 pub struct RestAPIConnection {
-    client: APIClient,
+    pub client: APIClient,
 }
 
 #[async_trait]
