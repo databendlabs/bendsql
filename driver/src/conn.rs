@@ -13,6 +13,9 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
+use std::fmt::Debug;
+use std::iter::Fuse;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use dyn_clone::DynClone;
@@ -35,17 +38,33 @@ pub struct ConnectionInfo {
     pub user: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct Connector {
+    pub connector: FusedConnector,
+}
+
+// For bindings
+impl Connector {
+    pub fn new_connector(dsn: &str) -> Result<Box<Self>, Error> {
+        let conn = new_connection(dsn)?;
+        let r = Self { connector: FusedConnector::from(conn) };
+        Ok(Box::new(r))
+    }
+}
+
+pub type FusedConnector = Arc<dyn Connection>;
+
 pub type Reader = Box<dyn AsyncRead + Send + Sync + Unpin + 'static>;
 
 #[async_trait]
-pub trait Connection: DynClone + Send + Sync {
+pub trait Connection: DynClone + Send + Sync + Debug {
     fn info(&self) -> ConnectionInfo;
 
     async fn version(&self) -> Result<String> {
         let row = self.query_row("SELECT version()").await?;
         let version = match row {
             Some(row) => {
-                let (version,): (String,) = row.try_into()?;
+                let (version, ): (String, ) = row.try_into()?;
                 version
             }
             None => "".to_string(),

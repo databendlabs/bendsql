@@ -16,6 +16,7 @@ mod asyncio;
 
 use databend_client::APIClient;
 use databend_driver::rest_api::RestAPIConnection;
+use databend_driver::{Connector};
 use futures::future::ok;
 use pyo3::create_exception;
 use crate::asyncio::*;
@@ -25,6 +26,11 @@ create_exception!(databend_client, Error, PyException, "databend_client related 
 fn build_rest_api_client(dsn: &str) -> PyResult<RestAPIConnection> {
     let conn = RestAPIConnection::try_create(dsn).unwrap();
     Ok(conn)
+}
+
+fn build_connector(dsn: &str) -> PyResult<Connector> {
+    let conn = Connector::new_connector(dsn).unwrap();
+    Ok(*conn)
 }
 
 fn format_pyerr(err: &str) -> PyErr {

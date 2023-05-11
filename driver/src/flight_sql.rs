@@ -34,7 +34,7 @@ use crate::error::{Error, Result};
 use crate::rows::{QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress, Rows};
 use crate::Schema;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FlightSQLConnection {
     client: Arc<Mutex<FlightSqlServiceClient<Channel>>>,
     handshaked: Arc<Mutex<bool>>,
@@ -147,7 +147,7 @@ impl FlightSQLConnection {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 struct Args {
     uri: String,
     host: String,
@@ -158,7 +158,8 @@ struct Args {
     tls: bool,
     connect_timeout: Duration,
     query_timeout: Duration,
-    tcp_nodelay: bool, // Disable Nagle's Algorithm since we don't want packets to wait
+    tcp_nodelay: bool,
+    // Disable Nagle's Algorithm since we don't want packets to wait
     tcp_keepalive: Option<Duration>,
     http2_keep_alive_interval: Duration,
     keep_alive_timeout: Duration,

@@ -68,7 +68,7 @@ impl TryFrom<&str> for StageLocation {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct APIClient {
     cli: HttpClient,
     endpoint: Url,
