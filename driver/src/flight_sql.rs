@@ -147,7 +147,7 @@ impl FlightSQLConnection {
     }
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 struct Args {
     uri: String,
     host: String,

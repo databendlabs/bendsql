@@ -14,25 +14,23 @@
 
 use databend_client;
 use databend_driver::rest_api::RestAPIConnection;
-use pyo3::prelude::*;
-use pyo3_asyncio::tokio::future_into_py;
 use databend_driver::Connection;
+use pyo3::prelude::*;
+use pyo3::pyobject_native_type;
+use pyo3::ToPyObject;
+use pyo3_asyncio::tokio::future_into_py;
+use std::fs::Metadata;
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
 };
-use std::fs::Metadata;
-use pyo3::pyobject_native_type;
-use pyo3::ToPyObject;
 
-
-use crate::{build_rest_api_client, build_connector, Connector};
 use crate::format_pyerr;
+use crate::{build_connector, build_rest_api_client, Connector};
 
 /// `AsyncDatabendDriver` is the entry for all public async API
 #[pyclass(module = "databend_python")]
 pub struct AsyncDatabendDriver(Connector);
-
 
 #[pymethods]
 impl AsyncDatabendDriver {
