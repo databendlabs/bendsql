@@ -16,13 +16,31 @@ mod asyncio;
 
 use databend_client::APIClient;
 use databend_driver::rest_api::RestAPIConnection;
-use databend_driver::{Connector};
+use databend_driver::{Connection, new_connection};
 use futures::future::ok;
 use pyo3::create_exception;
 use crate::asyncio::*;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
+use std::sync::Arc;
 create_exception!(databend_client, Error, PyException, "databend_client related errors");
+
+#[derive(Clone, Debug)]
+pub struct Connector {
+    pub connector: FusedConnector,
+}
+
+pub type FusedConnector = Arc<dyn Connection>;
+
+// For bindings
+impl Connector {
+    pub fn new_connector(dsn: &str) -> Result<Box<Self>, Error> {
+        let conn = new_connection(dsn).unwrap();
+        let r = Self { connector: FusedConnector::from(conn) };
+        Ok(Box::new(r))
+    }
+}
+
 fn build_rest_api_client(dsn: &str) -> PyResult<RestAPIConnection> {
     let conn = RestAPIConnection::try_create(dsn).unwrap();
     Ok(conn)

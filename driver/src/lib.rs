@@ -20,7 +20,7 @@ mod rows;
 mod schema;
 mod value;
 
-pub use conn::{new_connection, Connection, Connector};
+pub use conn::{new_connection, Connection};
 pub use rows::{QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress};
 pub use schema::{DataType, Schema, SchemaRef};
 pub use value::{NumberValue, Value};
