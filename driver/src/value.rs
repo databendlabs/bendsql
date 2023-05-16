@@ -61,7 +61,6 @@ pub enum Value {
     Boolean(bool),
     String(String),
     Number(NumberValue),
-    // TODO:(everpcpc) Decimal(DecimalValue),
     /// Microseconds from 1970-01-01 00:00:00 UTC
     Timestamp(i64),
     Date(i32),
@@ -574,7 +573,7 @@ pub fn parse_decimal(text: &str) -> Result<NumberValue> {
         None => 0,
     };
     if i_part.len() as i32 + exp > 76 {
-        return Err(ConvertError::new("decimal", format!("{:?}", text)).into());
+        Err(ConvertError::new("decimal", format!("{:?}", text)).into())
     } else {
         let mut digits = Vec::with_capacity(76);
         digits.extend_from_slice(i_part.as_bytes());
@@ -608,7 +607,7 @@ pub fn parse_decimal(text: &str) -> Result<NumberValue> {
             ))
         } else {
             Ok(NumberValue::Decimal128(
-                i128::from_str_radix(digits, 10)?,
+                digits.parse::<i128>()?,
                 DecimalSize { precision, scale },
             ))
         }
