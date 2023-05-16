@@ -55,7 +55,7 @@ pub enum NumberValue {
     Decimal256(i256, DecimalSize),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Null,
     Boolean(bool),
@@ -142,13 +142,13 @@ impl TryFrom<(&DataType, &str)> for Value {
                 Ok(Self::Number(NumberValue::Float64(v.parse()?)))
             }
 
-            DataType::Decimal(DecimalDataType::Decimal128(_)) => {
-                let d = parse_decimal(v)?;
+            DataType::Decimal(DecimalDataType::Decimal128(size)) => {
+                let d = parse_decimal(v, *size)?;
                 Ok(Self::Number(d))
             }
 
-            DataType::Decimal(DecimalDataType::Decimal256(_)) => {
-                let d = parse_decimal(v)?;
+            DataType::Decimal(DecimalDataType::Decimal256(size)) => {
+                let d = parse_decimal(v, *size)?;
                 Ok(Self::Number(d))
             }
 
@@ -551,7 +551,7 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
 
 /// assume text is from
 /// used only for expr, so put more weight on readability
-pub fn parse_decimal(text: &str) -> Result<NumberValue> {
+pub fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
     let mut start = 0;
     let bytes = text.as_bytes();
     while bytes[start] == b'0' {
@@ -581,35 +581,24 @@ pub fn parse_decimal(text: &str) -> Result<NumberValue> {
         if digits.is_empty() {
             digits.push(b'0')
         }
-        let mut scale = f_part.len() as i32 - exp;
+        let scale = f_part.len() as i32 - exp;
         if scale < 0 {
             // e.g 123.1e3
             for _ in 0..(-scale) {
                 digits.push(b'0')
             }
-            scale = 0;
         };
 
-        // truncate
-        if digits.len() > 76 {
-            scale -= digits.len() as i32 - 76;
-        }
         let precision = std::cmp::min(digits.len(), 76);
         let digits = unsafe { std::str::from_utf8_unchecked(&digits[..precision]) };
 
-        let scale = scale as u8;
-        let precision = std::cmp::max(precision as u8, scale);
-
-        if precision > 38 {
+        if size.precision > 38 {
             Ok(NumberValue::Decimal256(
                 i256::from_string(digits).unwrap(),
-                DecimalSize { precision, scale },
+                size,
             ))
         } else {
-            Ok(NumberValue::Decimal128(
-                digits.parse::<i128>()?,
-                DecimalSize { precision, scale },
-            ))
+            Ok(NumberValue::Decimal128(digits.parse::<i128>()?, size))
         }
     }
 }

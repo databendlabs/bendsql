@@ -16,7 +16,7 @@ rustls = ["databend-client/rustls"]
 # Enable native-tls for TLS support
 native-tls = ["databend-client/native-tls"]
 
-flight-sql = ["dep:arrow", "dep:arrow-array", "dep:arrow-cast", "dep:arrow-flight", "dep:arrow-schema", "dep:tonic"]
+flight-sql = ["dep:arrow-array", "dep:arrow-cast", "dep:arrow-flight", "dep:arrow-schema", "dep:tonic"]
 
 [dependencies]
 async-trait = "0.1.68"
