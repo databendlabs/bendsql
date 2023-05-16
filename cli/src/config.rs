@@ -52,6 +52,7 @@ pub struct Settings {
     /// Show stats after executing queries.
     /// Only works with non-interactive mode.
     pub show_stats: bool,
+    /// Output max rows (only works in table output format)
     pub max_display_rows: usize,
     /// Output format is set by the flag.
     pub output_format: OutputFormat,
