@@ -2,10 +2,11 @@
 
 set -e
 
-pip install maturin
-pip install behave
+
 python -m venv venv
 source venv/bin/activate
+pip install maturin
+pip install behave
 maturin develop
 
 behave tests
