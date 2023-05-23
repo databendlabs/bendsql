@@ -142,8 +142,8 @@ impl<'o> RestAPIConnection {
             ("record_delimiter", "\n"),
             ("skip_header", "0"),
         ]
-            .into_iter()
-            .collect()
+        .into_iter()
+        .collect()
     }
 
     fn default_copy_options() -> BTreeMap<&'o str, &'o str> {
@@ -151,7 +151,7 @@ impl<'o> RestAPIConnection {
     }
 }
 
-type PageFut = Pin<Box<dyn Future<Output=Result<QueryResponse>> + Send>>;
+type PageFut = Pin<Box<dyn Future<Output = Result<QueryResponse>> + Send>>;
 
 pub struct RestAPIRows {
     client: APIClient,
