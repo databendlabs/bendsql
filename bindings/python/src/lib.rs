@@ -65,7 +65,7 @@ fn format_pyerr(err: &str) -> PyErr {
 }
 
 #[pymodule]
-fn _databend_python(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _databend_driver(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<AsyncDatabendDriver>()?;
     Ok(())
 }

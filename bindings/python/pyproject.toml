@@ -27,7 +27,7 @@ classifiers = [
 ]
 description = "Databend Driver Python Binding"
 license = { text = "Apache-2.0" }
-name = "databend-python"
+name = "databend-driver"
 readme = "README.md"
 requires-python = ">=3.7"
 
@@ -50,5 +50,5 @@ Repository = "https://github.com/datafuselabs/bendsql"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-module-name = "databend_python._databend_python"
+module-name = "databend_driver._databend_driver"
 python-source = "python"

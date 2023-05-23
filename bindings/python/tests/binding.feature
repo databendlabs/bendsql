@@ -13,10 +13,10 @@
 # limitations under the License.
 
 
-Feature: Databend-Python Binding
+Feature: Databend-Driver Binding
 
-    Scenario: Databend-Python Async Operations
-        Given A new Databend-Python Async Connector
+    Scenario: Databend-Driver Async Operations
+        Given A new Databend-Driver Async Connector
         When Async exec "CREATE TABLE if not exists test_data (x Int32,y VARCHAR)"
         When Async exec "INSERT INTO test_data(x,y) VALUES(1,'xx')"
         Then The select "SELECT * FROM test_data" should run

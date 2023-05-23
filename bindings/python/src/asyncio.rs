@@ -26,7 +26,7 @@ use pyo3_asyncio::tokio::future_into_py;
 use crate::{build_connector, Connector};
 
 /// `AsyncDatabendDriver` is the entry for all public async API
-#[pyclass(module = "databend_python")]
+#[pyclass(module = "databend_driver")]
 pub struct AsyncDatabendDriver(Connector);
 
 #[pymethods]
