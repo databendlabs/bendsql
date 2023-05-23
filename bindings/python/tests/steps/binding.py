@@ -25,16 +25,10 @@ async def step_impl(context):
     context.ad = _databend_driver.AsyncDatabendDriver(dsn)
 
 
-@when('Async exec "{create_sql}"')
+@when('Async exec "{sql}"')
 @async_run_until_complete
-async def step_impl(context, create_sql):
-    await context.ad.exec(create_sql)
-
-
-@when('Async exec "{insert_sql}"')
-@async_run_until_complete
-async def step_impl(context, insert_sql):
-    await context.ad.exec(insert_sql)
+async def step_impl(context, sql):
+    await context.ad.exec(sql)
 
 
 @then('The select "{select_sql}" should run')
