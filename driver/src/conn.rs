@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
-use std::fmt::Debug;
 
 use async_trait::async_trait;
 use dyn_clone::DynClone;
@@ -39,7 +38,7 @@ pub struct ConnectionInfo {
 pub type Reader = Box<dyn AsyncRead + Send + Sync + Unpin + 'static>;
 
 #[async_trait]
-pub trait Connection: DynClone + Send + Sync + Debug {
+pub trait Connection: DynClone + Send + Sync {
     fn info(&self) -> ConnectionInfo;
 
     async fn version(&self) -> Result<String> {

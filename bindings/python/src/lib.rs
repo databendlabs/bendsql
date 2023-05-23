@@ -29,7 +29,7 @@ create_exception!(
     "databend_client related errors"
 );
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Connector {
     pub connector: FusedConnector,
 }
