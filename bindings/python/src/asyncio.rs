@@ -12,16 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
-
 use databend_driver::Connection;
 use pyo3::prelude::*;
 
-
 use pyo3_asyncio::tokio::future_into_py;
-
-
-
 
 use crate::{build_connector, Connector};
 
