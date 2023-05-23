@@ -15,10 +15,10 @@
 mod asyncio;
 
 use crate::asyncio::*;
-use databend_client::APIClient;
+
 use databend_driver::rest_api::RestAPIConnection;
 use databend_driver::{new_connection, Connection};
-use futures::future::ok;
+
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
@@ -65,7 +65,7 @@ fn format_pyerr(err: &str) -> PyErr {
 }
 
 #[pymodule]
-fn _databend_python(py: Python, m: &PyModule) -> PyResult<()> {
+fn _databend_python(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<AsyncDatabendDriver>()?;
     Ok(())
 }

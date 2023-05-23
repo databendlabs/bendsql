@@ -12,21 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use databend_client;
-use databend_driver::rest_api::RestAPIConnection;
+
+
 use databend_driver::Connection;
 use pyo3::prelude::*;
-use pyo3::pyobject_native_type;
-use pyo3::ToPyObject;
-use pyo3_asyncio::tokio::future_into_py;
-use std::fs::Metadata;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, RwLock},
-};
 
-use crate::format_pyerr;
-use crate::{build_connector, build_rest_api_client, Connector};
+
+use pyo3_asyncio::tokio::future_into_py;
+
+
+
+
+use crate::{build_connector, Connector};
 
 /// `AsyncDatabendDriver` is the entry for all public async API
 #[pyclass(module = "databend_python")]
