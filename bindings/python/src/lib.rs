@@ -16,7 +16,6 @@ mod asyncio;
 
 use crate::asyncio::*;
 
-use databend_driver::rest_api::RestAPIConnection;
 use databend_driver::{new_connection, Connection};
 
 use pyo3::create_exception;
@@ -48,20 +47,9 @@ impl Connector {
     }
 }
 
-fn build_rest_api_client(dsn: &str) -> PyResult<RestAPIConnection> {
-    let conn = RestAPIConnection::try_create(dsn).unwrap();
-    Ok(conn)
-}
-
 fn build_connector(dsn: &str) -> PyResult<Connector> {
     let conn = Connector::new_connector(dsn).unwrap();
     Ok(*conn)
-}
-
-fn format_pyerr(err: &str) -> PyErr {
-    match !err.is_empty() {
-        _ => Error::new_err(err.to_string()),
-    }
 }
 
 #[pymodule]

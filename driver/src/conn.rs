@@ -14,8 +14,6 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
-use std::iter::Fuse;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use dyn_clone::DynClone;
@@ -37,22 +35,6 @@ pub struct ConnectionInfo {
     pub port: u16,
     pub user: String,
 }
-
-// #[derive(Clone, Debug)]
-// pub struct Connector {
-//     pub connector: FusedConnector,
-// }
-//
-// // For bindings
-// impl Connector {
-//     pub fn new_connector(dsn: &str) -> Result<Box<Self>, Error> {
-//         let conn = new_connection(dsn)?;
-//         let r = Self { connector: FusedConnector::from(conn) };
-//         Ok(Box::new(r))
-//     }
-// }
-//
-// pub type FusedConnector = Arc<dyn Connection>;
 
 pub type Reader = Box<dyn AsyncRead + Send + Sync + Unpin + 'static>;
 
