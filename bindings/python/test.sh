@@ -3,7 +3,7 @@
 set -e
 
 pip install maturin
-pip install bebave
+pip install behave
 maturin develop
 
 behave tests
