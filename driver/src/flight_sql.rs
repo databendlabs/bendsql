@@ -34,7 +34,7 @@ use crate::error::{Error, Result};
 use crate::rows::{QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress, Rows};
 use crate::Schema;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct FlightSQLConnection {
     client: Arc<Mutex<FlightSqlServiceClient<Channel>>>,
     handshaked: Arc<Mutex<bool>>,
