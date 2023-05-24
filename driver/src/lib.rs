@@ -15,7 +15,7 @@ mod conn;
 mod error;
 #[cfg(feature = "flight-sql")]
 mod flight_sql;
-pub mod rest_api;
+mod rest_api;
 mod rows;
 mod schema;
 mod value;
