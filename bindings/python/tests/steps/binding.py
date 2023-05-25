@@ -15,14 +15,14 @@ import os
 
 from behave import given, when, then
 from behave.api.async_step import async_run_until_complete
-import _databend_driver
+import databend_driver
 
 
 @given("A new Databend-Driver Async Connector")
 @async_run_until_complete
 async def step_impl(context):
     dsn = os.getenv("TEST_DATABEND_DSN", "databend+http://root:root@localhost:8000/?sslmode=disable")
-    context.ad = _databend_driver.AsyncDatabendDriver(dsn)
+    context.ad = databend_driver.AsyncDatabendDriver(dsn)
 
 
 @when('Async exec "{sql}"')

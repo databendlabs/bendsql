@@ -10,10 +10,10 @@ maturin develop
 ## Usage
 
 ```python
-import _databend_driver
+import databend_driver
 import asyncio
 async def main():
-	s = _databend_driver.AsyncDatabendDriver('databend+http://root:root@localhost:8000/?sslmode=disable')
+	s = databend_driver.AsyncDatabendDriver('databend+http://root:root@localhost:8000/?sslmode=disable')
 	await s.exec("CREATE TABLE if not exists test_upload (x Int32,y VARCHAR)")
 
 asyncio.run(main())
