@@ -1,6 +1,6 @@
 [package]
 name = "bendsql"
-version = "0.3.9"
+version = "0.3.10"
 edition = "2021"
 license = "Apache-2.0"
 description = "Databend Native Command Line Tool"
@@ -16,7 +16,7 @@ chrono = { version = "0.4.24", default-features = false, features = ["clock"] }
 clap = { version = "4.1.0", features = ["derive", "env"] }
 comfy-table = "6.1.4"
 csv = "1.2.1"
-databend-driver = { path = "../driver", version = "0.2.20", features = ["rustls", "flight-sql"] }
+databend-driver = { path = "../driver", version = "0.2.23", features = ["rustls", "flight-sql"] }
 futures = { version = "0.3", default-features = false, features = ["alloc"] }
 humantime-serde = "1.1.1"
 indicatif = "0.17.3"
@@ -30,7 +30,7 @@ shlex = "1.1.0"
 sqlformat = "0.2.1"
 strum = "0.24"
 strum_macros = "0.24"
-tokio = { version = "1.26", features = [
+tokio = { version = "1.28.1", features = [
     "macros",
     "rt",
     "rt-multi-thread",

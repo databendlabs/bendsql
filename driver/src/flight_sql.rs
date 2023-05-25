@@ -23,6 +23,7 @@ use arrow_flight::utils::flight_data_to_arrow_batch;
 use arrow_flight::{sql::client::FlightSqlServiceClient, FlightData};
 use arrow_schema::SchemaRef as ArrowSchemaRef;
 use async_trait::async_trait;
+use percent_encoding::percent_decode_str;
 use tokio::sync::Mutex;
 use tokio_stream::{Stream, StreamExt};
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
@@ -108,6 +109,12 @@ impl FlightSQLConnection {
         let mut client = FlightSqlServiceClient::new(channel);
         // enable progress
         client.set_header("bendsql", "1");
+        if let Some(tenant) = args.tenant.as_ref() {
+            client.set_header("x-databend-tenant", tenant);
+        }
+        if let Some(warehouse) = args.warehouse.as_ref() {
+            client.set_header("x-databend-warehouse", warehouse);
+        }
         Ok(Self {
             client: Arc::new(Mutex::new(client)),
             args,
@@ -155,6 +162,8 @@ struct Args {
     user: String,
     password: String,
     database: Option<String>,
+    tenant: Option<String>,
+    warehouse: Option<String>,
     tls: bool,
     connect_timeout: Duration,
     query_timeout: Duration,
@@ -173,6 +182,8 @@ impl Default for Args {
             host: "localhost".to_string(),
             port: 8900,
             database: None,
+            tenant: None,
+            warehouse: None,
             tls: true,
             user: "root".to_string(),
             password: "".to_string(),
@@ -193,6 +204,8 @@ impl Args {
         let mut scheme = "https";
         for (k, v) in u.query_pairs() {
             match k.as_ref() {
+                "tenant" => args.tenant = Some(v.to_string()),
+                "warehouse" => args.warehouse = Some(v.to_string()),
                 "sslmode" => {
                     if v == "disable" {
                         scheme = "http";
@@ -236,7 +249,9 @@ impl Args {
             None => format!("{}://{}:{}", scheme, host, port),
         };
         args.user = u.username().to_string();
-        args.password = u.password().unwrap_or_default().to_string();
+        args.password = percent_decode_str(u.password().unwrap_or_default())
+            .decode_utf8_lossy()
+            .to_string();
         Ok(args)
     }
 }
