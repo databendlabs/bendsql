@@ -133,10 +133,10 @@ async fn select_sleep() {
 }
 
 #[tokio::test]
-async fn select_bitmap_json() {
-    let (conn, _) = prepare("select_bitmap_json").await;
+async fn select_bitmap_string() {
+    let (conn, _) = prepare("select_bitmap_string").await;
     let mut rows = conn
-        .query_iter("select build_bitmap([1,2,3,4,5,6]), 11::Variant")
+        .query_iter("select build_bitmap([1,2,3,4,5,6]), 11::String")
         .await
         .unwrap();
     let mut result = vec![];
