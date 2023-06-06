@@ -20,7 +20,10 @@ mod display;
 mod helper;
 mod session;
 
-use std::{collections::BTreeMap, io::{stdin, IsTerminal}};
+use std::{
+    collections::BTreeMap,
+    io::{stdin, IsTerminal},
+};
 
 use anyhow::{anyhow, Result};
 use clap::{CommandFactory, Parser, ValueEnum};
