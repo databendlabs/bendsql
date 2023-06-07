@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashSet;
 use std::fmt::Write;
 
 use anyhow::Result;
@@ -109,7 +110,13 @@ impl<'a> FormatDisplay<'a> {
         if !rows.is_empty() {
             println!(
                 "{}",
-                create_table(self.schema.clone(), &rows, self.settings.max_display_rows)?
+                create_table(
+                    self.schema.clone(),
+                    &rows,
+                    self.settings.max_display_rows,
+                    self.settings.max_width,
+                    self.settings.max_col_width
+                )?
             );
         }
 
@@ -279,28 +286,117 @@ fn display_read_progress(pb: Option<ProgressBar>, current: &QueryProgress) -> Pr
     pb
 }
 
+// compute render widths
+fn compute_render_widths(
+    schema: &SchemaRef,
+    max_width: usize,
+    max_col_width: usize,
+) -> (Vec<usize>, Vec<i32>) {
+    let column_count = schema.fields().len();
+    let mut widths = Vec::with_capacity(column_count);
+    let mut total_length = 1;
+
+    for field in schema.fields() {
+        let col_length = field.name.len().max(field.data_type.to_string().len());
+        // each column has a space at the beginning, and a space plus a pipe (|) at the end
+        // hence + 3
+        total_length += col_length + 3;
+        widths.push(col_length + 3);
+    }
+
+    let mut pruned_columns = HashSet::new();
+    if total_length > max_width {
+        for w in &mut widths {
+            if *w > max_col_width {
+                let max_diff = *w - max_col_width;
+                if total_length - max_diff <= max_width {
+                    *w -= total_length - max_width;
+                    total_length = max_width;
+                    break;
+                } else {
+                    *w = max_col_width;
+                    total_length -= max_diff;
+                }
+            }
+        }
+        if total_length > max_width {
+            // the total length is still too large
+            // we need to remove columns!
+            // first, we add 6 characters to the total length
+            // this is what we need to add the "..." in the middle
+            total_length += 6;
+            // now select columns to prune
+            // we select columns in zig-zag order starting from the middle
+            // e.g. if we have 10 columns, we remove #5, then #4, then #6, then #3, then #7, etc
+            let mut offset: i32 = 0;
+            while total_length > max_width {
+                let c = column_count as i32 / 2 + offset;
+                if c < 0 {
+                    // c < 0 means no column can display
+                    return ([3].to_vec(), [-1].to_vec());
+                }
+                total_length -= widths[c as usize];
+                pruned_columns.insert(c);
+                if offset >= 0 {
+                    offset = -offset - 1;
+                } else {
+                    offset = -offset;
+                }
+            }
+        }
+    }
+    let mut added_split_column = false;
+    let mut new_widths = vec![];
+    let mut column_map = vec![];
+    for (c, item) in widths.iter().enumerate().take(column_count) {
+        if !pruned_columns.contains(&(c as i32)) {
+            column_map.push((c).try_into().unwrap());
+            new_widths.push(*item);
+        } else if !added_split_column {
+            // "..."
+            column_map.push(-1);
+            new_widths.push(3);
+            added_split_column = true;
+        }
+    }
+
+    (new_widths, column_map)
+}
+
 /// Convert a series of rows into a table
-fn create_table(schema: SchemaRef, results: &[Row], max_rows: usize) -> Result<Table> {
+fn create_table(
+    schema: SchemaRef,
+    results: &[Row],
+    max_rows: usize,
+    max_width: usize,
+    max_col_width: usize,
+) -> Result<Table> {
     let mut table = Table::new();
     table.load_preset("││──├─┼┤│    ──┌┐└┘");
     if results.is_empty() {
         return Ok(table);
     }
 
-    let mut header = Vec::with_capacity(schema.fields().len());
-    let mut aligns = Vec::with_capacity(schema.fields().len());
-    for field in schema.fields() {
-        let cell = Cell::new(format!("{}\n{}", field.name, field.data_type,))
-            .set_alignment(CellAlignment::Center);
+    let mut widths = vec![];
+    let mut column_map = vec![];
 
-        header.push(cell);
-
-        if field.data_type.is_numeric() {
-            aligns.push(CellAlignment::Right);
-        } else {
-            aligns.push(CellAlignment::Left);
-        }
+    // "..." take up three lengths
+    if max_width > 0 && max_col_width > 3 {
+        (widths, column_map) = compute_render_widths(&schema, max_width, max_col_width);
     }
+
+    let column_count = schema.fields().len();
+    let mut header = Vec::with_capacity(column_count);
+    let mut aligns = Vec::with_capacity(column_count);
+
+    render_head(
+        schema,
+        &max_col_width,
+        &mut widths,
+        &mut column_map,
+        &mut header,
+        &mut aligns,
+    );
     table.set_header(header);
 
     let row_count: usize = results.len();
@@ -322,14 +418,42 @@ fn create_table(schema: SchemaRef, results: &[Row], max_rows: usize) -> Result<T
         (top_rows, rows_to_render - top_rows)
     };
 
-    for row in results.iter().take(top_rows) {
-        let mut cells = Vec::new();
-        let values = row.values();
-        for (idx, align) in aligns.iter().enumerate() {
-            let cell = Cell::new(&values[idx]).set_alignment(*align);
-            cells.push(cell);
+    // render the top rows
+    if column_map.is_empty() {
+        for row in results.iter().take(top_rows) {
+            let mut cells = Vec::new();
+            let values = row.values();
+            for (idx, align) in aligns.iter().enumerate() {
+                let cell = Cell::new(&values[idx]).set_alignment(*align);
+                cells.push(cell);
+            }
+            table.add_row(cells);
         }
-        table.add_row(cells);
+    } else {
+        for row in results.iter().take(top_rows) {
+            let mut cells = Vec::new();
+            let values = row.values();
+            for (idx, col_index) in column_map.iter().enumerate() {
+                if *col_index == -1 {
+                    let cell = Cell::new("...").set_alignment(CellAlignment::Center);
+                    cells.push(cell);
+                } else {
+                    let width = widths[idx];
+                    let value = if values[*col_index as usize].to_string().len() > max_col_width {
+                        values[*col_index as usize].to_string()[0..max_col_width - 3].to_string()
+                            + "..."
+                    } else if values[*col_index as usize].to_string().len() > width {
+                        values[*col_index as usize].to_string()[0..width - 3].to_string() + "..."
+                    } else {
+                        values[*col_index as usize].to_string()
+                    };
+                    let cell = Cell::new(value).set_alignment(aligns[idx]);
+                    cells.push(cell);
+                }
+            }
+
+            table.add_row(cells);
+        }
     }
 
     // render the bottom rows
@@ -344,14 +468,44 @@ fn create_table(schema: SchemaRef, results: &[Row], max_rows: usize) -> Result<T
         for _ in 0..3 {
             table.add_row(cells.clone());
         }
-        for row in results.iter().skip(row_count - bottom_rows) {
-            let mut cells = Vec::new();
-            let values = row.values();
-            for (idx, align) in aligns.iter().enumerate() {
-                let cell = Cell::new(&values[idx]).set_alignment(*align);
-                cells.push(cell);
+        if column_map.is_empty() {
+            for row in results.iter().skip(row_count - bottom_rows) {
+                let mut cells = Vec::new();
+                let values = row.values();
+                for (idx, align) in aligns.iter().enumerate() {
+                    let cell = Cell::new(&values[idx]).set_alignment(*align);
+                    cells.push(cell);
+                }
+                table.add_row(cells);
             }
-            table.add_row(cells);
+        } else {
+            for row in results.iter().skip(row_count - bottom_rows) {
+                let mut cells = Vec::new();
+                let values = row.values();
+                for (idx, col_index) in column_map.iter().enumerate() {
+                    if *col_index == -1 {
+                        let cell = Cell::new("...").set_alignment(CellAlignment::Center);
+                        cells.push(cell);
+                    } else {
+                        let width = widths[idx];
+                        let value = if values[*col_index as usize].to_string().len() > max_col_width
+                        {
+                            values[*col_index as usize].to_string()[0..max_col_width - 3]
+                                .to_string()
+                                + "..."
+                        } else if values[*col_index as usize].to_string().len() > width {
+                            values[*col_index as usize].to_string()[0..width - 3].to_string()
+                                + "..."
+                        } else {
+                            values[*col_index as usize].to_string()
+                        };
+                        let a = aligns[idx];
+                        let cell = Cell::new(value).set_alignment(a);
+                        cells.push(cell);
+                    }
+                }
+                table.add_row(cells);
+            }
         }
 
         let row_count_str = format!("{} rows", row_count);
@@ -361,6 +515,68 @@ fn create_table(schema: SchemaRef, results: &[Row], max_rows: usize) -> Result<T
     }
 
     Ok(table)
+}
+
+fn render_head(
+    schema: SchemaRef,
+    max_col_width: &usize,
+    widths: &mut [usize],
+    column_map: &mut Vec<i32>,
+    header: &mut Vec<Cell>,
+    aligns: &mut Vec<CellAlignment>,
+) {
+    if column_map.is_empty() {
+        for field in schema.fields() {
+            let cell = Cell::new(format!("{}\n{}", field.name, field.data_type,))
+                .set_alignment(CellAlignment::Center);
+
+            header.push(cell);
+
+            if field.data_type.is_numeric() {
+                aligns.push(CellAlignment::Right);
+            } else {
+                aligns.push(CellAlignment::Left);
+            }
+        }
+    } else {
+        let fields = schema.fields();
+        for (i, col_index) in column_map.iter().enumerate() {
+            if *col_index == -1 {
+                let cell = Cell::new("···").set_alignment(CellAlignment::Center);
+                header.push(cell);
+                aligns.push(CellAlignment::Center);
+            } else {
+                let field = &fields[*col_index as usize];
+                let width = widths[i];
+                let field_name = if field.name.len() + 3 > *max_col_width {
+                    field.name[0..max_col_width - 3].to_string() + "..."
+                } else if field.name.len() + 3 > width {
+                    field.name[0..width - 3].to_string() + "..."
+                } else {
+                    field.name.to_string()
+                };
+
+                let field_type = if field.data_type.to_string().len() + 3 > *max_col_width {
+                    field.data_type.to_string()[0..max_col_width - 3].to_string() + "..."
+                } else if field.data_type.to_string().len() + 3 > width {
+                    field.data_type.to_string()[0..width - 3].to_string() + "..."
+                } else {
+                    field.data_type.to_string()
+                };
+
+                let cell = Cell::new(format!("{}\n{}", field_name, field_type))
+                    .set_alignment(CellAlignment::Center);
+
+                header.push(cell);
+
+                if field.data_type.is_numeric() {
+                    aligns.push(CellAlignment::Right);
+                } else {
+                    aligns.push(CellAlignment::Left);
+                }
+            }
+        }
+    }
 }
 
 pub fn humanize_count(num: f64) -> String {
