@@ -164,7 +164,7 @@ impl Default for Settings {
             output_format: OutputFormat::Table,
             show_progress: false,
             max_display_rows: 40,
-            max_col_width: 0,
+            max_col_width: 20,
             max_width: 0,
             show_stats: false,
             time: false,

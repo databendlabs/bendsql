@@ -30,6 +30,7 @@ shlex = "1.1.0"
 sqlformat = "0.2.1"
 strum = "0.24"
 strum_macros = "0.24"
+terminal_size = "0.2.6"
 tokio = { version = "1.28.1", features = [
     "macros",
     "rt",

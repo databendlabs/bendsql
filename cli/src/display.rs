@@ -16,8 +16,8 @@ use std::collections::HashSet;
 use std::fmt::Write;
 
 use anyhow::Result;
-
 use comfy_table::{Cell, CellAlignment, Table};
+use terminal_size::{terminal_size, Width};
 
 use databend_driver::{QueryProgress, Row, RowProgressIterator, RowWithProgress, SchemaRef};
 use futures::StreamExt;
@@ -297,7 +297,8 @@ fn compute_render_widths(
     let mut total_length = 1;
 
     for field in schema.fields() {
-        let col_length = field.name.len().max(field.data_type.to_string().len());
+        // head_name = field_name + "\n" + field_data_type
+        let col_length = field.name.len() + 1 + field.data_type.to_string().len();
         // each column has a space at the beginning, and a space plus a pipe (|) at the end
         // hence + 3
         total_length += col_length + 3;
@@ -368,7 +369,7 @@ fn create_table(
     schema: SchemaRef,
     results: &[Row],
     max_rows: usize,
-    max_width: usize,
+    mut max_width: usize,
     max_col_width: usize,
 ) -> Result<Table> {
     let mut table = Table::new();
@@ -379,6 +380,13 @@ fn create_table(
 
     let mut widths = vec![];
     let mut column_map = vec![];
+
+    if max_width == 0 {
+        let size = terminal_size();
+        if let Some((Width(w), _)) = size {
+            max_width = w as usize;
+        }
+    }
 
     // "..." take up three lengths
     if max_width > 0 && max_col_width > 3 {
@@ -438,15 +446,10 @@ fn create_table(
                     let cell = Cell::new("...").set_alignment(CellAlignment::Center);
                     cells.push(cell);
                 } else {
-                    let width = widths[idx];
-                    let value = if values[*col_index as usize].to_string().len() > max_col_width {
-                        values[*col_index as usize].to_string()[0..max_col_width - 3].to_string()
-                            + "..."
-                    } else if values[*col_index as usize].to_string().len() > width {
-                        values[*col_index as usize].to_string()[0..width - 3].to_string() + "..."
-                    } else {
-                        values[*col_index as usize].to_string()
-                    };
+                    let mut value = values[*col_index as usize].to_string();
+                    if value.len() > max_col_width {
+                        value = value[0..max_col_width - 3].to_string() + "..."
+                    }
                     let cell = Cell::new(value).set_alignment(aligns[idx]);
                     cells.push(cell);
                 }
@@ -487,20 +490,11 @@ fn create_table(
                         let cell = Cell::new("...").set_alignment(CellAlignment::Center);
                         cells.push(cell);
                     } else {
-                        let width = widths[idx];
-                        let value = if values[*col_index as usize].to_string().len() > max_col_width
-                        {
-                            values[*col_index as usize].to_string()[0..max_col_width - 3]
-                                .to_string()
-                                + "..."
-                        } else if values[*col_index as usize].to_string().len() > width {
-                            values[*col_index as usize].to_string()[0..width - 3].to_string()
-                                + "..."
-                        } else {
-                            values[*col_index as usize].to_string()
-                        };
-                        let a = aligns[idx];
-                        let cell = Cell::new(value).set_alignment(a);
+                        let mut value = values[*col_index as usize].to_string();
+                        if value.len() > max_col_width {
+                            value = value[0..max_col_width - 3].to_string() + "..."
+                        }
+                        let cell = Cell::new(value).set_alignment(aligns[idx]);
                         cells.push(cell);
                     }
                 }
@@ -527,7 +521,7 @@ fn render_head(
 ) {
     if column_map.is_empty() {
         for field in schema.fields() {
-            let cell = Cell::new(format!("{}\n{}", field.name, field.data_type,))
+            let cell = Cell::new(format!("{}\n{}", field.name, field.data_type))
                 .set_alignment(CellAlignment::Center);
 
             header.push(cell);
@@ -548,24 +542,13 @@ fn render_head(
             } else {
                 let field = &fields[*col_index as usize];
                 let width = widths[i];
-                let field_name = if field.name.len() + 3 > *max_col_width {
-                    field.name[0..max_col_width - 3].to_string() + "..."
+                let mut head_name = format!("{}\n{}", field.name, field.data_type);
+                if head_name.len() + 3 > *max_col_width {
+                    head_name = head_name[0..max_col_width - 3].to_string() + "..."
                 } else if field.name.len() + 3 > width {
-                    field.name[0..width - 3].to_string() + "..."
-                } else {
-                    field.name.to_string()
-                };
-
-                let field_type = if field.data_type.to_string().len() + 3 > *max_col_width {
-                    field.data_type.to_string()[0..max_col_width - 3].to_string() + "..."
-                } else if field.data_type.to_string().len() + 3 > width {
-                    field.data_type.to_string()[0..width - 3].to_string() + "..."
-                } else {
-                    field.data_type.to_string()
-                };
-
-                let cell = Cell::new(format!("{}\n{}", field_name, field_type))
-                    .set_alignment(CellAlignment::Center);
+                    head_name = head_name[0..width - 3].to_string() + "..."
+                }
+                let cell = Cell::new(head_name).set_alignment(CellAlignment::Center);
 
                 header.push(cell);
 
