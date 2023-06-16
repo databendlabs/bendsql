@@ -291,6 +291,7 @@ fn compute_render_widths(
     schema: &SchemaRef,
     max_width: usize,
     max_col_width: usize,
+    results: &Vec<Vec<String>>,
 ) -> (Vec<usize>, Vec<i32>) {
     let column_count = schema.fields().len();
     let mut widths = Vec::with_capacity(column_count);
@@ -298,11 +299,20 @@ fn compute_render_widths(
 
     for field in schema.fields() {
         // head_name = field_name + "\n" + field_data_type
-        let col_length = field.name.len() + 1 + field.data_type.to_string().len();
+        let col_length = (field.name.len() + 1).max(field.data_type.to_string().len());
+        widths.push(col_length + 3);
+    }
+
+    for values in results {
+        for (idx, value) in values.iter().enumerate() {
+            widths[idx] = (widths[idx] + 3).max(value.len());
+        }
+    }
+
+    for width in &widths {
         // each column has a space at the beginning, and a space plus a pipe (|) at the end
         // hence + 3
-        total_length += col_length + 3;
-        widths.push(col_length + 3);
+        total_length += width;
     }
 
     let mut pruned_columns = HashSet::new();
@@ -388,25 +398,6 @@ fn create_table(
         }
     }
 
-    // "..." take up three lengths
-    if max_width > 0 && max_col_width > 3 {
-        (widths, column_map) = compute_render_widths(&schema, max_width, max_col_width);
-    }
-
-    let column_count = schema.fields().len();
-    let mut header = Vec::with_capacity(column_count);
-    let mut aligns = Vec::with_capacity(column_count);
-
-    render_head(
-        schema,
-        &max_col_width,
-        &mut widths,
-        &mut column_map,
-        &mut header,
-        &mut aligns,
-    );
-    table.set_header(header);
-
     let row_count: usize = results.len();
     let mut rows_to_render = row_count.min(max_rows);
 
@@ -426,11 +417,48 @@ fn create_table(
         (top_rows, rows_to_render - top_rows)
     };
 
+    let mut res_vec: Vec<Vec<String>> = Vec::with_capacity(top_rows + bottom_rows);
+    for row in results.iter().take(top_rows) {
+        let values = row.values();
+        let mut v = vec![];
+        for value in values {
+            v.push(value.to_string());
+        }
+        res_vec.push(v);
+    }
+
+    if bottom_rows != 0 {
+        for (idx, row) in results.iter().skip(row_count - bottom_rows).enumerate() {
+            let values = row.values();
+            for value in values {
+                res_vec[idx].push(value.to_string());
+            }
+        }
+    }
+
+    // "..." take up three lengths
+    if max_width > 0 && max_col_width > 3 {
+        (widths, column_map) = compute_render_widths(&schema, max_width, max_col_width, &res_vec);
+    }
+
+    let column_count = schema.fields().len();
+    let mut header = Vec::with_capacity(column_count);
+    let mut aligns = Vec::with_capacity(column_count);
+
+    render_head(
+        schema,
+        &max_col_width,
+        &mut widths,
+        &mut column_map,
+        &mut header,
+        &mut aligns,
+    );
+    table.set_header(header);
+
     // render the top rows
     if column_map.is_empty() {
-        for row in results.iter().take(top_rows) {
+        for values in res_vec.iter().take(top_rows) {
             let mut cells = Vec::new();
-            let values = row.values();
             for (idx, align) in aligns.iter().enumerate() {
                 let cell = Cell::new(&values[idx]).set_alignment(*align);
                 cells.push(cell);
@@ -438,17 +466,16 @@ fn create_table(
             table.add_row(cells);
         }
     } else {
-        for row in results.iter().take(top_rows) {
+        for values in res_vec.iter().take(top_rows) {
             let mut cells = Vec::new();
-            let values = row.values();
             for (idx, col_index) in column_map.iter().enumerate() {
                 if *col_index == -1 {
                     let cell = Cell::new("...").set_alignment(CellAlignment::Center);
                     cells.push(cell);
                 } else {
-                    let mut value = values[*col_index as usize].to_string();
-                    if value.len() > max_col_width {
-                        value = value[0..max_col_width - 3].to_string() + "..."
+                    let mut value = values[*col_index as usize].clone();
+                    if value.len() > widths[idx] {
+                        value = value[0..widths[idx] - 3].to_string() + "..."
                     }
                     let cell = Cell::new(value).set_alignment(aligns[idx]);
                     cells.push(cell);
@@ -472,9 +499,8 @@ fn create_table(
             table.add_row(cells.clone());
         }
         if column_map.is_empty() {
-            for row in results.iter().skip(row_count - bottom_rows) {
+            for values in res_vec.iter().skip(row_count - bottom_rows) {
                 let mut cells = Vec::new();
-                let values = row.values();
                 for (idx, align) in aligns.iter().enumerate() {
                     let cell = Cell::new(&values[idx]).set_alignment(*align);
                     cells.push(cell);
@@ -482,17 +508,16 @@ fn create_table(
                 table.add_row(cells);
             }
         } else {
-            for row in results.iter().skip(row_count - bottom_rows) {
+            for values in res_vec.iter().skip(row_count - bottom_rows) {
                 let mut cells = Vec::new();
-                let values = row.values();
                 for (idx, col_index) in column_map.iter().enumerate() {
                     if *col_index == -1 {
                         let cell = Cell::new("...").set_alignment(CellAlignment::Center);
                         cells.push(cell);
                     } else {
-                        let mut value = values[*col_index as usize].to_string();
-                        if value.len() > max_col_width {
-                            value = value[0..max_col_width - 3].to_string() + "..."
+                        let mut value = values[*col_index as usize].clone();
+                        if value.len() > widths[idx] {
+                            value = value[0..widths[idx] - 3].to_string() + "...";
                         }
                         let cell = Cell::new(value).set_alignment(aligns[idx]);
                         cells.push(cell);
@@ -542,12 +567,19 @@ fn render_head(
             } else {
                 let field = &fields[*col_index as usize];
                 let width = widths[i];
-                let mut head_name = format!("{}\n{}", field.name, field.data_type);
-                if head_name.len() + 3 > *max_col_width {
-                    head_name = head_name[0..max_col_width - 3].to_string() + "..."
-                } else if field.name.len() + 3 > width {
-                    head_name = head_name[0..width - 3].to_string() + "..."
+                let mut field_name = field.name.to_string();
+                if field_name.len() + 3 > *max_col_width {
+                    field_name = field_name[0..max_col_width - 3].to_string() + "..."
+                } else if field_name.len() + 3 > width {
+                    field_name = field_name[0..width - 3].to_string() + "..."
                 }
+                let mut field_data_type = field.data_type.to_string();
+                if field_data_type.len() + 3 > *max_col_width {
+                    field_data_type = field_data_type[0..max_col_width - 3].to_string() + "..."
+                } else if field_data_type.len() + 3 > width {
+                    field_data_type = field_data_type[0..width - 3].to_string() + "..."
+                }
+                let head_name = format!("{}\n{}", field_name, field_data_type);
                 let cell = Cell::new(head_name).set_alignment(CellAlignment::Center);
 
                 header.push(cell);
