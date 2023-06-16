@@ -300,13 +300,13 @@ fn compute_render_widths(
 
     for field in schema.fields() {
         // head_name = field_name + "\n" + field_data_type
-        let col_length = (field.name.len() + 1).max(field.data_type.to_string().len());
+        let col_length = field.name.len().max(field.data_type.to_string().len());
         widths.push(col_length + 3);
     }
 
     for values in results {
         for (idx, value) in values.iter().enumerate() {
-            widths[idx] = (widths[idx] + 3).max(value.len());
+            widths[idx] = widths[idx].max(value.len() + 3);
         }
     }
 
@@ -323,6 +323,7 @@ fn compute_render_widths(
                 let max_diff = *w - max_col_width;
                 if total_length - max_diff <= max_width {
                     *w -= total_length - max_width;
+
                     total_length = max_width;
                     break;
                 } else {
@@ -441,9 +442,9 @@ fn create_table(
     }
 
     // "..." take up three lengths
-    if max_width > 0 && max_col_width > 3 {
+    if max_width > 0 {
         (widths, column_map, total_length) =
-            compute_render_widths(&schema, max_width, max_col_width, &res_vec);
+            compute_render_widths(&schema, max_width, max_col_width + 3, &res_vec);
     }
 
     let column_count = schema.fields().len();
@@ -480,11 +481,12 @@ fn create_table(
                     cells.push(cell);
                 } else {
                     let mut value = values[*col_index as usize].clone();
-                    if value.len() > widths[idx] {
+                    if value.len() + 3 > widths[idx] {
+                        let element_size = if widths[idx] >= 6 { widths[idx] - 6 } else { 0 };
                         value = String::from_utf8(
                             value
                                 .graphemes(true)
-                                .take(widths[idx] - 3)
+                                .take(element_size)
                                 .flat_map(|g| g.as_bytes().iter())
                                 .copied() // copied converts &u8 into u8
                                 .chain(b"...".iter().copied())
