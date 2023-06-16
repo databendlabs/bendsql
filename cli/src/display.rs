@@ -14,6 +14,7 @@
 
 use std::collections::HashSet;
 use std::fmt::Write;
+use unicode_segmentation::UnicodeSegmentation;
 
 use anyhow::Result;
 use comfy_table::{Cell, CellAlignment, Table};
@@ -477,7 +478,16 @@ fn create_table(
                 } else {
                     let mut value = values[*col_index as usize].clone();
                     if value.len() > widths[idx] {
-                        value = value[0..widths[idx] - 3].to_string() + "..."
+                        value = String::from_utf8(
+                            value
+                                .graphemes(true)
+                                .take(widths[idx] - 3)
+                                .flat_map(|g| g.as_bytes().iter())
+                                .copied() // copied converts &u8 into u8
+                                .chain(b"...".iter().copied())
+                                .collect::<Vec<u8>>(),
+                        )
+                        .unwrap();
                     }
                     let cell = Cell::new(value).set_alignment(aligns[idx]);
                     cells.push(cell);
@@ -520,7 +530,16 @@ fn create_table(
                     } else {
                         let mut value = values[*col_index as usize].clone();
                         if value.len() > widths[idx] {
-                            value = value[0..widths[idx] - 3].to_string() + "...";
+                            value = String::from_utf8(
+                                value
+                                    .graphemes(true)
+                                    .take(widths[idx] - 3)
+                                    .flat_map(|g| g.as_bytes().iter())
+                                    .copied() // copied converts &u8 into u8
+                                    .chain(b"...".iter().copied())
+                                    .collect::<Vec<u8>>(),
+                            )
+                            .unwrap();
                         }
                         let cell = Cell::new(value).set_alignment(aligns[idx]);
                         cells.push(cell);
