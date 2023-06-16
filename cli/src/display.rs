@@ -417,7 +417,7 @@ fn create_table(
         (top_rows, rows_to_render - top_rows)
     };
 
-    let mut res_vec: Vec<Vec<String>> = Vec::with_capacity(top_rows + bottom_rows);
+    let mut res_vec: Vec<Vec<String>> = vec![];
     for row in results.iter().take(top_rows) {
         let values = row.values();
         let mut v = vec![];
@@ -428,11 +428,13 @@ fn create_table(
     }
 
     if bottom_rows != 0 {
-        for (idx, row) in results.iter().skip(row_count - bottom_rows).enumerate() {
+        for row in results.iter().skip(row_count - bottom_rows) {
             let values = row.values();
+            let mut v = vec![];
             for value in values {
-                res_vec[idx].push(value.to_string());
+                v.push(value.to_string());
             }
+            res_vec.push(v);
         }
     }
 
@@ -490,6 +492,7 @@ fn create_table(
     if bottom_rows != 0 {
         // first render the divider
         let mut cells: Vec<Cell> = Vec::new();
+        let display_res_len = res_vec.len();
         for align in aligns.iter() {
             let cell = Cell::new("·").set_alignment(*align);
             cells.push(cell);
@@ -499,7 +502,7 @@ fn create_table(
             table.add_row(cells.clone());
         }
         if column_map.is_empty() {
-            for values in res_vec.iter().skip(row_count - bottom_rows) {
+            for values in res_vec.iter().skip(display_res_len - bottom_rows) {
                 let mut cells = Vec::new();
                 for (idx, align) in aligns.iter().enumerate() {
                     let cell = Cell::new(&values[idx]).set_alignment(*align);
@@ -508,7 +511,7 @@ fn create_table(
                 table.add_row(cells);
             }
         } else {
-            for values in res_vec.iter().skip(row_count - bottom_rows) {
+            for values in res_vec.iter().skip(display_res_len - bottom_rows) {
                 let mut cells = Vec::new();
                 for (idx, col_index) in column_map.iter().enumerate() {
                     if *col_index == -1 {
