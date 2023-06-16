@@ -39,6 +39,7 @@ tokio = { version = "1.28.1", features = [
     "parking_lot",
 ] }
 toml = "0.7.3"
+unicode-segmentation = "1.10.1"
 url = { version = "2.3.1", default-features = false }
 
 [build-dependencies]
