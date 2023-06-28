@@ -45,7 +45,7 @@ jobs:
         run: yarn test
 
   build:
-    name: build-${{ matrix.os }}
+    name: build-${{ matrix.target }}
     runs-on: ${{ matrix.os }}-latest
     defaults:
       run:
