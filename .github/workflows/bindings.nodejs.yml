@@ -87,11 +87,6 @@ jobs:
           fi
           export NAPI_TARGET=${{ matrix.target }}
           yarn build
-      - name: build macos x86_64
-        if: matrix.target == 'x86_64-apple-darwin'
-        run: |
-          yarn build
-          strip -x *.node
       - name: strip for macos
         if: matrix.os == 'macos'
         run: |
