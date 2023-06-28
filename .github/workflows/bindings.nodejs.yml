@@ -35,8 +35,7 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         run: |
-          rm yarn.lock
-          yarn install
+          yarn install --force
           git diff --exit-code
       - name: Check format
         run: yarn run prettier --check .
