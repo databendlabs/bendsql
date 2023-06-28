@@ -1,0 +1,147 @@
+name: bindings nodejs
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - v*
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'bindings/nodejs/**'
+      - ".github/workflows/bindings.nodejs.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/nodejs
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup
+        with:
+          cache-key: bindings-nodejs
+      - name: Setup node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: yarn
+          cache-dependency-path: "bindings/nodejs/yarn.lock"
+      - name: Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+      - name: Check format
+        run: yarn run prettier --check .
+      - name: Build
+        run: yarn build:debug
+      - name: Check diff
+        run: git diff --exit-code
+      - name: Test
+        run: yarn test
+
+  build:
+    name: build-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}-latest
+    defaults:
+      run:
+        working-directory: bindings/nodejs
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu
+            target: x86_64-unknown-linux-gnu
+          - os: windows
+            target: x86_64-pc-windows-msvc
+          - os: macos
+            target: x86_64-apple-darwin
+          - os: macos
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: yarn
+          cache-dependency-path: "bindings/nodejs/yarn.lock"
+      - name: Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+      - name: build linux
+        if: matrix.os == 'ubuntu'
+        run: |
+          docker run \
+            -v ${{ github.workspace }}:/build \
+            -e NAPI_TARGET=${{ matrix.target }} \
+            -w /build/bindings/nodejs \
+            ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian \
+            bash -c "yarn build"
+          # change owner to current user
+          sudo chown -R 1001:121 *.node
+      - name: build windows
+        if: matrix.os == 'windows'
+        run: yarn build
+      - name: build macos x86_64
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          yarn build
+          strip -x *.node
+      - name: build macos aarch64
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          sudo rm -Rf /Library/Developer/CommandLineTools/SDKs/*
+          export CC=$(xcrun -f clang)
+          export CXX=$(xcrun -f clang++)
+          SYSROOT=$(xcrun --sdk macosx --show-sdk-path)
+          export CFLAGS="-isysroot $SYSROOT -isystem $SYSROOT"
+          rustup target add ${{ matrix.target }}
+          export NAPI_TARGET=${{ matrix.target }}
+          yarn build
+          strip -x *.node
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bindings-nodejs
+          path: bindings/nodejs/*.node
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bindings/nodejs
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: yarn
+          cache-dependency-path: "bindings/nodejs/yarn.lock"
+      - name: Corepack
+        run: corepack enable
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: bindings/nodejs/artifacts
+      - name: Move artifacts
+        run: yarn run napi artifacts
+      - name: List packages
+        run: ls -R ./npm
+      - name: Add LICENSE
+        working-directory: .
+        run: cp LICENSE ./bindings/nodejs
+      - name: Publish
+        run: |
+          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+          npm publish --access public --provenance
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
