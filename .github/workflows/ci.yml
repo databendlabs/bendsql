@@ -1,0 +1,71 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: check
+      - uses: ./.github/actions/check
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    runs-on: ${{ matrix.os }}-latest
+    name: build-${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu
+            target: x86_64-unknown-linux-gnu
+          - os: macos
+            target: x86_64-apple-darwin
+          - os: windows
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python-3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: build
+          target: ${{ matrix.target }}
+      - run: cargo build
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: unit
+      - run: cargo test --all-features --lib -- --show-output
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: integration
+      - run: make -C tests test-core
+      - run: make -C tests test-driver
+      - run: make -C tests test-bendsql
+      - run: make -C tests test-bindings-python
+      - run: sudo chown -R runner ~/.cargo/registry
