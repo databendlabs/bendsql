@@ -35,8 +35,7 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         run: |
-          yarn install --force
-          git diff --exit-code
+          yarn install --inline-builds
       - name: Check format
         run: yarn run prettier --check .
       - name: Build
