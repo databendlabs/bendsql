@@ -15,4 +15,7 @@
 #[macro_use]
 extern crate napi_derive;
 
-use napi::bindgen_prelude::*;
+// use napi::bindgen_prelude::*;
+
+#[napi]
+pub struct Client(Box<dyn databend_driver::Connection>);

@@ -16,6 +16,6 @@
 
 /// <reference types="node" />
 
-const { Client } = require('./generated.js')
+const { Client } = require("./generated.js");
 
-module.exports.Client = Client
+module.exports.Client = Client;
