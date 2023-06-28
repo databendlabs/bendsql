@@ -35,8 +35,7 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         run: |
-          yarn install --inline-builds --mode=update-lockfile
-          git diff --exit-code
+          yarn install --immutable
       - name: Check format
         run: yarn run prettier --check .
       - name: Build
