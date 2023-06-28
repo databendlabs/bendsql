@@ -76,6 +76,7 @@ jobs:
       - name: Install dependencies
         run: yarn install --immutable
       - name: build
+        shell: bash
         run: |
           if [[ "${{ matrix.target }}" == 'aarch64-apple-darwin' ]]; then
             sudo rm -Rf /Library/Developer/CommandLineTools/SDKs/*
