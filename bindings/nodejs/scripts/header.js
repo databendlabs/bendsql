@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-const fs = require('fs');
+const fs = require('fs')
 
-let files = ['generated.js', 'index.d.ts'];
+let files = ['generated.js', 'index.d.ts']
 
 for (path of files) {
-  let data = fs.readFileSync(path, 'utf8');
+  let data = fs.readFileSync(path, 'utf8')
   fs.writeFileSync(
     path,
     `/*
@@ -39,5 +39,5 @@ for (path of files) {
   */
 
 ` + data,
-  );
+  )
 }
