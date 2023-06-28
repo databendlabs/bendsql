@@ -11,12 +11,6 @@
     "name": "databend-driver",
     "package": {
       "name": "@databend-driver/lib"
-    },
-    "triples": {
-      "defaults": true,
-      "additional": [
-        "aarch64-apple-darwin"
-      ]
     }
   },
   "keywords": [
