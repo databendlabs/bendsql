@@ -35,6 +35,7 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         run: |
+          rm yarn.lock
           yarn install
           git diff --exit-code
       - name: Check format
