@@ -13,6 +13,10 @@ on:
       - 'bindings/nodejs/**'
       - ".github/workflows/bindings.nodejs.yml"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
