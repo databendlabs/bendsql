@@ -101,13 +101,9 @@ impl Client {
             }
             None => None,
         };
-        let metadata = tokio::fs::metadata(&file)
-            .await
-            .map_err(|e| Error::from(e))?;
+        let metadata = tokio::fs::metadata(&file).await.map_err(Error::from)?;
         let size = metadata.len();
-        let f = tokio::fs::File::open(&file)
-            .await
-            .map_err(|e| Error::from(e))?;
+        let f = tokio::fs::File::open(&file).await.map_err(Error::from)?;
         let reader = tokio::io::BufReader::new(f);
         let progress = self
             .0
