@@ -21,4 +21,14 @@
 
 export class Client {
   constructor(dsn: string)
+  info(): ConnectionInfo
+  version(): Promise<string>
+  exec(sql: string): Promise<number>
+  queryRow(sql: string): Promise<Row | null>
+  queryIter(sql: string): Promise<RowIterator>
+  streamLoad(sql: string, file: string, fileFormatOptions?: Array<[string, string]> | undefined | null, copyOptions?: Array<[string, string]> | undefined | null): Promise<QueryProgress>
 }
+export class ConnectionInfo { }
+export class Row { }
+export class RowIterator { }
+export class QueryProgress { }

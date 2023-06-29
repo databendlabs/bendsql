@@ -30,6 +30,9 @@ pub struct Row(databend_driver::Row);
 pub struct RowIterator(databend_driver::RowIterator);
 
 #[napi]
+pub struct QueryProgress(databend_driver::QueryProgress);
+
+#[napi]
 impl Client {
     #[napi(constructor)]
     pub fn new(dsn: String) -> Result<Self> {
@@ -77,7 +80,7 @@ impl Client {
         file: String,
         file_format_options: Option<Vec<(String, String)>>,
         copy_options: Option<Vec<(String, String)>>,
-    ) -> Result<()> {
+    ) -> Result<QueryProgress> {
         let file_format_options_map = match file_format_options {
             Some(ref o) => {
                 let mut map = std::collections::BTreeMap::new();
@@ -106,7 +109,8 @@ impl Client {
             .await
             .map_err(|e| Error::from(e))?;
         let reader = tokio::io::BufReader::new(f);
-        self.0
+        let progress = self
+            .0
             .stream_load(
                 &sql,
                 Box::new(reader),
@@ -116,7 +120,7 @@ impl Client {
             )
             .await
             .map_err(format_napi_error)?;
-        Ok(())
+        Ok(QueryProgress(progress))
     }
 }
 
