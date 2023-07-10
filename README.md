@@ -110,6 +110,8 @@ prompt = ":) "
 | `show_progress` | Whether to show a progress bar when executing queries. |
 | `show_stats` | Whether to show statistics after executing queries. |
 | `max_display_rows` | The maximum number of rows to display in table output format. |
+| `max_width` | Limit display render box max width, 0 means disable the limit |
+| `max_col_width` | Limit display render each column max width, smaller than 3 means disable the limit |
 | `output_format` | The output format to use. |
 | `time` | Whether to show the time elapsed when executing queries. |
 | `multi_line` | Whether to allow multi-line input. |
