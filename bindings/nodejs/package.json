@@ -63,5 +63,11 @@
     "registry": "https://registry.npmjs.org/",
     "access": "public"
   },
-  "packageManager": "yarn@3.5.1"
+  "packageManager": "yarn@3.5.1",
+  "optionalDependencies": {
+    "@databend-driver/lib-win32-x64-msvc": "0.1.0",
+    "@databend-driver/lib-darwin-x64": "0.1.0",
+    "@databend-driver/lib-linux-x64-gnu": "0.1.0",
+    "@databend-driver/lib-darwin-arm64": "0.1.0"
+  }
 }
