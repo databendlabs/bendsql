@@ -42,7 +42,7 @@ pub trait ChunkDisplay {
 pub struct FormatDisplay<'a> {
     settings: &'a Settings,
     query: &'a str,
-    // wheter replace '\n' with '\\n'
+    // whether replace '\n' with '\\n', only disable in explain/show create stmts
     replace_newline: bool,
     schema: SchemaRef,
     data: RowProgressIterator,
