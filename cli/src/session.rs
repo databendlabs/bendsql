@@ -421,10 +421,7 @@ fn replace_newline_in_box_display(query: &str) -> bool {
     match tz.next() {
         Some(Ok(t)) => match t.kind {
             TokenKind::EXPLAIN => false,
-            TokenKind::SHOW => match tz.next() {
-                Some(Ok(t)) if t.kind == TokenKind::CREATE => false,
-                _ => true,
-            },
+            TokenKind::SHOW => !matches!(tz.next(), Some(Ok(t)) if t.kind == TokenKind::CREATE),
             _ => true,
         },
         _ => true,
