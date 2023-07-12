@@ -211,12 +211,13 @@ impl Session {
         while let Some(Ok(token)) = tokenizer.next() {
             match token.kind {
                 TokenKind::CommentBlockStart => {
-                    self.in_comment_block = true;
-                    start = token.span.end;
-
                     if !self.in_comment_block {
                         comment_block_start = token.span.start;
                     }
+
+                    self.in_comment_block = true;
+                    start = token.span.end;
+
                     continue;
                 }
                 TokenKind::CommentBlockEnd => {
