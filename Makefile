@@ -27,3 +27,6 @@ integration-driver:
 
 integration-bendsql:
 	make -C tests test-bendsql
+
+integration-binding-nodejs:
+	make -C tests test-binding-nodejs

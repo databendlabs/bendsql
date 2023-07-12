@@ -14,12 +14,19 @@
  * limitations under the License.
  */
 
-import { Client } from "../index.js";
-import { Given, When, Then } from "@cucumber/cucumber";
+const assert = require('assert')
+const { Client } = require("../index.js");
+const { Given, When, Then } = require('@cucumber/cucumber');
 
-const dsn = "databend://root:@localhost:8000/default?sslmode=disable";
+const dsn = process.env.TEST_DATABEND_DSN ? process.env.TEST_DATABEND_DSN : "databend://root:@localhost:8000/default?sslmode=disable";
 
 
 Given("A new Databend Driver Client", function () {
     this.client = new Client(dsn);
+});
+
+Then("Select String {string} should be equal to {string}", async function (input, output) {
+    const row = await this.client.queryRow(`SELECT '${input}'`);
+    const value = row.values()[0].toString();
+    assert(value === output);
 });
