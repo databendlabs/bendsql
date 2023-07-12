@@ -19,5 +19,7 @@ select 'in comment block';
 
 select 1.00 + 2.00, 3.00;
 
+select/*+ SET_VAR(timezone='Asia/Shanghai') */ timezone();
+
 select 'bye';
 drop table test;

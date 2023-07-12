@@ -207,11 +207,14 @@ impl Session {
         let mut tokenizer = Tokenizer::new(line);
         let mut start = 0;
         let mut in_comment = false;
+        let mut comment_block_start = 0;
         while let Some(Ok(token)) = tokenizer.next() {
             match token.kind {
                 TokenKind::CommentBlockStart => {
                     self.in_comment_block = true;
                     start = token.span.end;
+
+                    comment_block_start = token.span.start;
                     continue;
                 }
                 TokenKind::CommentBlockEnd => {
@@ -219,6 +222,10 @@ impl Session {
                         panic!("Unexpected comment block end");
                     }
                     self.in_comment_block = false;
+
+                    self.query
+                        .push_str(&line[comment_block_start..token.span.end]);
+
                     start = token.span.end;
                     continue;
                 }
