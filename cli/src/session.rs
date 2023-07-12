@@ -214,13 +214,16 @@ impl Session {
                     self.in_comment_block = true;
                     start = token.span.end;
 
-                    comment_block_start = token.span.start;
+                    if !self.in_comment_block {
+                        comment_block_start = token.span.start;
+                    }
                     continue;
                 }
                 TokenKind::CommentBlockEnd => {
                     if !self.in_comment_block {
-                        panic!("Unexpected comment block end");
+                        continue;
                     }
+
                     self.in_comment_block = false;
 
                     self.query
