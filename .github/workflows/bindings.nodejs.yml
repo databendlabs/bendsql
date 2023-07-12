@@ -46,8 +46,9 @@ jobs:
         run: yarn build:debug
       - name: Check diff
         run: git diff --exit-code
-      - name: Test
-        run: yarn test
+      # NOTE: we do integration tests separately
+      # - name: Test
+      #   run: yarn test
 
   build:
     name: build-${{ matrix.os }}-${{ matrix.arch }}
