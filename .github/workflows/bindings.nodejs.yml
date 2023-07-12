@@ -47,7 +47,7 @@ jobs:
         run: yarn build:debug
       - name: Check diff
         run: git diff --exit-code
-      - run: make -C tests test-binding-nodejs
+      - run: make -C tests test-bindings-nodejs
 
   build:
     name: build-${{ matrix.os }}-${{ matrix.arch }}
