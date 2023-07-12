@@ -1,4 +1,4 @@
-name: bindings nodejs
+name: Bindings Node.js
 
 on:
   push:
