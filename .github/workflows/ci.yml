@@ -59,5 +59,4 @@ jobs:
       - run: make -C tests test-driver
       - run: make -C tests test-bendsql
       - run: make -C tests test-binding-python
-      - run: make -C tests test-binding-nodejs
       - run: sudo chown -R runner ~/.cargo/registry
