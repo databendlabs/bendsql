@@ -1,11 +1,7 @@
 {
   "default": {
     "publishQuiet": true,
-    "paths": [
-      "tests/*.feature"
-    ],
-    "require": [
-      "tests/*.js"
-    ]
+    "paths": ["tests/*.feature"],
+    "require": ["tests/*.js"]
   }
 }
