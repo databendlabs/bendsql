@@ -1,3 +1,4 @@
+drop table if exists test;
 create table test(a string, b int, d boolean);
 insert into test values('a', 1, true);
 insert into test values('b', 2, false);

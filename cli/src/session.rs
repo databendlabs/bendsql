@@ -205,50 +205,25 @@ impl Session {
 
         let mut queries = Vec::new();
         let mut tokenizer = Tokenizer::new(line);
-        let mut start = 0;
         let mut in_comment = false;
+        let mut start = 0;
         let mut comment_block_start = 0;
+
         while let Some(Ok(token)) = tokenizer.next() {
             match token.kind {
-                TokenKind::CommentBlockStart => {
-                    if !self.in_comment_block {
-                        comment_block_start = token.span.start;
-                    }
-
-                    self.in_comment_block = true;
-                    start = token.span.end;
-
-                    continue;
-                }
-                TokenKind::CommentBlockEnd => {
-                    if !self.in_comment_block {
-                        continue;
-                    }
-
-                    self.in_comment_block = false;
-
-                    self.query
-                        .push_str(&line[comment_block_start..token.span.end]);
-
-                    start = token.span.end;
-                    continue;
-                }
-                _ => {
-                    if self.in_comment_block {
-                        start = token.span.end;
-                        continue;
-                    }
-                }
-            }
-            match token.kind {
                 TokenKind::SemiColon => {
-                    let mut sql = self.query.trim().to_owned();
-                    if sql.is_empty() {
+                    if in_comment || self.in_comment_block {
                         continue;
+                    } else {
+                        let mut sql = self.query.trim().to_owned();
+                        if sql.is_empty() {
+                            continue;
+                        }
+                        sql.push(';');
+
+                        queries.push(sql);
+                        self.query.clear();
                     }
-                    sql.push(';');
-                    queries.push(sql);
-                    self.query.clear();
                 }
                 TokenKind::Comment => {
                     in_comment = true;
@@ -260,8 +235,16 @@ impl Session {
                     in_comment = false;
                     self.query.push(' ');
                 }
-                TokenKind::CommentBlockStart | TokenKind::CommentBlockEnd => {
-                    unreachable!("Comment block should be handled before")
+                TokenKind::CommentBlockStart => {
+                    if !self.in_comment_block {
+                        comment_block_start = token.span.start;
+                    }
+                    self.in_comment_block = true;
+                }
+                TokenKind::CommentBlockEnd => {
+                    self.in_comment_block = false;
+                    self.query
+                        .push_str(&line[comment_block_start..token.span.end]);
                 }
                 _ => {
                     if !in_comment && !self.in_comment_block {
@@ -270,6 +253,10 @@ impl Session {
                 }
             }
             start = token.span.end;
+        }
+
+        if self.in_comment_block {
+            self.query.push_str(&line[comment_block_start..]);
         }
         queries
     }
