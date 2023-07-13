@@ -26,7 +26,7 @@ Given("A new Databend Driver Client", function () {
   this.client = new Client(dsn);
 });
 
-Then("Select String {string} should be equal to {string}", async function (input, output) {
+Then("Select string {string} should be equal to {string}", async function (input, output) {
   const row = await this.client.queryRow(`SELECT '${input}'`);
   const value = row.values()[0];
   assert.equal(output, value);
