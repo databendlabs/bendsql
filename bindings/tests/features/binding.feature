@@ -22,5 +22,10 @@ Feature: Databend Driver
         Given A new Databend Driver Client
         Then Select numbers should iterate all rows
 
+    Scenario: Insert and Select
+        Given A new Databend Driver Client
+        When Create a test table
+        Then Insert and Select should be equal
+
     Scenario: Stream Load
         Given A new Databend Driver Client
