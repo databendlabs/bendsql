@@ -61,8 +61,7 @@ Then("Insert and Select should be equal", async function () {
   await this.client.exec(`INSERT INTO test VALUES
     (-1, 1, 1.0, '1', '1', '2011-03-06', '2011-03-06 06:20:00'),
     (-2, 2, 2.0, '2', '2', '2012-05-31', '2012-05-31 11:20:00'),
-    (-3, 3, 3.0, '3', '2', '2016-04-04', '2016-04-04 11:30:00')`
-  );
+    (-3, 3, 3.0, '3', '2', '2016-04-04', '2016-04-04 11:30:00')`);
   const rows = await this.client.queryIter("SELECT * FROM test");
   const ret = [];
   let row = await rows.next();
@@ -73,7 +72,7 @@ Then("Insert and Select should be equal", async function () {
   const expected = [
     [-1, 1, 1.0, "1", "1", new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
     [-2, 2, 2.0, "2", "2", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
-    [-3, 3, 3.0, "3", "2", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")]
+    [-3, 3, 3.0, "3", "2", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
   ];
   assert.deepEqual(ret, expected);
 });
