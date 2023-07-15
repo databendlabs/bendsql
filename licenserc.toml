@@ -29,6 +29,9 @@ excludes = [
     "**/*.yapf",
     "**/*.test",
     "**/*.txt",
+
+    # test files
+    "cli/tests/**",
 ]
 
 [properties]
