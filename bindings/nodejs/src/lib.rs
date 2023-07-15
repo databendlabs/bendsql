@@ -75,6 +75,33 @@ impl ToNapiValue for NumberValue {
 }
 
 #[napi]
+pub struct Schema(databend_driver::Schema);
+
+#[napi]
+impl Schema {
+    #[napi(getter)]
+    pub fn fields(&self) -> Vec<Field> {
+        self.0.fields().iter().map(|f| Field(f.clone())).collect()
+    }
+}
+
+#[napi]
+pub struct Field(databend_driver::Field);
+
+#[napi]
+impl Field {
+    #[napi(getter)]
+    pub fn name(&self) -> String {
+        self.0.name.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn data_type(&self) -> String {
+        self.0.data_type.to_string()
+    }
+}
+
+#[napi]
 pub struct RowIterator(databend_driver::RowIterator);
 
 #[napi]
@@ -89,6 +116,62 @@ impl RowIterator {
 }
 
 #[napi]
+pub struct RowIteratorExt {
+    schema: databend_driver::Schema,
+    iterator: databend_driver::RowProgressIterator,
+}
+
+#[napi]
+impl RowIteratorExt {
+    #[napi]
+    pub async unsafe fn next(&mut self) -> Option<Result<RowOrProgress>> {
+        match self.iterator.next().await {
+            None => None,
+            Some(r0) => match r0 {
+                Ok(r1) => match r1 {
+                    databend_driver::RowWithProgress::Row(row) => Some(Ok(RowOrProgress {
+                        row: Some(Row(row)),
+                        progress: None,
+                    })),
+                    databend_driver::RowWithProgress::Progress(progress) => {
+                        Some(Ok(RowOrProgress {
+                            row: None,
+                            progress: Some(QueryProgress(progress)),
+                        }))
+                    }
+                },
+                Err(e) => Some(Err(format_napi_error(e))),
+            },
+        }
+    }
+
+    #[napi]
+    pub fn schema(&self) -> Schema {
+        Schema(self.schema.clone())
+    }
+}
+
+#[napi]
+pub struct RowOrProgress {
+    row: Option<Row>,
+    progress: Option<QueryProgress>,
+}
+
+#[napi]
+impl RowOrProgress {
+    #[napi(getter)]
+    pub fn row(&self) -> Option<Row> {
+        self.row.clone()
+    }
+
+    #[napi(getter)]
+    pub fn progress(&self) -> Option<QueryProgress> {
+        self.progress.clone()
+    }
+}
+
+#[napi]
+#[derive(Clone)]
 pub struct Row(databend_driver::Row);
 
 #[napi]
@@ -106,36 +189,37 @@ impl Row {
 }
 
 #[napi]
+#[derive(Clone)]
 pub struct QueryProgress(databend_driver::QueryProgress);
 
 #[napi]
 impl QueryProgress {
-    #[napi]
+    #[napi(getter)]
     pub fn total_rows(&self) -> usize {
         self.0.total_rows
     }
 
-    #[napi]
+    #[napi(getter)]
     pub fn total_bytes(&self) -> usize {
         self.0.total_bytes
     }
 
-    #[napi]
+    #[napi(getter)]
     pub fn read_rows(&self) -> usize {
         self.0.read_rows
     }
 
-    #[napi]
+    #[napi(getter)]
     pub fn read_bytes(&self) -> usize {
         self.0.read_bytes
     }
 
-    #[napi]
+    #[napi(getter)]
     pub fn write_rows(&self) -> usize {
         self.0.write_rows
     }
 
-    #[napi]
+    #[napi(getter)]
     pub fn write_bytes(&self) -> usize {
         self.0.write_bytes
     }
@@ -180,6 +264,16 @@ impl Client {
             .await
             .map(|iter| RowIterator(iter))
             .map_err(format_napi_error)
+    }
+
+    #[napi]
+    pub async fn query_iter_ext(&self, sql: String) -> Result<RowIteratorExt> {
+        let (schema, iterator) = self
+            .0
+            .query_iter_ext(&sql)
+            .await
+            .map_err(format_napi_error)?;
+        Ok(RowIteratorExt { schema, iterator })
     }
 
     #[napi]

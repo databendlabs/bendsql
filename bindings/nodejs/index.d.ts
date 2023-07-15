@@ -26,20 +26,36 @@ export class Client {
   exec(sql: string): Promise<number>
   queryRow(sql: string): Promise<Row | null>
   queryIter(sql: string): Promise<RowIterator>
+  queryIterExt(sql: string): Promise<RowIteratorExt>
   streamLoad(sql: string, data: Array<Array<string>>): Promise<QueryProgress>
 }
 export class ConnectionInfo { }
+export class Schema {
+  get fields(): Array<Field>
+}
+export class Field {
+  get name(): string
+  get dataType(): string
+}
 export class RowIterator {
   next(): Promise<Error | Row | null>
+}
+export class RowIteratorExt {
+  next(): Promise<Error | RowOrProgress | null>
+  schema(): Schema
+}
+export class RowOrProgress {
+  get row(): Row | null
+  get progress(): QueryProgress | null
 }
 export class Row {
   values(): Array<any>
 }
 export class QueryProgress {
-  totalRows(): bigint
-  totalBytes(): bigint
-  readRows(): bigint
-  readBytes(): bigint
-  writeRows(): bigint
-  writeBytes(): bigint
+  get totalRows(): bigint
+  get totalBytes(): bigint
+  get readRows(): bigint
+  get readBytes(): bigint
+  get writeRows(): bigint
+  get writeBytes(): bigint
 }
