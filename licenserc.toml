@@ -10,6 +10,8 @@ excludes = [
     ".gitignore",
     ".gitattributes",
     ".editorconfig",
+    ".npmignore",
+    ".prettierignore",
 
     "LICENSE",
     "Makefile",
@@ -31,6 +33,8 @@ excludes = [
     "**/*.txt",
 
     # test files
+    "core/tests/**",
+    "driver/tests/**",
     "cli/tests/**",
 ]
 
