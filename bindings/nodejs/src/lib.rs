@@ -25,6 +25,39 @@ pub struct Client(Box<dyn databend_driver::Connection>);
 #[napi]
 pub struct ConnectionInfo(databend_driver::ConnectionInfo);
 
+#[napi]
+impl ConnectionInfo {
+    #[napi(getter)]
+    pub fn handler(&self) -> String {
+        self.0.handler.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn host(&self) -> String {
+        self.0.host.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn port(&self) -> u16 {
+        self.0.port
+    }
+
+    #[napi(getter)]
+    pub fn user(&self) -> String {
+        self.0.user.to_string()
+    }
+
+    #[napi(getter)]
+    pub fn database(&self) -> Option<String> {
+        self.0.database.clone()
+    }
+
+    #[napi(getter)]
+    pub fn warehouse(&self) -> Option<String> {
+        self.0.warehouse.clone()
+    }
+}
+
 pub struct Value(databend_driver::Value);
 
 impl ToNapiValue for Value {
@@ -106,6 +139,8 @@ pub struct RowIterator(databend_driver::RowIterator);
 
 #[napi]
 impl RowIterator {
+    /// Fetch next row.
+    /// Returns `None` if there are no more rows.
     #[napi]
     pub async unsafe fn next(&mut self) -> Option<Result<Row>> {
         self.0
@@ -123,6 +158,8 @@ pub struct RowIteratorExt {
 
 #[napi]
 impl RowIteratorExt {
+    /// Fetch next row or progress.
+    /// Returns `None` if there are no more rows.
     #[napi]
     pub async unsafe fn next(&mut self) -> Option<Result<RowOrProgress>> {
         match self.iterator.next().await {
@@ -151,6 +188,7 @@ impl RowIteratorExt {
     }
 }
 
+/// Must contain either row or progress.
 #[napi]
 pub struct RowOrProgress {
     row: Option<Row>,
@@ -227,27 +265,32 @@ impl QueryProgress {
 
 #[napi]
 impl Client {
+    /// Create a new databend client with a given DSN.
     #[napi(constructor)]
     pub fn new(dsn: String) -> Result<Self> {
         let conn = databend_driver::new_connection(&dsn).map_err(format_napi_error)?;
         Ok(Self(conn))
     }
 
+    /// Get the connection information.
     #[napi]
     pub async fn info(&self) -> ConnectionInfo {
         ConnectionInfo(self.0.info().await)
     }
 
+    /// Get the databend version.
     #[napi]
     pub async fn version(&self) -> Result<String> {
         self.0.version().await.map_err(format_napi_error)
     }
 
+    /// Execute a SQL query, return the number of affected rows.
     #[napi]
     pub async fn exec(&self, sql: String) -> Result<i64> {
         self.0.exec(&sql).await.map_err(format_napi_error)
     }
 
+    /// Execute a SQL query, and only return the first row.
     #[napi]
     pub async fn query_row(&self, sql: String) -> Result<Option<Row>> {
         self.0
@@ -257,6 +300,7 @@ impl Client {
             .map_err(format_napi_error)
     }
 
+    /// Execute a SQL query, and return all rows.
     #[napi]
     pub async fn query_iter(&self, sql: String) -> Result<RowIterator> {
         self.0
@@ -266,6 +310,7 @@ impl Client {
             .map_err(format_napi_error)
     }
 
+    /// Execute a SQL query, and return all rows with schema and progress.
     #[napi]
     pub async fn query_iter_ext(&self, sql: String) -> Result<RowIteratorExt> {
         let (schema, iterator) = self
@@ -276,6 +321,8 @@ impl Client {
         Ok(RowIteratorExt { schema, iterator })
     }
 
+    /// Load data with stage attachment.
+    /// The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
     #[napi]
     pub async fn stream_load(&self, sql: String, data: Vec<Vec<String>>) -> Result<QueryProgress> {
         let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
