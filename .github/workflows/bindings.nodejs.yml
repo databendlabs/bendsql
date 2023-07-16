@@ -50,6 +50,7 @@ jobs:
       - run: make -C tests test-bindings-nodejs
 
   build:
+    needs: integration
     name: build-${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
