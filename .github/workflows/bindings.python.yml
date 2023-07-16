@@ -32,6 +32,8 @@ jobs:
           python-version: '3.11'
           cache: 'pipenv'
           cache-dependency-path: 'bindings/python/Pipfile.lock'
+      - name: Install pipenv
+        run: curl https://raw.githubusercontent.com/pypa/pipenv/master/get-pipenv.py | python
       - name: Install dependencies
         working-directory: bindings/python
         run: pipenv install --dev
