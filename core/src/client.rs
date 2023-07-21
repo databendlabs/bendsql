@@ -552,7 +552,7 @@ fn get_workspace_package_version() -> Option<String> {
 
 fn get_sdk_info() -> String {
     let optional_string: Option<String> = get_workspace_package_version();
-    let version_info: String = optional_string.unwrap_or_else(String::new);
+    let version_info: String = optional_string.unwrap_or_default();
     let lan = "Rust";
     let sdk_info = format!("{}/{}", lan, version_info);
     sdk_info
