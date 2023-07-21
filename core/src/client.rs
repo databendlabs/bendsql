@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
-use std::{collections::BTreeMap, fmt};
-
 use http::StatusCode;
 use percent_encoding::percent_decode_str;
 use reqwest::header::HeaderMap;
 use reqwest::multipart::{Form, Part};
 use reqwest::{Body, Client as HttpClient};
+use std::fs;
+use std::sync::Arc;
+use std::{collections::BTreeMap, fmt};
 use tokio::io::AsyncRead;
 use tokio::sync::Mutex;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 use tokio_util::io::ReaderStream;
+use toml::Value;
 use url::Url;
 
 use crate::{
@@ -345,7 +346,9 @@ impl APIClient {
     }
 
     async fn make_headers(&self) -> Result<HeaderMap> {
+        let sdk_info: String = get_sdk_info();
         let mut headers = HeaderMap::new();
+        headers.insert("User-Agent", sdk_info.parse()?);
         if let Some(tenant) = &self.tenant {
             headers.insert("X-DATABEND-TENANT", tenant.parse()?);
         }
@@ -539,6 +542,22 @@ impl Default for APIClient {
     }
 }
 
+fn get_workspace_package_version() -> Option<String> {
+    let toml_content = fs::read_to_string("../Cargo.toml").expect("Failed to read Cargo.toml");
+    let cargo_toml: Value = toml::from_str(&toml_content).expect("Failed to parse Cargo.toml");
+    let workspace_package = cargo_toml["workspace"]["package"].as_table()?;
+    let version = workspace_package["version"].as_str()?;
+    Some(version.to_string())
+}
+
+fn get_sdk_info() -> String {
+    let optional_string: Option<String> = get_workspace_package_version();
+    let version_info: String = optional_string.unwrap_or_else(String::new);
+    let lan = "Rust";
+    let sdk_info = format!("{}/{}", lan, version_info);
+    sdk_info
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -596,6 +615,12 @@ mod test {
         let location = "stage_name/path/to/file";
         let stage_location = StageLocation::try_from(location);
         assert!(stage_location.is_err());
+        Ok(())
+    }
+    #[test]
+    fn parse_workspace_version() -> Result<()> {
+        let version = get_workspace_package_version();
+        assert_eq!(version, Some("0.4.7".to_string()));
         Ok(())
     }
 }
