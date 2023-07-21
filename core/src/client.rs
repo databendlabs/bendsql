@@ -543,9 +543,9 @@ impl Default for APIClient {
 }
 
 fn get_workspace_package_version() -> Option<String> {
-    let toml_content = fs::read_to_string("../Cargo.toml").expect("Failed to read Cargo.toml");
+    let toml_content = fs::read_to_string("Cargo.toml").expect("Failed to read Cargo.toml");
     let cargo_toml: Value = toml::from_str(&toml_content).expect("Failed to parse Cargo.toml");
-    let workspace_package = cargo_toml["workspace"]["package"].as_table()?;
+    let workspace_package = cargo_toml["package"].as_table()?;
     let version = workspace_package["version"].as_str()?;
     Some(version.to_string())
 }
