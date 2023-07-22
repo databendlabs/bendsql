@@ -131,7 +131,7 @@ impl APIClient {
                             return Err(Error::BadArgument(format!(
                                 "Invalid value for presigned_url_disabled: {}",
                                 v
-                            )))
+                            )));
                         }
                     }
                 }
@@ -345,7 +345,9 @@ impl APIClient {
     }
 
     async fn make_headers(&self) -> Result<HeaderMap> {
+        let sdk_info: String = get_sdk_info();
         let mut headers = HeaderMap::new();
+        headers.insert("User-Agent", sdk_info.parse()?);
         if let Some(tenant) = &self.tenant {
             headers.insert("X-DATABEND-TENANT", tenant.parse()?);
         }
@@ -539,9 +541,25 @@ impl Default for APIClient {
     }
 }
 
+fn get_sdk_info() -> String {
+    let lan = "Rust";
+    let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
+    let sdk_info = format!("{}/{}", lan, version.to_string());
+    sdk_info
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn parse_workspace_version() -> Result<()> {
+        let real_info = get_sdk_info();
+        let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
+        let sdk_info = format!("{}/{}", "Rust".to_string(), version.to_string());
+        assert_eq!(real_info, sdk_info);
+        Ok(())
+    }
 
     #[test]
     fn parse_dsn() -> Result<()> {
