@@ -131,7 +131,7 @@ impl APIClient {
                             return Err(Error::BadArgument(format!(
                                 "Invalid value for presigned_url_disabled: {}",
                                 v
-                            )));
+                            )))
                         }
                     }
                 }
