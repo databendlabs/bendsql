@@ -544,7 +544,7 @@ impl Default for APIClient {
 fn get_sdk_info() -> String {
     let lan = "Rust";
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
-    let sdk_info = format!("{}/{}", lan, version.to_string());
+    let sdk_info = format!("{}/{}", lan, version);
     sdk_info
 }
 
