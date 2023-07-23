@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 class AsyncDatabendDriver:
     def __init__(self, dsn: str): ...  # NOQA
 

@@ -556,7 +556,7 @@ mod test {
     fn parse_workspace_version() -> Result<()> {
         let real_info = get_sdk_info();
         let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
-        let sdk_info = format!("{}/{}", "Rust".to_string(), version.to_string());
+        let sdk_info = format!("{}/{}", "Rust", version);
         assert_eq!(real_info, sdk_info);
         Ok(())
     }
