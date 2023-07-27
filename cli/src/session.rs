@@ -271,8 +271,8 @@ impl Session {
 
         let start = Instant::now();
         let kind = QueryKind::from(query);
-        match kind {
-            QueryKind::Update => {
+        match (kind, is_repl) {
+            (QueryKind::Update, false) => {
                 let affected = self.conn.exec(query).await?;
                 if is_repl {
                     if affected > 0 {
@@ -288,7 +288,7 @@ impl Session {
                 }
                 Ok(false)
             }
-            QueryKind::Query | QueryKind::Explain => {
+            _ => {
                 let (schema, data) = self.conn.query_iter_ext(query).await?;
                 let mut displayer =
                     FormatDisplay::new(&self.settings, query, start, Arc::new(schema), data);
