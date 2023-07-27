@@ -1,4 +1,4 @@
-// Copyright 2023 Datafuse Labs.
+// Copyright 2021 Datafuse Labs
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@ use reqwest::multipart::{Form, Part};
 use reqwest::{Body, Client as HttpClient};
 use tokio::io::AsyncRead;
 use tokio::sync::Mutex;
+use tokio_retry::strategy::{jitter, ExponentialBackoff};
+use tokio_retry::Retry;
 use tokio_util::io::ReaderStream;
 use url::Url;
 
@@ -75,17 +77,19 @@ pub struct APIClient {
     endpoint: Url,
     pub host: String,
     pub port: u16,
-
-    tenant: Option<String>,
-    warehouse: Option<String>,
-    pub database: Arc<Mutex<Option<String>>>,
     pub user: String,
     password: Option<String>,
+
+    tenant: Option<String>,
+    warehouse: Arc<Mutex<Option<String>>>,
+    database: Arc<Mutex<Option<String>>>,
     session_settings: Arc<Mutex<BTreeMap<String, String>>>,
 
     wait_time_secs: Option<i64>,
     max_rows_in_buffer: Option<i64>,
     max_rows_per_page: Option<i64>,
+
+    tls_ca_file: Option<String>,
 
     presigned_url_disabled: bool,
 }
@@ -135,12 +139,15 @@ impl APIClient {
                     client.tenant = Some(v.to_string());
                 }
                 "warehouse" => {
-                    client.warehouse = Some(v.to_string());
+                    client.warehouse = Arc::new(Mutex::new(Some(v.to_string())));
                 }
                 "sslmode" => {
                     if v == "disable" {
                         scheme = "http";
                     }
+                }
+                "tls_ca_file" => {
+                    client.tls_ca_file = Some(v.to_string());
                 }
                 _ => {
                     session_settings.insert(k.to_string(), v.to_string());
@@ -155,10 +162,29 @@ impl APIClient {
                 _ => unreachable!(),
             },
         };
+
+        #[cfg(any(feature = "rustls", feature = "native-tls"))]
+        if scheme == "https" {
+            if let Some(ref ca_file) = client.tls_ca_file {
+                let cert_pem = std::fs::read(ca_file)?;
+                let cert = reqwest::Certificate::from_pem(&cert_pem)?;
+                client.cli = HttpClient::builder().add_root_certificate(cert).build()?;
+            }
+        }
         client.endpoint = Url::parse(&format!("{}://{}:{}", scheme, client.host, client.port))?;
         client.session_settings = Arc::new(Mutex::new(session_settings));
 
         Ok(client)
+    }
+
+    pub async fn current_warehouse(&self) -> Option<String> {
+        let guard = self.warehouse.lock().await;
+        guard.clone()
+    }
+
+    pub async fn current_database(&self) -> Option<String> {
+        let guard = self.database.lock().await;
+        guard.clone()
     }
 
     pub async fn query(&self, sql: &str) -> Result<QueryResponse> {
@@ -167,14 +193,30 @@ impl APIClient {
             .with_pagination(self.make_pagination())
             .with_session(session_settings);
         let endpoint = self.endpoint.join("v1/query")?;
-        let resp = self
+        let headers = self.make_headers().await?;
+        let mut resp = self
             .cli
-            .post(endpoint)
+            .post(endpoint.clone())
             .json(&req)
             .basic_auth(self.user.clone(), self.password.clone())
-            .headers(self.make_headers()?)
+            .headers(headers.clone())
             .send()
             .await?;
+        let mut retries = 3;
+        while resp.status() != StatusCode::OK {
+            if resp.status() != StatusCode::SERVICE_UNAVAILABLE || retries <= 0 {
+                break;
+            }
+            retries -= 1;
+            resp = self
+                .cli
+                .post(endpoint.clone())
+                .json(&req)
+                .basic_auth(self.user.clone(), self.password.clone())
+                .headers(headers.clone())
+                .send()
+                .await?;
+        }
         if resp.status() != StatusCode::OK {
             let resp_err = QueryError {
                 code: resp.status().as_u16(),
@@ -182,6 +224,7 @@ impl APIClient {
             };
             return Err(Error::InvalidResponse(resp_err));
         }
+
         let resp: QueryResponse = resp.json().await?;
         if let Some(err) = resp.error {
             return Err(Error::InvalidResponse(err));
@@ -194,7 +237,15 @@ impl APIClient {
             }
             if let Some(settings) = &session.settings {
                 for (k, v) in settings {
-                    session_settings.insert(k.clone(), v.clone());
+                    match k.as_str() {
+                        "warehouse" => {
+                            let mut warehouse = self.warehouse.lock().await;
+                            *warehouse = Some(v.clone());
+                        }
+                        _ => {
+                            session_settings.insert(k.clone(), v.clone());
+                        }
+                    }
                 }
             }
         }
@@ -203,13 +254,17 @@ impl APIClient {
 
     pub async fn query_page(&self, next_uri: &str) -> Result<QueryResponse> {
         let endpoint = self.endpoint.join(next_uri)?;
-        let resp = self
-            .cli
-            .get(endpoint)
-            .basic_auth(self.user.clone(), self.password.clone())
-            .headers(self.make_headers()?)
-            .send()
-            .await?;
+        let headers = self.make_headers().await?;
+        let retry_strategy = ExponentialBackoff::from_millis(10).map(jitter).take(3);
+        let req = || async {
+            self.cli
+                .get(endpoint.clone())
+                .basic_auth(self.user.clone(), self.password.clone())
+                .headers(headers.clone())
+                .send()
+                .await
+        };
+        let resp = Retry::spawn(retry_strategy, req).await?;
         if resp.status() != StatusCode::OK {
             let resp_err = QueryError {
                 code: resp.status().as_u16(),
@@ -289,12 +344,13 @@ impl APIClient {
         Some(pagination)
     }
 
-    fn make_headers(&self) -> Result<HeaderMap> {
+    async fn make_headers(&self) -> Result<HeaderMap> {
         let mut headers = HeaderMap::new();
         if let Some(tenant) = &self.tenant {
             headers.insert("X-DATABEND-TENANT", tenant.parse()?);
         }
-        if let Some(warehouse) = &self.warehouse {
+        let warehouse = self.warehouse.lock().await;
+        if let Some(warehouse) = &*warehouse {
             headers.insert("X-DATABEND-WAREHOUSE", warehouse.parse()?);
         }
         Ok(headers)
@@ -318,14 +374,31 @@ impl APIClient {
             .with_session(session_settings)
             .with_stage_attachment(stage_attachment);
         let endpoint = self.endpoint.join("v1/query")?;
-        let resp = self
+        let headers = self.make_headers().await?;
+
+        let mut resp = self
             .cli
-            .post(endpoint)
+            .post(endpoint.clone())
             .json(&req)
             .basic_auth(self.user.clone(), self.password.clone())
-            .headers(self.make_headers()?)
+            .headers(headers.clone())
             .send()
             .await?;
+        let mut retries = 3;
+        while resp.status() != StatusCode::OK {
+            if resp.status() != StatusCode::SERVICE_UNAVAILABLE || retries <= 0 {
+                break;
+            }
+            retries -= 1;
+            resp = self
+                .cli
+                .post(endpoint.clone())
+                .json(&req)
+                .basic_auth(self.user.clone(), self.password.clone())
+                .headers(headers.clone())
+                .send()
+                .await?;
+        }
         if resp.status() != StatusCode::OK {
             let resp_err = QueryError {
                 code: resp.status().as_u16(),
@@ -333,6 +406,7 @@ impl APIClient {
             };
             return Err(Error::InvalidResponse(resp_err));
         }
+
         let resp: QueryResponse = resp.json().await?;
         let resp = self.wait_for_query(resp).await?;
         Ok(resp)
@@ -361,7 +435,7 @@ impl APIClient {
     ) -> Result<()> {
         let endpoint = self.endpoint.join("v1/upload_to_stage")?;
         let location = StageLocation::try_from(stage_location)?;
-        let mut headers = self.make_headers()?;
+        let mut headers = self.make_headers().await?;
         headers.insert("stage_name", location.name.parse()?);
         let stream = Body::wrap_stream(ReaderStream::new(data));
         let part = Part::stream_with_length(stream, size).file_name(location.path);
@@ -451,7 +525,7 @@ impl Default for APIClient {
             host: "localhost".to_string(),
             port: 8000,
             tenant: None,
-            warehouse: None,
+            warehouse: Arc::new(Mutex::new(None)),
             database: Arc::new(Mutex::new(None)),
             user: "root".to_string(),
             password: None,
@@ -459,6 +533,7 @@ impl Default for APIClient {
             wait_time_secs: None,
             max_rows_in_buffer: None,
             max_rows_per_page: None,
+            tls_ca_file: None,
             presigned_url_disabled: false,
         }
     }
@@ -484,7 +559,10 @@ mod test {
         assert_eq!(client.max_rows_in_buffer, Some(5000000));
         assert_eq!(client.max_rows_per_page, Some(10000));
         assert_eq!(client.tenant, None);
-        assert_eq!(client.warehouse, Some("wh".to_string()));
+        assert_eq!(
+            *client.warehouse.try_lock().unwrap(),
+            Some("wh".to_string())
+        );
         Ok(())
     }
 

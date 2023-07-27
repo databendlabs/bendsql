@@ -1,4 +1,4 @@
-// Copyright 2023 Datafuse Labs.
+// Copyright 2021 Datafuse Labs
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ use once_cell::sync::Lazy;
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
-    let sha = option_env!("VERGEN_GIT_DESCRIBE").unwrap_or("dev");
+    let sha = option_env!("VERGEN_GIT_SHA").unwrap_or("dev");
     let timestamp = option_env!("VERGEN_BUILD_TIMESTAMP").unwrap_or("");
     format!("{}-{}({})", version, sha, timestamp)
 });

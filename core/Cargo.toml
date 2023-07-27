@@ -1,12 +1,14 @@
 [package]
 name = "databend-client"
-version = "0.1.16"
-edition = "2021"
-license = "Apache-2.0"
 description = "Databend Client for Rust"
 categories = ["database"]
 keywords = ["databend", "database", "sdk"]
-repository = "https://github.com/datafuselabs/databend-client"
+
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
 
 [features]
 default = ["rustls"]
@@ -19,15 +21,16 @@ native-tls = ["reqwest/native-tls"]
 [dependencies]
 bytes = "1.4.0"
 http = "0.2.9"
-percent-encoding = "2.2.0"
-reqwest = { version = "0.11.16", default-features = false, features = ["json", "multipart", "stream"] }
-serde = { version = "1.0.160", default-features = false, features = ["derive"] }
-serde_json = { version = "1.0.96", default-features = false, features = ["std"] }
-tokio = { version = "1.27.0", features = ["macros"] }
-tokio-util = { version = "0.7.7", features = ["io-util"] }
+percent-encoding = "2.3.0"
+reqwest = { version = "0.11.18", default-features = false, features = ["json", "multipart", "stream"] }
+serde = { version = "1.0.164", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.97", default-features = false, features = ["std"] }
+tokio = { version = "1.28.2", features = ["macros"] }
+tokio-retry = "0.3.0"
+tokio-util = { version = "0.7.8", features = ["io-util"] }
 tower = { version = "0.4.13", default-features = false }
-tower-http = { version = "0.4.0", default-features = false }
-url = { version = "2.3.1", default-features = false }
+tower-http = { version = "0.4.1", default-features = false }
+url = { version = "2.4.0", default-features = false }
 
 [dev-dependencies]
-chrono = { version = "0.4.24", default-features = false, features = ["clock"] }
+chrono = { version = "0.4.26", default-features = false, features = ["clock"] }

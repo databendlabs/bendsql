@@ -1,7 +1,22 @@
 [workspace]
+default-members = ["core", "driver", "cli"]
 members = [
     "core",
     "driver",
     "cli",
-    "bindings/python"
+    "bindings/python",
+    "bindings/nodejs",
 ]
+
+[workspace.package]
+version = "0.4.7"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Databend Authors <opensource@datafuselabs.com>"]
+categories = ["database"]
+keywords = ["databend", "database"]
+repository = "https://github.com/datafuselabs/bendsql"
+
+[workspace.dependencies]
+databend-client = { path = "core", version = "0.4.7" }
+databend-driver = { path = "driver", version = "0.4.7" }

@@ -1,4 +1,4 @@
-// Copyright 2023 Datafuse Labs.
+// Copyright 2021 Datafuse Labs
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -44,19 +44,21 @@ pub struct FlightSQLConnection {
 
 #[async_trait]
 impl Connection for FlightSQLConnection {
-    fn info(&self) -> ConnectionInfo {
+    async fn info(&self) -> ConnectionInfo {
         ConnectionInfo {
             handler: "FlightSQL".to_string(),
             host: self.args.host.clone(),
             port: self.args.port,
             user: self.args.user.clone(),
+            database: self.args.database.clone(),
+            warehouse: self.args.warehouse.clone(),
         }
     }
 
     async fn exec(&self, sql: &str) -> Result<i64> {
         self.handshake().await?;
         let mut client = self.client.lock().await;
-        let affected_rows = client.execute_update(sql.to_string()).await?;
+        let affected_rows = client.execute_update(sql.to_string(), None).await?;
         Ok(affected_rows)
     }
 
@@ -79,7 +81,7 @@ impl Connection for FlightSQLConnection {
     async fn query_iter_ext(&self, sql: &str) -> Result<(Schema, RowProgressIterator)> {
         self.handshake().await?;
         let mut client = self.client.lock().await;
-        let mut stmt = client.prepare(sql.to_string()).await?;
+        let mut stmt = client.prepare(sql.to_string(), None).await?;
         let flight_info = stmt.execute().await?;
         let ticket = flight_info.endpoint[0]
             .ticket
@@ -146,8 +148,16 @@ impl FlightSQLConnection {
             .http2_keep_alive_interval(args.http2_keep_alive_interval)
             .keep_alive_timeout(args.keep_alive_timeout)
             .keep_alive_while_idle(args.keep_alive_while_idle);
+        #[cfg(any(feature = "rustls", feature = "native-tls"))]
         if args.tls {
-            let tls_config = ClientTlsConfig::new();
+            let tls_config = match args.tls_ca_file {
+                None => ClientTlsConfig::new(),
+                Some(ref ca_file) => {
+                    let pem = std::fs::read(ca_file)?;
+                    let cert = tonic::transport::Certificate::from_pem(pem);
+                    ClientTlsConfig::new().ca_certificate(cert)
+                }
+            };
             endpoint = endpoint.tls_config(tls_config)?;
         }
         Ok((args, endpoint))
@@ -165,6 +175,7 @@ struct Args {
     tenant: Option<String>,
     warehouse: Option<String>,
     tls: bool,
+    tls_ca_file: Option<String>,
     connect_timeout: Duration,
     query_timeout: Duration,
     tcp_nodelay: bool,
@@ -185,6 +196,7 @@ impl Default for Args {
             tenant: None,
             warehouse: None,
             tls: true,
+            tls_ca_file: None,
             user: "root".to_string(),
             password: "".to_string(),
             connect_timeout: Duration::from_secs(20),
@@ -212,6 +224,7 @@ impl Args {
                         args.tls = false;
                     }
                 }
+                "tls_ca_file" => args.tls_ca_file = Some(v.to_string()),
                 "connect_timeout" => args.connect_timeout = Duration::from_secs(v.parse()?),
                 "query_timeout" => args.query_timeout = Duration::from_secs(v.parse()?),
                 "tcp_nodelay" => args.tcp_nodelay = v.parse()?,

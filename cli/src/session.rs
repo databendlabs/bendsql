@@ -1,4 +1,4 @@
-// Copyright 2023 Datafuse Labs.
+// Copyright 2021 Datafuse Labs
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ pub struct Session {
 impl Session {
     pub async fn try_new(dsn: String, settings: Settings, is_repl: bool) -> Result<Self> {
         let conn = new_connection(&dsn)?;
-        let info = conn.info();
+        let info = conn.info().await;
         if is_repl {
             println!("Welcome to BendSQL {}.", VERSION.as_str());
             println!(
@@ -78,15 +78,25 @@ impl Session {
         }
     }
 
-    fn prompt(&self) -> String {
+    async fn prompt(&self) -> String {
         if !self.query.is_empty() {
             "> ".to_owned()
         } else {
-            let info = self.conn.info();
+            let info = self.conn.info().await;
             let mut prompt = self.settings.prompt.clone();
             prompt = prompt.replace("{host}", &info.host);
             prompt = prompt.replace("{user}", &info.user);
             prompt = prompt.replace("{port}", &info.port.to_string());
+            if let Some(database) = &info.database {
+                prompt = prompt.replace("{database}", database);
+            } else {
+                prompt = prompt.replace("{database}", "");
+            }
+            if let Some(warehouse) = &info.warehouse {
+                prompt = prompt.replace("{warehouse}", &format!("({})", warehouse));
+            } else {
+                prompt = prompt.replace("{warehouse}", &format!("{}:{}", info.host, info.port));
+            }
             format!("{} ", prompt.trim_end())
         }
     }
@@ -102,7 +112,7 @@ impl Session {
         rl.load_history(&get_history_path()).ok();
 
         'F: loop {
-            match rl.readline(&self.prompt()) {
+            match rl.readline(&self.prompt().await) {
                 Ok(line) => {
                     let queries = self.append_query(&line);
                     for query in queries {
@@ -195,48 +205,46 @@ impl Session {
 
         let mut queries = Vec::new();
         let mut tokenizer = Tokenizer::new(line);
-        let mut start = 0;
         let mut in_comment = false;
+        let mut start = 0;
+        let mut comment_block_start = 0;
+
         while let Some(Ok(token)) = tokenizer.next() {
             match token.kind {
-                TokenKind::CommentBlockStart => {
-                    self.in_comment_block = true;
-                    start = token.span.end;
-                    continue;
-                }
-                TokenKind::CommentBlockEnd => {
-                    if !self.in_comment_block {
-                        panic!("Unexpected comment block end");
-                    }
-                    self.in_comment_block = false;
-                    start = token.span.end;
-                    continue;
-                }
-                _ => {
-                    if self.in_comment_block {
-                        start = token.span.end;
-                        continue;
-                    }
-                }
-            }
-            match token.kind {
                 TokenKind::SemiColon => {
-                    let mut sql = self.query.trim().to_owned();
-                    if sql.is_empty() {
+                    if in_comment || self.in_comment_block {
                         continue;
+                    } else {
+                        let mut sql = self.query.trim().to_owned();
+                        if sql.is_empty() {
+                            continue;
+                        }
+                        sql.push(';');
+
+                        queries.push(sql);
+                        self.query.clear();
                     }
-                    sql.push(';');
-                    queries.push(sql);
-                    self.query.clear();
                 }
                 TokenKind::Comment => {
                     in_comment = true;
                 }
-                TokenKind::Newline | TokenKind::EOI => {
+                TokenKind::EOI => {
                     in_comment = false;
                 }
-                TokenKind::CommentBlockStart | TokenKind::CommentBlockEnd => {
-                    unreachable!("Comment block should be handled before")
+                TokenKind::Newline => {
+                    in_comment = false;
+                    self.query.push(' ');
+                }
+                TokenKind::CommentBlockStart => {
+                    if !self.in_comment_block {
+                        comment_block_start = token.span.start;
+                    }
+                    self.in_comment_block = true;
+                }
+                TokenKind::CommentBlockEnd => {
+                    self.in_comment_block = false;
+                    self.query
+                        .push_str(&line[comment_block_start..token.span.end]);
                 }
                 _ => {
                     if !in_comment && !self.in_comment_block {
@@ -245,6 +253,10 @@ impl Session {
                 }
             }
             start = token.span.end;
+        }
+
+        if self.in_comment_block {
+            self.query.push_str(&line[comment_block_start..]);
         }
         queries
     }
@@ -289,9 +301,16 @@ impl Session {
                 Ok(false)
             }
             _ => {
+                let replace_newline = replace_newline_in_box_display(query);
                 let (schema, data) = self.conn.query_iter_ext(query).await?;
-                let mut displayer =
-                    FormatDisplay::new(&self.settings, query, start, Arc::new(schema), data);
+                let mut displayer = FormatDisplay::new(
+                    &self.settings,
+                    query,
+                    replace_newline,
+                    start,
+                    Arc::new(schema),
+                    data,
+                );
                 displayer.display().await?;
                 Ok(false)
             }
@@ -349,7 +368,7 @@ impl Session {
     async fn reconnect(&mut self) -> Result<()> {
         self.conn = new_connection(&self.dsn)?;
         if self.is_repl {
-            let info = self.conn.info();
+            let info = self.conn.info().await;
             eprintln!(
                 "Trying reconnect to {}:{} as user {}.",
                 info.host, info.port, info.user
@@ -394,5 +413,17 @@ impl From<&str> for QueryKind {
             },
             _ => QueryKind::Query,
         }
+    }
+}
+
+fn replace_newline_in_box_display(query: &str) -> bool {
+    let mut tz = Tokenizer::new(query);
+    match tz.next() {
+        Some(Ok(t)) => match t.kind {
+            TokenKind::EXPLAIN => false,
+            TokenKind::SHOW => !matches!(tz.next(), Some(Ok(t)) if t.kind == TokenKind::CREATE),
+            _ => true,
+        },
+        _ => true,
     }
 }

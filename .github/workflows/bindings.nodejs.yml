@@ -1,0 +1,147 @@
+name: Bindings Node.js
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - v*
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'bindings/nodejs/**'
+      - ".github/workflows/bindings.nodejs.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup
+        with:
+          cache-key: bindings-nodejs
+      - name: Setup node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: yarn
+          cache-dependency-path: "bindings/nodejs/yarn.lock"
+      - name: Corepack
+        working-directory: bindings/nodejs
+        run: corepack enable
+      - name: Install dependencies
+        working-directory: bindings/nodejs
+        run: |
+          yarn install --immutable
+      - name: Check format
+        working-directory: bindings/nodejs
+        run: yarn run prettier --check .
+      - name: Build
+        working-directory: bindings/nodejs
+        run: yarn build:debug
+      - name: Check diff
+        run: git diff --exit-code
+      - run: make -C tests test-bindings-nodejs
+
+  build:
+    needs: integration
+    if: startsWith(github.ref, 'refs/tags/v')
+    name: build-${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - { os: linux, arch: x64, target: x86_64-unknown-linux-gnu, runner: ubuntu-20.04 }
+          - { os: windows, arch: x64, target: x86_64-pc-windows-msvc, runner: windows-2019 }
+          - { os: macos, arch: x64, target: x86_64-apple-darwin, runner: macos-11 }
+          - { os: macos, arch: arm64, target: aarch64-apple-darwin, runner: macos-11 }
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup
+        with:
+          cache-key: bindings-nodejs
+          target: ${{ matrix.target }}
+      - name: Setup node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: yarn
+          cache-dependency-path: "bindings/nodejs/yarn.lock"
+      - name: Corepack
+        working-directory: bindings/nodejs
+        run: corepack enable
+      - name: Install dependencies
+        working-directory: bindings/nodejs
+        run: yarn install --immutable
+      - name: build
+        working-directory: bindings/nodejs
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == 'aarch64-apple-darwin' ]]; then
+            sudo rm -Rf /Library/Developer/CommandLineTools/SDKs/*
+            export CC=$(xcrun -f clang)
+            export CXX=$(xcrun -f clang++)
+            SYSROOT=$(xcrun --sdk macosx --show-sdk-path)
+            export CFLAGS="-isysroot $SYSROOT -isystem $SYSROOT"
+          fi
+          export NAPI_TARGET=${{ matrix.target }}
+          yarn build
+      - name: strip for macos
+        if: matrix.os == 'macos'
+        working-directory: bindings/nodejs
+        run: |
+          strip -x *.node
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bindings-nodejs
+          path: bindings/nodejs/*.node
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: yarn
+          cache-dependency-path: "bindings/nodejs/yarn.lock"
+      - name: Corepack
+        working-directory: bindings/nodejs
+        run: corepack enable
+      - name: Install dependencies
+        working-directory: bindings/nodejs
+        run: yarn install --immutable
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: bindings/nodejs/artifacts
+      - name: Move artifacts
+        shell: bash
+        working-directory: bindings/nodejs
+        run: |
+          ls -lRh artifacts
+          yarn run napi artifacts
+          ls -lRh npm
+      - name: Add LICENSE
+        run: cp LICENSE ./bindings/nodejs
+      - name: Publish
+        working-directory: bindings/nodejs
+        run: |
+          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+          npm publish --access public --provenance
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

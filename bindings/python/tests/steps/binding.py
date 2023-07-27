@@ -1,4 +1,4 @@
-# Copyright 2023 Datafuse Labs.
+# Copyright 2021 Datafuse Labs
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import os
 
 from behave import given, when, then
@@ -20,18 +21,20 @@ import databend_driver
 
 @given("A new Databend-Driver Async Connector")
 @async_run_until_complete
-async def step_impl(context):
-    dsn = os.getenv("TEST_DATABEND_DSN", "databend+http://root:root@localhost:8000/?sslmode=disable")
+async def _(context):
+    dsn = os.getenv(
+        "TEST_DATABEND_DSN", "databend+http://root:root@localhost:8000/?sslmode=disable"
+    )
     context.ad = databend_driver.AsyncDatabendDriver(dsn)
 
 
 @when('Async exec "{sql}"')
 @async_run_until_complete
-async def step_impl(context, sql):
+async def _(context, sql):
     await context.ad.exec(sql)
 
 
 @then('The select "{select_sql}" should run')
 @async_run_until_complete
-async def step_impl(context, select_sql):
+async def _(context, select_sql):
     await context.ad.exec(select_sql)
