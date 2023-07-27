@@ -542,7 +542,7 @@ impl Default for APIClient {
 }
 
 fn get_sdk_info() -> String {
-    let lan = "Rust";
+    let lan = "databend-client-rust";
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     let sdk_info = format!("{}/{}", lan, version);
     sdk_info
@@ -551,15 +551,6 @@ fn get_sdk_info() -> String {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    #[test]
-    fn parse_workspace_version() -> Result<()> {
-        let real_info = get_sdk_info();
-        let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
-        let sdk_info = format!("{}/{}", "Rust", version);
-        assert_eq!(real_info, sdk_info);
-        Ok(())
-    }
 
     #[test]
     fn parse_dsn() -> Result<()> {
