@@ -276,6 +276,7 @@ impl Client {
     }
 
     /// Get a connection from the client.
+    #[napi]
     pub async fn get_conn(&self) -> Result<Connection> {
         self.0
             .get_conn()
