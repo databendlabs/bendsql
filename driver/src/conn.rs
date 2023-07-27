@@ -41,12 +41,12 @@ impl<'c> Client {
         let u = Url::parse(&self.dsn)?;
         match u.scheme() {
             "databend" | "databend+http" | "databend+https" => {
-                let conn = RestAPIConnection::try_create(&self.dsn)?;
+                let conn = RestAPIConnection::try_create(&self.dsn).await?;
                 Ok(Box::new(conn))
             }
             #[cfg(feature = "flight-sql")]
             "databend+flight" | "databend+grpc" => {
-                let conn = FlightSQLConnection::try_create(&self.dsn)?;
+                let conn = FlightSQLConnection::try_create(&self.dsn).await?;
                 Ok(Box::new(conn))
             }
             _ => Err(Error::Parsing(format!(
