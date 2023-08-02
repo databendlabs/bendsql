@@ -1,4 +1,4 @@
-// Copyright 2023 Datafuse Labs.
+// Copyright 2021 Datafuse Labs
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ use crate::common::DEFAULT_DSN;
 #[tokio::test]
 async fn select_simple() {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
-    let client = APIClient::from_dsn(dsn).unwrap();
+    let client = APIClient::from_dsn(dsn).await.unwrap();
     let resp = client.query("select 15532").await.unwrap();
     assert_eq!(resp.data, [["15532"]]);
 }

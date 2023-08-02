@@ -22,23 +22,83 @@ const dsn = process.env.TEST_DATABEND_DSN
   ? process.env.TEST_DATABEND_DSN
   : "databend://root:@localhost:8000/default?sslmode=disable";
 
-Given("A new Databend Driver Client", function () {
+Given("A new Databend Driver Client", async function () {
   this.client = new Client(dsn);
+  this.conn = await this.client.getConn();
 });
 
-Then("Select String {string} should be equal to {string}", async function (input, output) {
-  const row = await this.client.queryRow(`SELECT '${input}'`);
-  const value = row.json()[0];
-  assert(value === output);
+Then("Select string {string} should be equal to {string}", async function (input, output) {
+  const row = await this.conn.queryRow(`SELECT '${input}'`);
+  const value = row.values()[0];
+  assert.equal(output, value);
 });
 
 Then("Select numbers should iterate all rows", async function () {
-  let rows = await this.client.queryIter("SELECT number FROM numbers(5)");
+  let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
   let ret = [];
   let row = await rows.next();
   while (row) {
-    ret.push(row.json()[0]);
+    ret.push(row.values()[0]);
     row = await rows.next();
   }
-  assert(JSON.stringify(ret) === JSON.stringify([0, 1, 2, 3, 4]));
+  const expected = [0, 1, 2, 3, 4];
+  assert.deepEqual(ret, expected);
+});
+
+When("Create a test table", async function () {
+  await this.conn.exec("DROP TABLE IF EXISTS test");
+  await this.conn.exec(`CREATE TABLE test (
+		i64 Int64,
+		u64 UInt64,
+		f64 Float64,
+		s   String,
+		s2  String,
+		d   Date,
+		t   DateTime
+    );`);
+});
+
+Then("Insert and Select should be equal", async function () {
+  await this.conn.exec(`INSERT INTO test VALUES
+    (-1, 1, 1.0, '1', '1', '2011-03-06', '2011-03-06 06:20:00'),
+    (-2, 2, 2.0, '2', '2', '2012-05-31', '2012-05-31 11:20:00'),
+    (-3, 3, 3.0, '3', '2', '2016-04-04', '2016-04-04 11:30:00')`);
+  const rows = await this.conn.queryIter("SELECT * FROM test");
+  const ret = [];
+  let row = await rows.next();
+  while (row) {
+    ret.push(row.values());
+    row = await rows.next();
+  }
+  const expected = [
+    [-1, 1, 1.0, "1", "1", new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
+    [-2, 2, 2.0, "2", "2", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
+    [-3, 3, 3.0, "3", "2", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
+  ];
+  assert.deepEqual(ret, expected);
+});
+
+Then("Stream load and Select should be equal", async function () {
+  const values = [
+    ["-1", "1", "1.0", "1", "1", "2011-03-06", "2011-03-06T06:20:00Z"],
+    ["-2", "2", "2.0", "2", "2", "2012-05-31", "2012-05-31T11:20:00Z"],
+    ["-3", "3", "3.0", "3", "2", "2016-04-04", "2016-04-04T11:30:00Z"],
+  ];
+  const progress = await this.conn.streamLoad(`INSERT INTO test VALUES`, values);
+  assert.equal(progress.writeRows, 3);
+  assert.equal(progress.writeBytes, 178);
+
+  const rows = await this.conn.queryIter("SELECT * FROM test");
+  const ret = [];
+  let row = await rows.next();
+  while (row) {
+    ret.push(row.values());
+    row = await rows.next();
+  }
+  const expected = [
+    [-1, 1, 1.0, "1", "1", new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
+    [-2, 2, 2.0, "2", "2", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
+    [-3, 3, 3.0, "3", "2", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
+  ];
+  assert.deepEqual(ret, expected);
 });

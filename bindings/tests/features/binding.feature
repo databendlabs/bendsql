@@ -1,4 +1,4 @@
-# Copyright 2021 Datafuse Labs.
+# Copyright 2021 Datafuse Labs
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,11 +16,18 @@ Feature: Databend Driver
 
     Scenario: Select Simple
         Given A new Databend Driver Client
-        Then Select String "Hello, World!" should be equal to "Hello, World!"
+        Then Select string "Hello, World!" should be equal to "Hello, World!"
 
     Scenario: Select Iter
         Given A new Databend Driver Client
         Then Select numbers should iterate all rows
 
+    Scenario: Insert and Select
+        Given A new Databend Driver Client
+        When Create a test table
+        Then Insert and Select should be equal
+
     Scenario: Stream Load
         Given A new Databend Driver Client
+        When Create a test table
+        Then Stream load and Select should be equal

@@ -1,4 +1,4 @@
-// Copyright 2023 Datafuse Labs.
+// Copyright 2021 Datafuse Labs
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@ mod asyncio;
 
 use crate::asyncio::*;
 
-use databend_driver::{new_connection, Connection};
+use databend_driver::{Client, Connection};
 
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
@@ -39,7 +39,8 @@ pub type FusedConnector = Arc<dyn Connection>;
 // For bindings
 impl Connector {
     pub fn new_connector(dsn: &str) -> Result<Box<Self>, Error> {
-        let conn = new_connection(dsn).unwrap();
+        let client = Client::new(dsn.to_string());
+        let conn = futures::executor::block_on(client.get_conn()).unwrap();
         let r = Self {
             connector: FusedConnector::from(conn),
         };

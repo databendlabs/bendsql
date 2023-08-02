@@ -36,7 +36,7 @@ sudo apt update
 sudo apt install bendsql
 ```
 
-* Binary: check for latest release [here](https://github.com/datafuselabs/databend-client/releases)
+* Binary: check for latest release [here](https://github.com/datafuselabs/bendsql/releases)
 
 
 ## Usage
@@ -151,7 +151,8 @@ Common:
 |---|---|
 | `tenant` | Tenant ID, Databend Cloud only. |
 | `warehouse` | Warehouse name, Databend Cloud only. |
-| `sslmode` | Set to `disable` if not using tls |
+| `sslmode` | Set to `disable` if not using tls. |
+| `tls_ca_file` | Custom root CA certificate path. |
 
 
 RestAPI client:

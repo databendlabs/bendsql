@@ -1,4 +1,4 @@
-// Copyright 2023 Datafuse Labs.
+// Copyright 2021 Datafuse Labs
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -108,8 +108,8 @@ impl Connection for RestAPIConnection {
 }
 
 impl<'o> RestAPIConnection {
-    pub fn try_create(dsn: &str) -> Result<Self> {
-        let client = APIClient::from_dsn(dsn)?;
+    pub async fn try_create(dsn: &str) -> Result<Self> {
+        let client = APIClient::from_dsn(dsn).await?;
         Ok(Self { client })
     }
 

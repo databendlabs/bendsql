@@ -1,4 +1,4 @@
-// Copyright 2023 Datafuse Labs.
+// Copyright 2021 Datafuse Labs
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::{collections::BTreeMap, fmt};
 
 use http::StatusCode;
+use once_cell::sync::Lazy;
 use percent_encoding::percent_decode_str;
 use reqwest::header::HeaderMap;
 use reqwest::multipart::{Form, Part};
@@ -32,6 +33,12 @@ use crate::{
     request::{PaginationConfig, QueryRequest, SessionConfig, StageAttachmentConfig},
     response::{QueryError, QueryResponse},
 };
+
+static VERSION: Lazy<String> = Lazy::new(|| {
+    let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
+    let sha = option_env!("VERGEN_GIT_SHA").unwrap_or("dev");
+    format!("{}-{}", version, sha)
+});
 
 pub struct PresignedResponse {
     pub method: String,
@@ -89,11 +96,13 @@ pub struct APIClient {
     max_rows_in_buffer: Option<i64>,
     max_rows_per_page: Option<i64>,
 
+    tls_ca_file: Option<String>,
+
     presigned_url_disabled: bool,
 }
 
 impl APIClient {
-    pub fn from_dsn(dsn: &str) -> Result<Self> {
+    pub async fn from_dsn(dsn: &str) -> Result<Self> {
         let u = Url::parse(dsn)?;
         let mut client = Self::default();
         if let Some(host) = u.host_str() {
@@ -144,6 +153,9 @@ impl APIClient {
                         scheme = "http";
                     }
                 }
+                "tls_ca_file" => {
+                    client.tls_ca_file = Some(v.to_string());
+                }
                 _ => {
                     session_settings.insert(k.to_string(), v.to_string());
                 }
@@ -157,6 +169,18 @@ impl APIClient {
                 _ => unreachable!(),
             },
         };
+
+        let mut cli_builder =
+            HttpClient::builder().user_agent(format!("databend-client-rust/{}", VERSION.as_str()));
+        #[cfg(any(feature = "rustls", feature = "native-tls"))]
+        if scheme == "https" {
+            if let Some(ref ca_file) = client.tls_ca_file {
+                let cert_pem = tokio::fs::read(ca_file).await?;
+                let cert = reqwest::Certificate::from_pem(&cert_pem)?;
+                cli_builder = cli_builder.add_root_certificate(cert);
+            }
+        }
+        client.cli = cli_builder.build()?;
         client.endpoint = Url::parse(&format!("{}://{}:{}", scheme, client.host, client.port))?;
         client.session_settings = Arc::new(Mutex::new(session_settings));
 
@@ -180,14 +204,29 @@ impl APIClient {
             .with_session(session_settings);
         let endpoint = self.endpoint.join("v1/query")?;
         let headers = self.make_headers().await?;
-        let resp = self
+        let mut resp = self
             .cli
-            .post(endpoint)
+            .post(endpoint.clone())
             .json(&req)
             .basic_auth(self.user.clone(), self.password.clone())
-            .headers(headers)
+            .headers(headers.clone())
             .send()
             .await?;
+        let mut retries = 3;
+        while resp.status() != StatusCode::OK {
+            if resp.status() != StatusCode::SERVICE_UNAVAILABLE || retries <= 0 {
+                break;
+            }
+            retries -= 1;
+            resp = self
+                .cli
+                .post(endpoint.clone())
+                .json(&req)
+                .basic_auth(self.user.clone(), self.password.clone())
+                .headers(headers.clone())
+                .send()
+                .await?;
+        }
         if resp.status() != StatusCode::OK {
             let resp_err = QueryError {
                 code: resp.status().as_u16(),
@@ -195,6 +234,7 @@ impl APIClient {
             };
             return Err(Error::InvalidResponse(resp_err));
         }
+
         let resp: QueryResponse = resp.json().await?;
         if let Some(err) = resp.error {
             return Err(Error::InvalidResponse(err));
@@ -345,14 +385,30 @@ impl APIClient {
             .with_stage_attachment(stage_attachment);
         let endpoint = self.endpoint.join("v1/query")?;
         let headers = self.make_headers().await?;
-        let resp = self
+
+        let mut resp = self
             .cli
-            .post(endpoint)
+            .post(endpoint.clone())
             .json(&req)
             .basic_auth(self.user.clone(), self.password.clone())
-            .headers(headers)
+            .headers(headers.clone())
             .send()
             .await?;
+        let mut retries = 3;
+        while resp.status() != StatusCode::OK {
+            if resp.status() != StatusCode::SERVICE_UNAVAILABLE || retries <= 0 {
+                break;
+            }
+            retries -= 1;
+            resp = self
+                .cli
+                .post(endpoint.clone())
+                .json(&req)
+                .basic_auth(self.user.clone(), self.password.clone())
+                .headers(headers.clone())
+                .send()
+                .await?;
+        }
         if resp.status() != StatusCode::OK {
             let resp_err = QueryError {
                 code: resp.status().as_u16(),
@@ -360,6 +416,7 @@ impl APIClient {
             };
             return Err(Error::InvalidResponse(resp_err));
         }
+
         let resp: QueryResponse = resp.json().await?;
         let resp = self.wait_for_query(resp).await?;
         Ok(resp)
@@ -486,6 +543,7 @@ impl Default for APIClient {
             wait_time_secs: None,
             max_rows_in_buffer: None,
             max_rows_per_page: None,
+            tls_ca_file: None,
             presigned_url_disabled: false,
         }
     }
@@ -495,10 +553,10 @@ impl Default for APIClient {
 mod test {
     use super::*;
 
-    #[test]
-    fn parse_dsn() -> Result<()> {
+    #[tokio::test]
+    async fn parse_dsn() -> Result<()> {
         let dsn = "databend://username:password@app.databend.com/test?wait_time_secs=10&max_rows_in_buffer=5000000&max_rows_per_page=10000&warehouse=wh&sslmode=disable";
-        let client = APIClient::from_dsn(dsn)?;
+        let client = APIClient::from_dsn(dsn).await?;
         assert_eq!(client.host, "app.databend.com");
         assert_eq!(client.endpoint, Url::parse("http://app.databend.com:80")?);
         assert_eq!(client.user, "username");
@@ -518,18 +576,18 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn parse_encoded_password() -> Result<()> {
+    #[tokio::test]
+    async fn parse_encoded_password() -> Result<()> {
         let dsn = "databend://username:3a%40SC(nYE1k%3D%7B%7BR@localhost";
-        let client = APIClient::from_dsn(dsn)?;
+        let client = APIClient::from_dsn(dsn).await?;
         assert_eq!(client.password, Some("3a@SC(nYE1k={{R".to_string()));
         Ok(())
     }
 
-    #[test]
-    fn parse_special_chars_password() -> Result<()> {
+    #[tokio::test]
+    async fn parse_special_chars_password() -> Result<()> {
         let dsn = "databend://username:3a@SC(nYE1k={{R@localhost:8000";
-        let client = APIClient::from_dsn(dsn)?;
+        let client = APIClient::from_dsn(dsn).await?;
         assert_eq!(client.password, Some("3a@SC(nYE1k={{R".to_string()));
         Ok(())
     }
