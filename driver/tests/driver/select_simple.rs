@@ -124,7 +124,7 @@ async fn select_datetime() {
 async fn select_decimal() {
     let conn = prepare().await;
     let row = conn
-        .query_row("select 1::Decimal(15,2), 2.0 + 3.0")
+        .query_row("select 1::Decimal(15,2), 2.0 + 3.0,  3::Decimal(20, 0)")
         .await
         .unwrap();
     assert!(row.is_some());
@@ -144,6 +144,13 @@ async fn select_decimal() {
                 DecimalSize {
                     precision: 2,
                     scale: 1
+                },
+            )),
+            Value::Number(NumberValue::Decimal128(
+                3i128,
+                DecimalSize {
+                    precision: 20,
+                    scale: 0
                 },
             )),
         ]
