@@ -554,7 +554,7 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
 pub fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
     let mut start = 0;
     let bytes = text.as_bytes();
-    while bytes[start] == b'0' {
+    while start < text.len() && bytes[start] == b'0' {
         start += 1
     }
     let text = &text[start..];
