@@ -44,8 +44,6 @@ pub struct FormatDisplay<'a> {
     settings: &'a Settings,
     query: &'a str,
     kind: QueryKind,
-    // whether replace '\n' with '\\n', only disable in explain/show create stmts
-    replace_newline: bool,
     schema: SchemaRef,
     data: RowProgressIterator,
 
@@ -59,7 +57,6 @@ impl<'a> FormatDisplay<'a> {
     pub fn new(
         settings: &'a Settings,
         query: &'a str,
-        replace_newline: bool,
         start: Instant,
         schema: SchemaRef,
         data: RowProgressIterator,
@@ -67,7 +64,6 @@ impl<'a> FormatDisplay<'a> {
         Self {
             settings,
             query,
-            replace_newline,
             schema,
             data,
             kind: QueryKind::from(query),
@@ -121,7 +117,6 @@ impl<'a> FormatDisplay<'a> {
                 create_table(
                     self.schema.clone(),
                     &rows,
-                    self.replace_newline,
                     self.settings.max_display_rows,
                     self.settings.max_width,
                     self.settings.max_col_width
@@ -396,8 +391,7 @@ fn compute_render_widths(
 fn create_table(
     schema: SchemaRef,
     results: &[Row],
-    replace_newline: bool,
-    mut max_rows: usize,
+    max_rows: usize,
     mut max_width: usize,
     max_col_width: usize,
 ) -> Result<Table> {
@@ -415,11 +409,6 @@ fn create_table(
         if let Some((Width(w), _)) = size {
             max_width = w as usize;
         }
-    }
-
-    if !replace_newline {
-        max_width = usize::MAX;
-        max_rows = usize::MAX;
     }
 
     let row_count: usize = results.len();
@@ -446,11 +435,7 @@ fn create_table(
         let values = row.values();
         let mut v = vec![];
         for value in values {
-            if replace_newline {
-                v.push(value.to_string().replace('\n', "\\n"));
-            } else {
-                v.push(value.to_string());
-            }
+            v.push(value.to_string());
         }
         res_vec.push(v);
     }
@@ -460,11 +445,7 @@ fn create_table(
             let values = row.values();
             let mut v = vec![];
             for value in values {
-                if replace_newline {
-                    v.push(value.to_string().replace('\n', "\\n"));
-                } else {
-                    v.push(value.to_string());
-                }
+                v.push(value.to_string());
             }
             res_vec.push(v);
         }
