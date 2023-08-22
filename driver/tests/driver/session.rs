@@ -22,20 +22,14 @@ async fn set_timezone() {
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
 
-    let row = conn
-        .querye_row("set timezone='Europe/London'")
-        .await
-        .unwrap();
+    let row = conn.query_row("select timezone()").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();
     assert_eq!(val, "UTC");
 
     conn.exec("set timezone='Europe/London'").await.unwrap();
-    let row = conn
-        .querye_row("set timezone='Europe/London'")
-        .await
-        .unwrap();
+    let row = conn.query_row("select timezone()").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();
