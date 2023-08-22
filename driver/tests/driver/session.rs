@@ -35,3 +35,16 @@ async fn set_timezone() {
     let (val,): (String,) = row.try_into().unwrap();
     assert_eq!(val, "Europe/London");
 }
+
+#[tokio::test]
+async fn set_timezone_with_dsn() {
+    let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
+    let client = Client::new(format!("{}&timezone=Europe/London", dsn));
+    let conn = client.get_conn().await.unwrap();
+
+    let row = conn.query_row("select timezone()").await.unwrap();
+    assert!(row.is_some());
+    let row = row.unwrap();
+    let (val,): (String,) = row.try_into().unwrap();
+    assert_eq!(val, "Europe/London");
+}
