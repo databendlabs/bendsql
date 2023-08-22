@@ -39,7 +39,11 @@ async fn set_timezone() {
 #[tokio::test]
 async fn set_timezone_with_dsn() {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
-    let client = Client::new(format!("{}&timezone=Europe%2FLondon", dsn));
+    if dsn.starts_with("databend+flight://") {
+        // skip dsn variable test for flight
+        return;
+    }
+    let client = Client::new(format!("{}&timezone=Europe/London", dsn));
     let conn = client.get_conn().await.unwrap();
 
     let row = conn.query_row("select timezone()").await.unwrap();
