@@ -44,6 +44,9 @@ pub struct FormatDisplay<'a> {
     settings: &'a Settings,
     query: &'a str,
     kind: QueryKind,
+    // whether replace '\n' with '\\n',
+    // disable in explain/show create stmts or user config setting false
+    replace_newline: bool,
     schema: SchemaRef,
     data: RowProgressIterator,
 
@@ -57,6 +60,7 @@ impl<'a> FormatDisplay<'a> {
     pub fn new(
         settings: &'a Settings,
         query: &'a str,
+        replace_newline: bool,
         start: Instant,
         schema: SchemaRef,
         data: RowProgressIterator,
@@ -64,9 +68,10 @@ impl<'a> FormatDisplay<'a> {
         Self {
             settings,
             query,
+            kind: QueryKind::from(query),
+            replace_newline,
             schema,
             data,
-            kind: QueryKind::from(query),
             rows: 0,
             progress: None,
             start,
@@ -117,7 +122,7 @@ impl<'a> FormatDisplay<'a> {
                 create_table(
                     self.schema.clone(),
                     &rows,
-                    self.settings.replace_newline,
+                    self.replace_newline,
                     self.settings.max_display_rows,
                     self.settings.max_width,
                     self.settings.max_col_width
