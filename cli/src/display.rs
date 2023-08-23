@@ -117,6 +117,7 @@ impl<'a> FormatDisplay<'a> {
                 create_table(
                     self.schema.clone(),
                     &rows,
+                    self.settings.replace_newline,
                     self.settings.max_display_rows,
                     self.settings.max_width,
                     self.settings.max_col_width
@@ -391,6 +392,7 @@ fn compute_render_widths(
 fn create_table(
     schema: SchemaRef,
     results: &[Row],
+    replace_newline: bool,
     max_rows: usize,
     mut max_width: usize,
     max_col_width: usize,
@@ -413,8 +415,10 @@ fn create_table(
 
     let row_count: usize = results.len();
     let mut rows_to_render = row_count.min(max_rows);
-
-    if row_count <= max_rows + 3 {
+    if !replace_newline {
+        max_width = usize::MAX;
+        rows_to_render = row_count;
+    } else if row_count <= max_rows + 3 {
         // hiding rows adds 3 extra rows
         // so hiding rows makes no sense if we are only slightly over the limit
         // if we are 1 row over the limit hiding rows will actually increase the number of lines we display!
@@ -435,7 +439,11 @@ fn create_table(
         let values = row.values();
         let mut v = vec![];
         for value in values {
-            v.push(value.to_string());
+            if replace_newline {
+                v.push(value.to_string().replace('\n', "\\n"));
+            } else {
+                v.push(value.to_string());
+            }
         }
         res_vec.push(v);
     }
@@ -445,7 +453,11 @@ fn create_table(
             let values = row.values();
             let mut v = vec![];
             for value in values {
-                v.push(value.to_string());
+                if replace_newline {
+                    v.push(value.to_string().replace('\n', "\\n"));
+                } else {
+                    v.push(value.to_string());
+                }
             }
             res_vec.push(v);
         }
