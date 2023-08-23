@@ -23,6 +23,10 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
 
     let struct_name = &item.ident;
     let (impl_generics, ty_generics, where_clause) = item.generics.split_for_impl();
+    
+    let row_tk=quote!(databend_driver::Row);
+    let result_tk=quote!(databend_driver::Result);
+    let err_tk=quote!(databend_driver::Error);
 
     let set_fields_code = struct_fields.named.iter().map(|field| {
         let field_name = &field.ident;
@@ -37,21 +41,21 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
                 let t = col_value.get_type();
 
                 <#field_type>::try_from(col_value)
-                    .map_err(|_| Error::InvalidResponse(format!("failed converting column {} from type({:?}) to type({})", col_ix, t, std::any::type_name::<#field_type>())))?
+                    .map_err(|_| #err_tk::InvalidResponse(format!("failed converting column {} from type({:?}) to type({})", col_ix, t, std::any::type_name::<#field_type>())))?
             },
         }
     });
 
     let fields_count = struct_fields.named.len();
-    let generated = quote! {
-        use databend_sql::rows::Row;
-        use databend_sql::error::{Error, Result};
+    
 
-        impl #impl_generics TryFrom<Row> for #struct_name #ty_generics #where_clause {
-            type Error = Error;
-            fn try_from(row: Row) -> Result<Self> {
+    let generated = quote! {
+        
+        impl #impl_generics TryFrom<#row_tk> for #struct_name #ty_generics #where_clause {
+            type Error = #err_tk;
+            fn try_from(row: #row_tk) -> #result_tk<Self> {
                 if #fields_count != row.len() {
-                    return Err(Error::InvalidResponse(format!("row size mismatch: expected {} columns, got {}", #fields_count, row.len())));
+                    return Err(#err_tk::InvalidResponse(format!("row size mismatch: expected {} columns, got {}", #fields_count, row.len())));
                 }
                 let mut vals_iter = row.into_iter().enumerate();
 
