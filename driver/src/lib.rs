@@ -19,10 +19,12 @@ mod rest_api;
 
 pub use conn::{Client, Connection, ConnectionInfo};
 
-// pub use for backward compatibility
+// pub use for convenience
 pub use databend_sql::error::Error;
 pub use databend_sql::rows::{
     QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress,
 };
 pub use databend_sql::schema::{DataType, DecimalSize, Field, Schema, SchemaRef};
 pub use databend_sql::value::{NumberValue, Value};
+
+pub use databend_driver_macros::TryFromRow;

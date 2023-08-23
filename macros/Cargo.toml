@@ -1,6 +1,6 @@
 [package]
 name = "databend-driver-macros"
-description = "proc macros for Databend Driver"
+description = "Macros for Databend Driver"
 categories = ["database"]
 keywords = ["databend", "database", "macros"]
 

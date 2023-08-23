@@ -17,9 +17,7 @@ use proc_macro::TokenStream;
 mod from_row;
 mod parser;
 
-/// #[derive(FromRow)] derives FromRow for struct
-/// Works only on simple structs without generics etc
-#[proc_macro_derive(FromRow, attributes(databend_driver))]
+#[proc_macro_derive(TryFromRow)]
 pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
     from_row::from_row_derive(tokens_input)
 }

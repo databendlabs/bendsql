@@ -17,3 +17,11 @@ pub mod from_row;
 pub mod rows;
 pub mod schema;
 pub mod value;
+
+#[doc(hidden)]
+pub mod _macro_internal {
+    pub use crate::error::{Error, Result};
+    pub use crate::rows::Row;
+    pub use crate::schema::Schema;
+    pub use crate::value::Value;
+}

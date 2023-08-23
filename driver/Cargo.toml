@@ -27,6 +27,7 @@ flight-sql = [
 
 [dependencies]
 databend-client = { workspace = true }
+databend-driver-macros = { workspace = true }
 databend-sql = { workspace = true }
 
 async-trait = "0.1.68"
