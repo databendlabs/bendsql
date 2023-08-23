@@ -12,17 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod conn;
-#[cfg(feature = "flight-sql")]
-mod flight_sql;
-mod rest_api;
+use proc_macro::TokenStream;
 
-pub use conn::{Client, Connection, ConnectionInfo};
+mod from_row;
+mod parser;
 
-// pub use for backward compatibility
-pub use databend_sql::error::Error;
-pub use databend_sql::rows::{
-    QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress,
-};
-pub use databend_sql::schema::{DataType, DecimalSize, Field, Schema, SchemaRef};
-pub use databend_sql::value::{NumberValue, Value};
+/// #[derive(FromRow)] derives FromRow for struct
+/// Works only on simple structs without generics etc
+#[proc_macro_derive(FromRow, attributes(databend_driver))]
+pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
+    from_row::from_row_derive(tokens_input)
+}

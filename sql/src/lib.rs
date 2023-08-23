@@ -12,17 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod conn;
-#[cfg(feature = "flight-sql")]
-mod flight_sql;
-mod rest_api;
-
-pub use conn::{Client, Connection, ConnectionInfo};
-
-// pub use for backward compatibility
-pub use databend_sql::error::Error;
-pub use databend_sql::rows::{
-    QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress,
-};
-pub use databend_sql::schema::{DataType, DecimalSize, Field, Schema, SchemaRef};
-pub use databend_sql::value::{NumberValue, Value};
+pub mod error;
+pub mod from_row;
+pub mod rows;
+pub mod schema;
+pub mod value;
