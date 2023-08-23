@@ -20,7 +20,7 @@ mod rest_api;
 pub use conn::{Client, Connection, ConnectionInfo};
 
 // pub use for convenience
-pub use databend_sql::error::Error;
+pub use databend_sql::error::{Error, Result};
 pub use databend_sql::rows::{
     QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress,
 };
