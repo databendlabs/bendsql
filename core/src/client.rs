@@ -437,7 +437,7 @@ impl APIClient {
         }
     }
 
-    async fn upload_to_stage_with_stream(
+    pub async fn upload_to_stage_with_stream(
         &self,
         stage_location: &str,
         data: impl AsyncRead + Send + Sync + 'static,

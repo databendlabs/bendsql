@@ -21,11 +21,12 @@ use std::task::{Context, Poll};
 use async_trait::async_trait;
 use databend_client::response::QueryResponse;
 use databend_client::APIClient;
+use databend_sql::value::Value;
 use tokio_stream::{Stream, StreamExt};
 
 use databend_sql::error::{Error, Result};
 use databend_sql::rows::{QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress};
-use databend_sql::schema::{Schema, SchemaRef};
+use databend_sql::schema::{DataType, Field, Schema, SchemaRef};
 
 use crate::conn::{Connection, ConnectionInfo, Reader};
 
@@ -104,6 +105,64 @@ impl Connection for RestAPIConnection {
             .insert_with_stage(sql, &stage_location, file_format_options, copy_options)
             .await?;
         Ok(QueryProgress::from(resp.stats.progresses))
+    }
+
+    // PUT file://<path_to_file>/<filename> internalStage|externalStage
+    async fn put_files(
+        &self,
+        local_file: &str,
+        stage_path: &str,
+    ) -> Result<(Schema, RowProgressIterator)> {
+        let dsn = url::Url::parse(local_file)?;
+        let schema = dsn.scheme();
+        if schema != "file" && schema != "fs" {
+            return Err(Error::BadArgument(
+                "Only support schema file:// or fs://".to_string(),
+            ));
+        }
+
+        let mut results = Vec::new();
+        let stage_path = stage_path.trim_end_matches(|p| p == '/');
+
+        for entry in glob::glob(dsn.path())? {
+            let entry = entry?;
+            let stage_location = format!(
+                "{stage_path}/{}",
+                entry.file_name().unwrap().to_str().unwrap()
+            );
+
+            let data = tokio::fs::File::open(&entry).await?;
+            let size = data.metadata().await?.len();
+
+            let res = match self
+                .client
+                .upload_to_stage_with_stream(&stage_location, data, size)
+                .await
+            {
+                Ok(_) => (entry.to_string_lossy().to_string(), "SUCCESS".to_owned()),
+                Err(e) => (entry.to_string_lossy().to_string(), e.to_string()),
+            };
+            results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
+                Value::String(res.0),
+                Value::String(res.1),
+            ]))));
+        }
+
+        let fields = vec![
+            Field {
+                name: "file".to_string(),
+                data_type: DataType::String,
+            },
+            Field {
+                name: "status".to_string(),
+                data_type: DataType::String,
+            },
+        ];
+
+        Ok((
+            Schema::from_vec(fields),
+            RowProgressIterator::new(Box::pin(futures::stream::iter(results))),
+        ))
     }
 }
 
@@ -214,6 +273,16 @@ impl Stream for RestAPIRows {
                 }
                 None => Poll::Ready(None),
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn test_glob() {
+        for path in glob::glob("/home/sundy/*.sh").unwrap() {
+            println!("path {:?}", path.unwrap());
         }
     }
 }
