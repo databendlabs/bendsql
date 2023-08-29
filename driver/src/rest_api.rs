@@ -196,8 +196,8 @@ impl Connection for RestAPIConnection {
             while let Some(r) = resp.next().await {
                 let (_, headers, url): (String, String, String) = r.unwrap().try_into().unwrap();
 
-                if name.starts_with(&stage_path) {
-                    name = name[stage_path.len() + 1..].to_string();
+                if !stage_path.is_empty() && name.starts_with(&stage_path) {
+                    name = name[stage_path.len()..].to_string();
                 }
 
                 let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
