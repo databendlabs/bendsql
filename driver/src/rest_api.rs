@@ -14,6 +14,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -22,6 +23,8 @@ use async_trait::async_trait;
 use databend_client::response::QueryResponse;
 use databend_client::APIClient;
 use databend_sql::value::Value;
+use http::StatusCode;
+use tokio::io::AsyncWriteExt;
 use tokio_stream::{Stream, StreamExt};
 
 use databend_sql::error::{Error, Result};
@@ -148,22 +151,98 @@ impl Connection for RestAPIConnection {
             ]))));
         }
 
-        let fields = vec![
-            Field {
-                name: "file".to_string(),
-                data_type: DataType::String,
-            },
-            Field {
-                name: "status".to_string(),
-                data_type: DataType::String,
-            },
-        ];
-
         Ok((
-            Schema::from_vec(fields),
+            put_get_schema(),
             RowProgressIterator::new(Box::pin(futures::stream::iter(results))),
         ))
     }
+
+    async fn get_files(
+        &self,
+        stage_location: &str,
+        local_file: &str,
+    ) -> Result<(Schema, RowProgressIterator)> {
+        let mut stage_location = stage_location.to_owned();
+        if !stage_location.ends_with('/') {
+            stage_location.push_str("/");
+        }
+
+        let list_sql = format!("list {stage_location}");
+        let mut response = self.query_iter(&list_sql).await?;
+
+        let path_pos = stage_location.find('/').unwrap_or(stage_location.len());
+        let stage_name = &stage_location[..path_pos];
+
+        let mut stage_path = stage_location[path_pos..].to_string();
+        stage_path = stage_path.trim_start_matches(|p| p == '/').to_owned();
+
+        let mut results = Vec::new();
+        while let Some(row) = response.next().await {
+            let (mut name, _, _, _, _): (String, u64, Option<String>, String, Option<String>) =
+                row.unwrap().try_into().unwrap();
+
+            let presign_sql = format!("PRESIGN DOWNLOAD {stage_name}/{name}");
+            let mut resp = self.query_iter(&presign_sql).await?;
+            while let Some(r) = resp.next().await {
+                let (_, headers, url): (String, String, String) = r.unwrap().try_into().unwrap();
+
+                if name.starts_with(&stage_path) {
+                    name = name[stage_path.len() + 1..].to_string();
+                }
+
+                let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
+                let local_path = Path::new(local_file).join(&name);
+                if let Some(p) = local_path.parent() {
+                    std::fs::create_dir_all(p)?;
+                }
+
+                let mut builder = self.client.cli.get(url);
+                for (k, v) in headers {
+                    builder = builder.header(k, v);
+                }
+
+                let resp = builder.send().await.map_err(|err| Error::Api(err.into()))?;
+                let status = resp.status();
+                let body = resp.bytes().await.map_err(|err| Error::Api(err.into()))?;
+                let status = match status {
+                    StatusCode::OK => {
+                        let mut file = tokio::fs::File::create(&local_path).await?;
+                        file.write_all(&body).await?;
+                        file.flush().await?;
+                        Ok("SUCCESS".to_string())
+                    }
+                    _ => Err(format!(
+                        "Presigned download Failed: {}",
+                        String::from_utf8_lossy(&body)
+                    )),
+                };
+                let status = status.unwrap_or_else(|err| err.to_string());
+
+                results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
+                    Value::String(local_path.to_string_lossy().to_string()),
+                    Value::String(status),
+                ]))));
+            }
+        }
+
+        Ok((
+            put_get_schema(),
+            RowProgressIterator::new(Box::pin(futures::stream::iter(results))),
+        ))
+    }
+}
+
+fn put_get_schema() -> Schema {
+    Schema::from_vec(vec![
+        Field {
+            name: "file".to_string(),
+            data_type: DataType::String,
+        },
+        Field {
+            name: "status".to_string(),
+            data_type: DataType::String,
+        },
+    ])
 }
 
 impl<'o> RestAPIConnection {
@@ -273,16 +352,6 @@ impl Stream for RestAPIRows {
                 }
                 None => Poll::Ready(None),
             },
-        }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    #[test]
-    fn test_glob() {
-        for path in glob::glob("/home/sundy/*.sh").unwrap() {
-            println!("path {:?}", path.unwrap());
         }
     }
 }

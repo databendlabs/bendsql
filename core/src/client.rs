@@ -80,7 +80,7 @@ impl TryFrom<&str> for StageLocation {
 
 #[derive(Clone)]
 pub struct APIClient {
-    cli: HttpClient,
+    pub cli: HttpClient,
     endpoint: Url,
     pub host: String,
     pub port: u16,

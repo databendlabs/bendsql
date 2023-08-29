@@ -327,15 +327,25 @@ impl Session {
                 } else {
                     replace_newline_in_box_display(query)
                 };
-                let (schema, data) = if other.0 == QueryKind::Put {
-                    let args: Vec<String> = get_put_args(query);
-                    if args.len() != 3 {
-                        eprintln!("Put args are invalid");
-                        return Ok(false);
+
+                let (schema, data) = match other.0 {
+                    QueryKind::Put => {
+                        let args: Vec<String> = get_put_get_args(query);
+                        if args.len() != 3 {
+                            eprintln!("Put args are invalid, must be 2 argruments");
+                            return Ok(false);
+                        }
+                        self.conn.put_files(&args[1], &args[2]).await?
                     }
-                    self.conn.put_files(&args[1], &args[2]).await?
-                } else {
-                    self.conn.query_iter_ext(query).await?
+                    QueryKind::Get => {
+                        let args: Vec<String> = get_put_get_args(query);
+                        if args.len() != 3 {
+                            eprintln!("Put args are invalid, must be 2 argruments");
+                            return Ok(false);
+                        }
+                        self.conn.get_files(&args[1], &args[2]).await?
+                    }
+                    _ => self.conn.query_iter_ext(query).await?,
                 };
 
                 let mut displayer = FormatDisplay::new(
@@ -429,6 +439,7 @@ pub enum QueryKind {
     Update,
     Explain,
     Put,
+    Get,
 }
 
 impl From<&str> for QueryKind {
@@ -438,6 +449,7 @@ impl From<&str> for QueryKind {
             Some(Ok(t)) => match t.kind {
                 TokenKind::EXPLAIN => QueryKind::Explain,
                 TokenKind::PUT => QueryKind::Put,
+                TokenKind::GET => QueryKind::Get,
                 TokenKind::ALTER
                 | TokenKind::DELETE
                 | TokenKind::UPDATE
@@ -453,7 +465,7 @@ impl From<&str> for QueryKind {
     }
 }
 
-fn get_put_args(query: &str) -> Vec<String> {
+fn get_put_get_args(query: &str) -> Vec<String> {
     query
         .split_ascii_whitespace()
         .map(|x| x.to_owned())

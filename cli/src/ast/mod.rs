@@ -21,7 +21,7 @@ use crate::session::QueryKind;
 
 pub fn format_query(query: &str) -> String {
     let kind = QueryKind::from(query);
-    if kind == QueryKind::Put {
+    if kind == QueryKind::Put || kind == QueryKind::Get {
         return query.to_owned();
     }
     let options = sqlformat::FormatOptions {

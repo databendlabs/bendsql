@@ -107,5 +107,15 @@ pub trait Connection: DynClone + Send + Sync {
             "PUT statement only available in HTTP API".to_owned(),
         ))
     }
+
+    async fn get_files(
+        &self,
+        _stage_path: &str,
+        _local_file: &str,
+    ) -> Result<(Schema, RowProgressIterator)> {
+        Err(Error::IO(
+            "GET statement only available in HTTP API".to_owned(),
+        ))
+    }
 }
 dyn_clone::clone_trait_object!(Connection);
