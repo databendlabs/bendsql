@@ -174,7 +174,7 @@ impl Connection for RestAPIConnection {
 
         let mut stage_location = stage_location.to_owned();
         if !stage_location.ends_with('/') {
-            stage_location.push_str('/');
+            stage_location.push('/');
         }
 
         let list_sql = format!("list {stage_location}");
