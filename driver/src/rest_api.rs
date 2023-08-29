@@ -162,6 +162,16 @@ impl Connection for RestAPIConnection {
         stage_location: &str,
         local_file: &str,
     ) -> Result<(Schema, RowProgressIterator)> {
+        let dsn = url::Url::parse(local_file)?;
+        let schema = dsn.scheme();
+        if schema != "file" && schema != "fs" {
+            return Err(Error::BadArgument(
+                "Only support schema file:// or fs://".to_string(),
+            ));
+        }
+
+        let local_file = dsn.path();
+
         let mut stage_location = stage_location.to_owned();
         if !stage_location.ends_with('/') {
             stage_location.push_str("/");
