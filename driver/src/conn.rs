@@ -180,7 +180,7 @@ pub trait Connection: DynClone + Send + Sync {
         while let Some(row) = response.next().await {
             let (mut name, _, _, _, _): (String, u64, Option<String>, String, Option<String>) =
                 row?.try_into().map_err(Error::Parsing)?;
-            let stage_file = format!("{}/{}", location.path, name);
+            let stage_file = format!("{}/{}", location, name);
             let presign = self.get_presigned_url("DOWNLOAD", &stage_file).await?;
             if !location.path.is_empty() && name.starts_with(&location.path) {
                 name = name[location.path.len()..].to_string();
