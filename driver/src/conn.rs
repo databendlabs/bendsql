@@ -181,7 +181,6 @@ pub trait Connection: DynClone + Send + Sync {
                 Value::String(status),
             ])));
         }
-
         Ok((
             put_get_schema(),
             RowIterator::new(Box::pin(futures::stream::iter(results))),
