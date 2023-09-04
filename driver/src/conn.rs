@@ -22,6 +22,7 @@ use url::Url;
 #[cfg(feature = "flight-sql")]
 use crate::flight_sql::FlightSQLConnection;
 
+use databend_client::presign::PresignedResponse;
 use databend_sql::error::{Error, Result};
 use databend_sql::rows::{QueryProgress, Row, RowIterator, RowProgressIterator};
 use databend_sql::schema::Schema;
@@ -89,6 +90,18 @@ pub trait Connection: DynClone + Send + Sync {
     async fn query_iter(&self, sql: &str) -> Result<RowIterator>;
     async fn query_iter_ext(&self, sql: &str) -> Result<(Schema, RowProgressIterator)>;
 
+    async fn upload_to_stage(&self, stage_location: &str, data: Reader, size: u64) -> Result<()>;
+
+    async fn get_presigned_url(&self, stage_location: &str) -> Result<PresignedResponse> {
+        let sql = format!("PRESIGN {}", stage_location);
+        let row = self.query_row(&sql).await?.ok_or(Error::InvalidResponse(
+            "Empty response from server for presigned request".to_string(),
+        ))?;
+        let (_, headers, url): (String, String, String) = row.try_into().map_err(Error::Parsing)?;
+        let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
+        Ok(PresignedResponse { headers, url })
+    }
+
     async fn stream_load(
         &self,
         sql: &str,
@@ -96,24 +109,20 @@ pub trait Connection: DynClone + Send + Sync {
         size: u64,
         file_format_options: Option<BTreeMap<&str, &str>>,
         copy_options: Option<BTreeMap<&str, &str>>,
-    ) -> Result<QueryProgress>;
+    ) -> Result<QueryProgress> {
+        Err(Error::Protocol(
+            "STREAM LOAD only available in HTTP API".to_owned(),
+        ))
+    }
 
-    async fn put_files(
-        &self,
-        _local_file: &str,
-        _stage_path: &str,
-    ) -> Result<(Schema, RowProgressIterator)> {
-        Err(Error::IO(
+    async fn put_files(&self, local_file: &str, stage_path: &str) -> Result<(Schema, RowIterator)> {
+        Err(Error::Protocol(
             "PUT statement only available in HTTP API".to_owned(),
         ))
     }
 
-    async fn get_files(
-        &self,
-        _stage_path: &str,
-        _local_file: &str,
-    ) -> Result<(Schema, RowProgressIterator)> {
-        Err(Error::IO(
+    async fn get_files(&self, stage_path: &str, local_file: &str) -> Result<(Schema, RowIterator)> {
+        Err(Error::Protocol(
             "GET statement only available in HTTP API".to_owned(),
         ))
     }

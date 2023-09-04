@@ -21,6 +21,7 @@ use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 use databend_client::response::QueryResponse;
+use databend_client::stage::{self, StageLocation};
 use databend_client::APIClient;
 use databend_sql::value::Value;
 use http::StatusCode;
@@ -88,6 +89,13 @@ impl Connection for RestAPIConnection {
         }
     }
 
+    async fn upload_to_stage(&self, stage_location: &str, data: Reader, size: u64) -> Result<()> {
+        self.client
+            .upload_to_stage(stage_location, data, size)
+            .await?;
+        Ok(())
+    }
+
     async fn stream_load(
         &self,
         sql: &str,
@@ -97,9 +105,7 @@ impl Connection for RestAPIConnection {
         copy_options: Option<BTreeMap<&str, &str>>,
     ) -> Result<QueryProgress> {
         let stage_location = format!("@~/client/load/{}", chrono::Utc::now().timestamp_nanos());
-        self.client
-            .upload_to_stage(&stage_location, data, size)
-            .await?;
+        self.upload_to_stage(&stage_location, data, size).await?;
         let file_format_options =
             file_format_options.unwrap_or_else(Self::default_file_format_options);
         let copy_options = copy_options.unwrap_or_else(Self::default_copy_options);
@@ -111,13 +117,9 @@ impl Connection for RestAPIConnection {
     }
 
     // PUT file://<path_to_file>/<filename> internalStage|externalStage
-    async fn put_files(
-        &self,
-        local_file: &str,
-        stage_path: &str,
-    ) -> Result<(Schema, RowProgressIterator)> {
-        let dsn = url::Url::parse(local_file)?;
-        let schema = dsn.scheme();
+    async fn put_files(&self, local_file: &str, stage_path: &str) -> Result<(Schema, RowIterator)> {
+        let local_dsn = url::Url::parse(local_file)?;
+        let schema = local_dsn.scheme();
         if schema != "file" && schema != "fs" {
             return Err(Error::BadArgument(
                 "Only support schema file:// or fs://".to_string(),
@@ -125,35 +127,31 @@ impl Connection for RestAPIConnection {
         }
 
         let mut results = Vec::new();
-        let stage_path = stage_path.trim_end_matches(|p| p == '/');
+        let stage_path = StageLocation::try_from(stage_path)?;
 
-        for entry in glob::glob(dsn.path())? {
+        for entry in glob::glob(local_dsn.path())? {
             let entry = entry?;
-            let stage_location = format!(
-                "{stage_path}/{}",
-                entry.file_name().unwrap().to_str().unwrap()
-            );
+            let stage_location = stage_path.file_path(entry.file_name().unwrap().to_str().unwrap());
 
             let data = tokio::fs::File::open(&entry).await?;
             let size = data.metadata().await?.len();
 
-            let res = match self
-                .client
-                .upload_to_stage_with_stream(&stage_location, data, size)
+            let (fname, status) = match self
+                .upload_to_stage(&stage_location, Box::new(data), size)
                 .await
             {
                 Ok(_) => (entry.to_string_lossy().to_string(), "SUCCESS".to_owned()),
                 Err(e) => (entry.to_string_lossy().to_string(), e.to_string()),
             };
-            results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
-                Value::String(res.0),
-                Value::String(res.1),
-            ]))));
+            results.push(Ok(Row::from_vec(vec![
+                Value::String(fname),
+                Value::String(status),
+            ])));
         }
 
         Ok((
             put_get_schema(),
-            RowProgressIterator::new(Box::pin(futures::stream::iter(results))),
+            RowIterator::new(Box::pin(futures::stream::iter(results))),
         ))
     }
 
@@ -161,7 +159,7 @@ impl Connection for RestAPIConnection {
         &self,
         stage_location: &str,
         local_file: &str,
-    ) -> Result<(Schema, RowProgressIterator)> {
+    ) -> Result<(Schema, RowIterator)> {
         let dsn = url::Url::parse(local_file)?;
         let schema = dsn.scheme();
         if schema != "file" && schema != "fs" {
@@ -172,24 +170,18 @@ impl Connection for RestAPIConnection {
 
         let local_file = dsn.path();
 
-        let mut stage_location = stage_location.to_owned();
-        if !stage_location.ends_with('/') {
-            stage_location.push('/');
+        let mut location = StageLocation::try_from(stage_location)?;
+        if !location.path.ends_with('/') {
+            location.path.push('/');
         }
 
         let list_sql = format!("list {stage_location}");
         let mut response = self.query_iter(&list_sql).await?;
 
-        let path_pos = stage_location.find('/').unwrap_or(stage_location.len());
-        let stage_name = &stage_location[..path_pos];
-
-        let mut stage_path = stage_location[path_pos..].to_string();
-        stage_path = stage_path.trim_start_matches(|p| p == '/').to_owned();
-
         let mut results = Vec::new();
         while let Some(row) = response.next().await {
             let (mut name, _, _, _, _): (String, u64, Option<String>, String, Option<String>) =
-                row.unwrap().try_into().unwrap();
+                row?.try_into()?;
 
             let presign_sql = format!("PRESIGN DOWNLOAD {stage_name}/{name}");
             let mut resp = self.query_iter(&presign_sql).await?;
@@ -228,16 +220,16 @@ impl Connection for RestAPIConnection {
                 };
                 let status = status.unwrap_or_else(|err| err.to_string());
 
-                results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
+                results.push(Ok(Row::from_vec(vec![
                     Value::String(local_path.to_string_lossy().to_string()),
                     Value::String(status),
-                ]))));
+                ])));
             }
         }
 
         Ok((
             put_get_schema(),
-            RowProgressIterator::new(Box::pin(futures::stream::iter(results))),
+            RowIterator::new(Box::pin(futures::stream::iter(results))),
         ))
     }
 }

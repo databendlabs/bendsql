@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -30,6 +30,7 @@ use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use tonic::Streaming;
 use url::Url;
 
+use databend_client::presign::presign_upload_to_stage;
 use databend_sql::error::{Error, Result};
 use databend_sql::rows::{
     QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress, Rows,
@@ -95,15 +96,11 @@ impl Connection for FlightSQLConnection {
         Ok((schema, RowProgressIterator::new(Box::pin(rows))))
     }
 
-    async fn stream_load(
-        &self,
-        _sql: &str,
-        _data: Reader,
-        _size: u64,
-        _file_format_options: Option<BTreeMap<&str, &str>>,
-        _copy_options: Option<BTreeMap<&str, &str>>,
-    ) -> Result<QueryProgress> {
-        unimplemented!("stream_load is not supported in FlightSQL")
+    /// Always use presigned url to upload stage for FlightSQL
+    async fn upload_to_stage(&self, stage_location: &str, data: Reader, size: u64) -> Result<()> {
+        let presigned = self.get_presigned_url(stage_location).await?;
+        presign_upload_to_stage(presigned, data, size).await?;
+        Ok(())
     }
 }
 

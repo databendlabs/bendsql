@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::{collections::BTreeMap, fmt};
 
 use http::StatusCode;
 use once_cell::sync::Lazy;
@@ -21,13 +21,14 @@ use percent_encoding::percent_decode_str;
 use reqwest::header::HeaderMap;
 use reqwest::multipart::{Form, Part};
 use reqwest::{Body, Client as HttpClient};
-use tokio::io::AsyncRead;
 use tokio::sync::Mutex;
 use tokio_retry::strategy::{jitter, ExponentialBackoff};
 use tokio_retry::Retry;
 use tokio_util::io::ReaderStream;
 use url::Url;
 
+use crate::presign::{presign_upload_to_stage, PresignedResponse, Reader};
+use crate::stage::StageLocation;
 use crate::{
     error::{Error, Result},
     request::{PaginationConfig, QueryRequest, SessionConfig, StageAttachmentConfig},
@@ -38,44 +39,6 @@ static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     version.to_string()
 });
-
-pub struct PresignedResponse {
-    pub method: String,
-    pub headers: BTreeMap<String, String>,
-    pub url: String,
-}
-
-pub struct StageLocation {
-    pub name: String,
-    pub path: String,
-}
-
-impl fmt::Display for StageLocation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "@{}/{}", self.name, self.path)
-    }
-}
-
-impl TryFrom<&str> for StageLocation {
-    type Error = Error;
-    fn try_from(s: &str) -> Result<Self> {
-        if !s.starts_with('@') {
-            return Err(Error::Parsing(format!("Invalid stage location: {}", s)));
-        }
-        let mut parts = s.splitn(2, '/');
-        let name = parts
-            .next()
-            .ok_or_else(|| Error::Parsing(format!("Invalid stage location: {}", s)))?
-            .trim_start_matches('@');
-        let path = parts
-            .next()
-            .ok_or_else(|| Error::Parsing(format!("Invalid stage location: {}", s)))?;
-        Ok(Self {
-            name: name.to_string(),
-            path: path.to_string(),
-        })
-    }
-}
 
 #[derive(Clone)]
 pub struct APIClient {
@@ -421,25 +384,46 @@ impl APIClient {
         Ok(resp)
     }
 
+    async fn get_presigned_url(&self, stage_location: &str) -> Result<PresignedResponse> {
+        let sql = format!("PRESIGN {}", stage_location);
+        let resp = self.query_wait(&sql).await?;
+        if resp.data.len() != 1 {
+            return Err(Error::Request(
+                "Empty response from server for presigned request".to_string(),
+            ));
+        }
+        if resp.data[0].len() != 3 {
+            return Err(Error::Request(
+                "Invalid response from server for presigned request".to_string(),
+            ));
+        }
+        // resp.data[0]: [ "PUT", "{\"host\":\"s3.us-east-2.amazonaws.com\"}", "https://s3.us-east-2.amazonaws.com/query-storage-xxxxx/tnxxxxx/stage/user/xxxx/xxx?" ]
+        let headers: BTreeMap<String, String> =
+            serde_json::from_str(resp.data[0][1].clone().as_str())?;
+        let url = resp.data[0][2].clone();
+        Ok(PresignedResponse { headers, url })
+    }
+
     pub async fn upload_to_stage(
         &self,
         stage_location: &str,
-        data: impl AsyncRead + Send + Sync + 'static,
+        data: Reader,
         size: u64,
     ) -> Result<()> {
         if self.presigned_url_disabled {
             self.upload_to_stage_with_stream(stage_location, data, size)
                 .await
         } else {
-            self.upload_to_stage_with_presigned(stage_location, data, size)
-                .await
+            let presigned = self.get_presigned_url(stage_location).await?;
+            presign_upload_to_stage(presigned, data, size).await
         }
     }
 
-    pub async fn upload_to_stage_with_stream(
+    /// Upload data to stage with stream api, should not be used directly, use `upload_to_stage` instead.
+    async fn upload_to_stage_with_stream(
         &self,
         stage_location: &str,
-        data: impl AsyncRead + Send + Sync + 'static,
+        data: Reader,
         size: u64,
     ) -> Result<()> {
         let endpoint = self.endpoint.join("v1/upload_to_stage")?;
@@ -467,62 +451,6 @@ impl APIClient {
                 String::from_utf8_lossy(&body)
             ))),
         }
-    }
-
-    async fn upload_to_stage_with_presigned(
-        &self,
-        stage_location: &str,
-        data: impl AsyncRead + Send + Sync + 'static,
-        size: u64,
-    ) -> Result<()> {
-        let presigned = self.get_presigned_url(stage_location).await?;
-        let mut builder = self.cli.put(presigned.url);
-        for (k, v) in presigned.headers {
-            builder = builder.header(k, v);
-        }
-        builder = builder.header("Content-Length", size.to_string());
-        let stream = Body::wrap_stream(ReaderStream::new(data));
-        let resp = builder.body(stream).send().await?;
-        let status = resp.status();
-        let body = resp.bytes().await?;
-        match status {
-            StatusCode::OK => Ok(()),
-            _ => Err(Error::Request(format!(
-                "Presigned Upload Failed: {}",
-                String::from_utf8_lossy(&body)
-            ))),
-        }
-    }
-
-    async fn get_presigned_url(&self, stage_location: &str) -> Result<PresignedResponse> {
-        let sql = format!("PRESIGN UPLOAD {}", stage_location);
-        let resp = self.query_wait(&sql).await?;
-        if resp.data.len() != 1 {
-            return Err(Error::Request(
-                "Empty response from server for presigned request".to_string(),
-            ));
-        }
-        if resp.data[0].len() != 3 {
-            return Err(Error::Request(
-                "Invalid response from server for presigned request".to_string(),
-            ));
-        }
-        // resp.data[0]: [ "PUT", "{\"host\":\"s3.us-east-2.amazonaws.com\"}", "https://s3.us-east-2.amazonaws.com/query-storage-xxxxx/tnxxxxx/stage/user/xxxx/xxx?" ]
-        let method = resp.data[0][0].clone();
-        let headers: BTreeMap<String, String> =
-            serde_json::from_str(resp.data[0][1].clone().as_str())?;
-        let url = resp.data[0][2].clone();
-        if method != "PUT" {
-            return Err(Error::Request(format!(
-                "Invalid method {} for presigned request",
-                method
-            )));
-        }
-        Ok(PresignedResponse {
-            method,
-            headers,
-            url,
-        })
     }
 }
 

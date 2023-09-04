@@ -136,6 +136,12 @@ impl From<glob::PatternError> for Error {
     }
 }
 
+impl From<reqwest::Error> for Error {
+    fn from(e: reqwest::Error) -> Self {
+        Error::IO(e.to_string())
+    }
+}
+
 #[cfg(feature = "flight-sql")]
 impl From<tonic::Status> for Error {
     fn from(e: tonic::Status) -> Self {
