@@ -94,14 +94,25 @@ pub trait Connection: DynClone + Send + Sync {
     async fn query_iter(&self, sql: &str) -> Result<RowIterator>;
     async fn query_iter_ext(&self, sql: &str) -> Result<(Schema, RowProgressIterator)>;
 
-    async fn get_presigned_url(&self, stage_location: &str) -> Result<PresignedResponse> {
-        let sql = format!("PRESIGN {}", stage_location);
+    /// Get presigned url for a given operation and stage location.
+    /// The operation can be "UPLOAD" or "DOWNLOAD".
+    async fn get_presigned_url(
+        &self,
+        operation: &str,
+        stage_location: &str,
+    ) -> Result<PresignedResponse> {
+        let sql = format!("PRESIGN {} {}", operation, stage_location);
         let row = self.query_row(&sql).await?.ok_or(Error::InvalidResponse(
             "Empty response from server for presigned request".to_string(),
         ))?;
-        let (_, headers, url): (String, String, String) = row.try_into().map_err(Error::Parsing)?;
+        let (method, headers, url): (String, String, String) =
+            row.try_into().map_err(Error::Parsing)?;
         let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
-        Ok(PresignedResponse { headers, url })
+        Ok(PresignedResponse {
+            method,
+            headers,
+            url,
+        })
     }
 
     async fn upload_to_stage(&self, stage_location: &str, data: Reader, size: u64) -> Result<()>;
@@ -170,7 +181,7 @@ pub trait Connection: DynClone + Send + Sync {
             let (mut name, _, _, _, _): (String, u64, Option<String>, String, Option<String>) =
                 row?.try_into().map_err(Error::Parsing)?;
             let stage_file = format!("{}/{}", location.path, name);
-            let presign = self.get_presigned_url(&stage_file).await?;
+            let presign = self.get_presigned_url("DOWNLOAD", &stage_file).await?;
             if !location.path.is_empty() && name.starts_with(&location.path) {
                 name = name[location.path.len()..].to_string();
             }

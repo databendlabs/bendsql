@@ -25,6 +25,7 @@ use crate::error::{Error, Result};
 pub type Reader = Box<dyn AsyncRead + Send + Sync + Unpin + 'static>;
 
 pub struct PresignedResponse {
+    pub method: String,
     pub headers: BTreeMap<String, String>,
     pub url: String,
 }

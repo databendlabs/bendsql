@@ -384,8 +384,8 @@ impl APIClient {
         Ok(resp)
     }
 
-    async fn get_presigned_url(&self, stage_location: &str) -> Result<PresignedResponse> {
-        let sql = format!("PRESIGN {}", stage_location);
+    async fn get_presigned_upload_url(&self, stage_location: &str) -> Result<PresignedResponse> {
+        let sql = format!("PRESIGN UPLOAD {}", stage_location);
         let resp = self.query_wait(&sql).await?;
         if resp.data.len() != 1 {
             return Err(Error::Request(
@@ -398,10 +398,21 @@ impl APIClient {
             ));
         }
         // resp.data[0]: [ "PUT", "{\"host\":\"s3.us-east-2.amazonaws.com\"}", "https://s3.us-east-2.amazonaws.com/query-storage-xxxxx/tnxxxxx/stage/user/xxxx/xxx?" ]
+        let method = resp.data[0][0].clone();
+        if method != "PUT" {
+            return Err(Error::Request(format!(
+                "Invalid method for presigned upload request: {}",
+                method
+            )));
+        }
         let headers: BTreeMap<String, String> =
             serde_json::from_str(resp.data[0][1].clone().as_str())?;
         let url = resp.data[0][2].clone();
-        Ok(PresignedResponse { headers, url })
+        Ok(PresignedResponse {
+            method,
+            headers,
+            url,
+        })
     }
 
     pub async fn upload_to_stage(
@@ -414,7 +425,7 @@ impl APIClient {
             self.upload_to_stage_with_stream(stage_location, data, size)
                 .await
         } else {
-            let presigned = self.get_presigned_url(stage_location).await?;
+            let presigned = self.get_presigned_upload_url(stage_location).await?;
             presign_upload_to_stage(presigned, data, size).await
         }
     }

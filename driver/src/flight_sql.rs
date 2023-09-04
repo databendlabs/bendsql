@@ -98,8 +98,8 @@ impl Connection for FlightSQLConnection {
 
     /// Always use presigned url to upload stage for FlightSQL
     async fn upload_to_stage(&self, stage_location: &str, data: Reader, size: u64) -> Result<()> {
-        let presigned = self.get_presigned_url(stage_location).await?;
-        presign_upload_to_stage(presigned, data, size).await?;
+        let presign = self.get_presigned_url("UPLOAD", stage_location).await?;
+        presign_upload_to_stage(presign, data, size).await?;
         Ok(())
     }
 }
