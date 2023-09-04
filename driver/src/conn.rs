@@ -27,7 +27,7 @@ use crate::flight_sql::FlightSQLConnection;
 use databend_client::presign::{presign_download_from_stage, PresignedResponse};
 use databend_client::stage::StageLocation;
 use databend_sql::error::{Error, Result};
-use databend_sql::rows::{QueryProgress, Row, RowIterator, RowProgressIterator};
+use databend_sql::rows::{QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress};
 use databend_sql::schema::{DataType, Field, Schema};
 use databend_sql::value::Value;
 
@@ -120,7 +120,11 @@ pub trait Connection: DynClone + Send + Sync {
     }
 
     // PUT file://<path_to_file>/<filename> internalStage|externalStage
-    async fn put_files(&self, local_file: &str, stage_path: &str) -> Result<(Schema, RowIterator)> {
+    async fn put_files(
+        &self,
+        local_file: &str,
+        stage_path: &str,
+    ) -> Result<(Schema, RowProgressIterator)> {
         let local_dsn = url::Url::parse(local_file)?;
         validate_local_scheme(local_dsn.scheme())?;
         let mut results = Vec::new();
@@ -137,14 +141,14 @@ pub trait Connection: DynClone + Send + Sync {
                 Ok(_) => (entry.to_string_lossy().to_string(), "SUCCESS".to_owned()),
                 Err(e) => (entry.to_string_lossy().to_string(), e.to_string()),
             };
-            results.push(Ok(Row::from_vec(vec![
+            results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
                 Value::String(fname),
                 Value::String(status),
-            ])));
+            ]))));
         }
         Ok((
             put_get_schema(),
-            RowIterator::new(Box::pin(futures::stream::iter(results))),
+            RowProgressIterator::new(Box::pin(futures::stream::iter(results))),
         ))
     }
 
@@ -152,7 +156,7 @@ pub trait Connection: DynClone + Send + Sync {
         &self,
         stage_location: &str,
         local_file: &str,
-    ) -> Result<(Schema, RowIterator)> {
+    ) -> Result<(Schema, RowProgressIterator)> {
         let local_dsn = url::Url::parse(local_file)?;
         validate_local_scheme(local_dsn.scheme())?;
         let mut location = StageLocation::try_from(stage_location)?;
@@ -176,14 +180,14 @@ pub trait Connection: DynClone + Send + Sync {
                 Ok(_) => "SUCCESS".to_owned(),
                 Err(e) => e.to_string(),
             };
-            results.push(Ok(Row::from_vec(vec![
+            results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
                 Value::String(local_file.to_string_lossy().to_string()),
                 Value::String(status),
-            ])));
+            ]))));
         }
         Ok((
             put_get_schema(),
-            RowIterator::new(Box::pin(futures::stream::iter(results))),
+            RowProgressIterator::new(Box::pin(futures::stream::iter(results))),
         ))
     }
 }
