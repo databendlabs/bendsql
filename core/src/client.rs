@@ -432,8 +432,15 @@ impl APIClient {
             self.upload_to_stage_with_stream(stage_location, data, size)
                 .await
         } else {
-            self.upload_to_stage_with_presigned(stage_location, data, size)
-                .await
+            let presigned_res = self.get_presigned_url(stage_location).await;
+            if let Ok(presigned) = presigned_res {
+                self.upload_to_stage_with_presigned(presigned, data, size)
+                    .await
+            } else {
+                // for storage don't support presign, use stream upload instead.
+                self.upload_to_stage_with_stream(stage_location, data, size)
+                    .await
+            }
         }
     }
 
@@ -472,11 +479,10 @@ impl APIClient {
 
     async fn upload_to_stage_with_presigned(
         &self,
-        stage_location: &str,
+        presigned: PresignedResponse,
         data: impl AsyncRead + Send + Sync + 'static,
         size: u64,
     ) -> Result<()> {
-        let presigned = self.get_presigned_url(stage_location).await?;
         let mut builder = self.cli.put(presigned.url);
         for (k, v) in presigned.headers {
             builder = builder.header(k, v);

@@ -139,7 +139,7 @@ impl Connection for RestAPIConnection {
 
             let res = match self
                 .client
-                .upload_to_stage_with_stream(&stage_location, data, size)
+                .upload_to_stage(&stage_location, data, size)
                 .await
             {
                 Ok(_) => (entry.to_string_lossy().to_string(), "SUCCESS".to_owned()),
@@ -226,7 +226,7 @@ impl Connection for RestAPIConnection {
                         String::from_utf8_lossy(&body)
                     )),
                 };
-                let status = status.unwrap_or_else(|err| err.to_string());
+                let status = status.unwrap_or_else(|err| err);
 
                 results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
                     Value::String(local_path.to_string_lossy().to_string()),
