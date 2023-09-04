@@ -170,15 +170,14 @@ pub trait Connection: DynClone + Send + Sync {
             if !location.path.is_empty() && name.starts_with(&location.path) {
                 name = name[location.path.len()..].to_string();
             }
-            let local_file_path = Path::new(local_dsn.path()).join(&name);
-            let local_file = local_file_path.to_string_lossy();
+            let local_file = Path::new(local_dsn.path()).join(&name);
             let status = presign_download_from_stage(presign, &local_file).await;
             let status = match status {
                 Ok(_) => "SUCCESS".to_owned(),
                 Err(e) => e.to_string(),
             };
             results.push(Ok(Row::from_vec(vec![
-                Value::String(local_file.to_string()),
+                Value::String(local_file.to_string_lossy().to_string()),
                 Value::String(status),
             ])));
         }

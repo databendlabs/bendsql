@@ -55,9 +55,8 @@ pub async fn presign_upload_to_stage(
 
 pub async fn presign_download_from_stage(
     presigned: PresignedResponse,
-    local_file: &str,
+    local_path: &Path,
 ) -> Result<()> {
-    let local_path = Path::new(local_file);
     if let Some(p) = local_path.parent() {
         tokio::fs::create_dir_all(p).await?;
     }
@@ -72,7 +71,7 @@ pub async fn presign_download_from_stage(
     let status = resp.status();
     match status {
         StatusCode::OK => {
-            let mut file = tokio::fs::File::create(&local_path).await?;
+            let mut file = tokio::fs::File::create(local_path).await?;
             let mut body = resp.bytes_stream();
             while let Some(chunk) = body.next().await {
                 file.write_all(&chunk?).await?;
