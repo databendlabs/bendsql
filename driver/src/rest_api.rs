@@ -14,23 +14,19 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 use databend_client::response::QueryResponse;
-use databend_client::stage::{self, StageLocation};
 use databend_client::APIClient;
-use databend_sql::value::Value;
-use http::StatusCode;
-use tokio::io::AsyncWriteExt;
+
 use tokio_stream::{Stream, StreamExt};
 
 use databend_sql::error::{Error, Result};
 use databend_sql::rows::{QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress};
-use databend_sql::schema::{DataType, Field, Schema, SchemaRef};
+use databend_sql::schema::{Schema, SchemaRef};
 
 use crate::conn::{Connection, ConnectionInfo, Reader};
 
@@ -115,136 +111,6 @@ impl Connection for RestAPIConnection {
             .await?;
         Ok(QueryProgress::from(resp.stats.progresses))
     }
-
-    // PUT file://<path_to_file>/<filename> internalStage|externalStage
-    async fn put_files(&self, local_file: &str, stage_path: &str) -> Result<(Schema, RowIterator)> {
-        let local_dsn = url::Url::parse(local_file)?;
-        let schema = local_dsn.scheme();
-        if schema != "file" && schema != "fs" {
-            return Err(Error::BadArgument(
-                "Only support schema file:// or fs://".to_string(),
-            ));
-        }
-
-        let mut results = Vec::new();
-        let stage_path = StageLocation::try_from(stage_path)?;
-
-        for entry in glob::glob(local_dsn.path())? {
-            let entry = entry?;
-            let stage_location = stage_path.file_path(entry.file_name().unwrap().to_str().unwrap());
-
-            let data = tokio::fs::File::open(&entry).await?;
-            let size = data.metadata().await?.len();
-
-            let (fname, status) = match self
-                .upload_to_stage(&stage_location, Box::new(data), size)
-                .await
-            {
-                Ok(_) => (entry.to_string_lossy().to_string(), "SUCCESS".to_owned()),
-                Err(e) => (entry.to_string_lossy().to_string(), e.to_string()),
-            };
-            results.push(Ok(Row::from_vec(vec![
-                Value::String(fname),
-                Value::String(status),
-            ])));
-        }
-
-        Ok((
-            put_get_schema(),
-            RowIterator::new(Box::pin(futures::stream::iter(results))),
-        ))
-    }
-
-    async fn get_files(
-        &self,
-        stage_location: &str,
-        local_file: &str,
-    ) -> Result<(Schema, RowIterator)> {
-        let dsn = url::Url::parse(local_file)?;
-        let schema = dsn.scheme();
-        if schema != "file" && schema != "fs" {
-            return Err(Error::BadArgument(
-                "Only support schema file:// or fs://".to_string(),
-            ));
-        }
-
-        let local_file = dsn.path();
-
-        let mut location = StageLocation::try_from(stage_location)?;
-        if !location.path.ends_with('/') {
-            location.path.push('/');
-        }
-
-        let list_sql = format!("list {stage_location}");
-        let mut response = self.query_iter(&list_sql).await?;
-
-        let mut results = Vec::new();
-        while let Some(row) = response.next().await {
-            let (mut name, _, _, _, _): (String, u64, Option<String>, String, Option<String>) =
-                row?.try_into()?;
-
-            let presign_sql = format!("PRESIGN DOWNLOAD {stage_name}/{name}");
-            let mut resp = self.query_iter(&presign_sql).await?;
-            while let Some(r) = resp.next().await {
-                let (_, headers, url): (String, String, String) = r.unwrap().try_into().unwrap();
-
-                if !stage_path.is_empty() && name.starts_with(&stage_path) {
-                    name = name[stage_path.len()..].to_string();
-                }
-
-                let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
-                let local_path = Path::new(local_file).join(&name);
-                if let Some(p) = local_path.parent() {
-                    std::fs::create_dir_all(p)?;
-                }
-
-                let mut builder = self.client.cli.get(url);
-                for (k, v) in headers {
-                    builder = builder.header(k, v);
-                }
-
-                let resp = builder.send().await.map_err(|err| Error::Api(err.into()))?;
-                let status = resp.status();
-                let body = resp.bytes().await.map_err(|err| Error::Api(err.into()))?;
-                let status = match status {
-                    StatusCode::OK => {
-                        let mut file = tokio::fs::File::create(&local_path).await?;
-                        file.write_all(&body).await?;
-                        file.flush().await?;
-                        Ok("SUCCESS".to_string())
-                    }
-                    _ => Err(format!(
-                        "Presigned download Failed: {}",
-                        String::from_utf8_lossy(&body)
-                    )),
-                };
-                let status = status.unwrap_or_else(|err| err.to_string());
-
-                results.push(Ok(Row::from_vec(vec![
-                    Value::String(local_path.to_string_lossy().to_string()),
-                    Value::String(status),
-                ])));
-            }
-        }
-
-        Ok((
-            put_get_schema(),
-            RowIterator::new(Box::pin(futures::stream::iter(results))),
-        ))
-    }
-}
-
-fn put_get_schema() -> Schema {
-    Schema::from_vec(vec![
-        Field {
-            name: "file".to_string(),
-            data_type: DataType::String,
-        },
-        Field {
-            name: "status".to_string(),
-            data_type: DataType::String,
-        },
-    ])
 }
 
 impl<'o> RestAPIConnection {

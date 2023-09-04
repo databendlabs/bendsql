@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 use reqwest::{Body, Client as HttpClient, StatusCode};
 use tokio::io::AsyncRead;
+use tokio::io::AsyncWriteExt;
+use tokio_stream::StreamExt;
 use tokio_util::io::ReaderStream;
 
 use crate::error::{Error, Result};
@@ -47,6 +49,40 @@ pub async fn presign_upload_to_stage(
         _ => Err(Error::IO(format!(
             "Upload with presigned url failed: {}",
             String::from_utf8_lossy(&body)
+        ))),
+    }
+}
+
+pub async fn presign_download_from_stage(
+    presigned: PresignedResponse,
+    local_file: &str,
+) -> Result<()> {
+    let local_path = Path::new(local_file);
+    if let Some(p) = local_path.parent() {
+        tokio::fs::create_dir_all(p).await?;
+    }
+
+    let client = HttpClient::new();
+    let mut builder = client.put(presigned.url);
+    for (k, v) in presigned.headers {
+        builder = builder.header(k, v);
+    }
+
+    let resp = builder.send().await?;
+    let status = resp.status();
+    match status {
+        StatusCode::OK => {
+            let mut file = tokio::fs::File::create(&local_path).await?;
+            let mut body = resp.bytes_stream();
+            while let Some(chunk) = body.next().await {
+                file.write_all(&chunk?).await?;
+            }
+            file.flush().await?;
+            Ok(())
+        }
+        _ => Err(Error::IO(format!(
+            "Download with presigned url failed: {}",
+            status
         ))),
     }
 }

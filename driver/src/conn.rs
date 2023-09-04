@@ -13,19 +13,23 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use async_trait::async_trait;
 use dyn_clone::DynClone;
 use tokio::io::AsyncRead;
+use tokio_stream::StreamExt;
 use url::Url;
 
 #[cfg(feature = "flight-sql")]
 use crate::flight_sql::FlightSQLConnection;
 
-use databend_client::presign::PresignedResponse;
+use databend_client::presign::{presign_download_from_stage, PresignedResponse};
+use databend_client::stage::StageLocation;
 use databend_sql::error::{Error, Result};
 use databend_sql::rows::{QueryProgress, Row, RowIterator, RowProgressIterator};
-use databend_sql::schema::Schema;
+use databend_sql::schema::{DataType, Field, Schema};
+use databend_sql::value::Value;
 
 use crate::rest_api::RestAPIConnection;
 
@@ -90,8 +94,6 @@ pub trait Connection: DynClone + Send + Sync {
     async fn query_iter(&self, sql: &str) -> Result<RowIterator>;
     async fn query_iter_ext(&self, sql: &str) -> Result<(Schema, RowProgressIterator)>;
 
-    async fn upload_to_stage(&self, stage_location: &str, data: Reader, size: u64) -> Result<()>;
-
     async fn get_presigned_url(&self, stage_location: &str) -> Result<PresignedResponse> {
         let sql = format!("PRESIGN {}", stage_location);
         let row = self.query_row(&sql).await?.ok_or(Error::InvalidResponse(
@@ -102,29 +104,111 @@ pub trait Connection: DynClone + Send + Sync {
         Ok(PresignedResponse { headers, url })
     }
 
+    async fn upload_to_stage(&self, stage_location: &str, data: Reader, size: u64) -> Result<()>;
+
     async fn stream_load(
         &self,
-        sql: &str,
-        data: Reader,
-        size: u64,
-        file_format_options: Option<BTreeMap<&str, &str>>,
-        copy_options: Option<BTreeMap<&str, &str>>,
+        _sql: &str,
+        _data: Reader,
+        _size: u64,
+        _file_format_options: Option<BTreeMap<&str, &str>>,
+        _copy_options: Option<BTreeMap<&str, &str>>,
     ) -> Result<QueryProgress> {
         Err(Error::Protocol(
             "STREAM LOAD only available in HTTP API".to_owned(),
         ))
     }
 
+    // PUT file://<path_to_file>/<filename> internalStage|externalStage
     async fn put_files(&self, local_file: &str, stage_path: &str) -> Result<(Schema, RowIterator)> {
-        Err(Error::Protocol(
-            "PUT statement only available in HTTP API".to_owned(),
+        let local_dsn = url::Url::parse(local_file)?;
+        validate_local_scheme(local_dsn.scheme())?;
+        let mut results = Vec::new();
+        let stage_path = StageLocation::try_from(stage_path)?;
+        for entry in glob::glob(local_dsn.path())? {
+            let entry = entry?;
+            let stage_location = stage_path.file_path(entry.file_name().unwrap().to_str().unwrap());
+            let data = tokio::fs::File::open(&entry).await?;
+            let size = data.metadata().await?.len();
+            let (fname, status) = match self
+                .upload_to_stage(&stage_location, Box::new(data), size)
+                .await
+            {
+                Ok(_) => (entry.to_string_lossy().to_string(), "SUCCESS".to_owned()),
+                Err(e) => (entry.to_string_lossy().to_string(), e.to_string()),
+            };
+            results.push(Ok(Row::from_vec(vec![
+                Value::String(fname),
+                Value::String(status),
+            ])));
+        }
+        Ok((
+            put_get_schema(),
+            RowIterator::new(Box::pin(futures::stream::iter(results))),
         ))
     }
 
-    async fn get_files(&self, stage_path: &str, local_file: &str) -> Result<(Schema, RowIterator)> {
-        Err(Error::Protocol(
-            "GET statement only available in HTTP API".to_owned(),
+    async fn get_files(
+        &self,
+        stage_location: &str,
+        local_file: &str,
+    ) -> Result<(Schema, RowIterator)> {
+        let local_dsn = url::Url::parse(local_file)?;
+        validate_local_scheme(local_dsn.scheme())?;
+        let mut location = StageLocation::try_from(stage_location)?;
+        if !location.path.ends_with('/') {
+            location.path.push('/');
+        }
+        let list_sql = format!("LIST {}", location);
+        let mut response = self.query_iter(&list_sql).await?;
+        let mut results = Vec::new();
+        while let Some(row) = response.next().await {
+            let (mut name, _, _, _, _): (String, u64, Option<String>, String, Option<String>) =
+                row?.try_into().map_err(Error::Parsing)?;
+            let stage_file = format!("{}/{}", location.path, name);
+            let presign = self.get_presigned_url(&stage_file).await?;
+            if !location.path.is_empty() && name.starts_with(&location.path) {
+                name = name[location.path.len()..].to_string();
+            }
+            let local_file_path = Path::new(local_dsn.path()).join(&name);
+            let local_file = local_file_path.to_string_lossy();
+            let status = presign_download_from_stage(presign, &local_file).await;
+            let status = match status {
+                Ok(_) => "SUCCESS".to_owned(),
+                Err(e) => e.to_string(),
+            };
+            results.push(Ok(Row::from_vec(vec![
+                Value::String(local_file.to_string()),
+                Value::String(status),
+            ])));
+        }
+
+        Ok((
+            put_get_schema(),
+            RowIterator::new(Box::pin(futures::stream::iter(results))),
         ))
     }
 }
 dyn_clone::clone_trait_object!(Connection);
+
+fn put_get_schema() -> Schema {
+    Schema::from_vec(vec![
+        Field {
+            name: "file".to_string(),
+            data_type: DataType::String,
+        },
+        Field {
+            name: "status".to_string(),
+            data_type: DataType::String,
+        },
+    ])
+}
+
+fn validate_local_scheme(scheme: &str) -> Result<()> {
+    match scheme {
+        "file" | "fs" => Ok(()),
+        _ => Err(Error::BadArgument(
+            "Supported schemes: file:// or fs://".to_string(),
+        )),
+    }
+}
