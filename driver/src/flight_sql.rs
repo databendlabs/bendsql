@@ -101,9 +101,9 @@ impl Connection for FlightSQLConnection {
         let row = self.query_row(&sql).await?.ok_or(Error::InvalidResponse(
             "Empty response from server for presigned request".to_string(),
         ))?;
-        let (method, headers, url): (String, String, String) =
-            row.try_into().map_err(Error::Parsing)?;
-        let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
+        let (method, _, url): (String, String, String) = row.try_into().map_err(Error::Parsing)?;
+        // FIXME: headers is varaint, not handled by driver yet
+        let headers: BTreeMap<String, String> = BTreeMap::new();
         Ok(PresignedResponse {
             method,
             headers,
