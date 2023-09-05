@@ -63,7 +63,7 @@ pub async fn presign_download_from_stage(
     }
 
     let client = HttpClient::new();
-    let mut builder = client.put(presigned.url);
+    let mut builder = client.get(presigned.url);
     for (k, v) in presigned.headers {
         builder = builder.header(k, v);
     }
