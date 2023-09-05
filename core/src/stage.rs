@@ -55,3 +55,25 @@ impl StageLocation {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn parse_stage() -> Result<()> {
+        let location = "@stage_name/path/to/file";
+        let stage = StageLocation::try_from(location)?;
+        assert_eq!(stage.name, "stage_name");
+        assert_eq!(stage.path, "path/to/file");
+        Ok(())
+    }
+
+    #[test]
+    fn parse_stage_fail() -> Result<()> {
+        let location = "stage_name/path/to/file";
+        let stage = StageLocation::try_from(location);
+        assert!(stage.is_err());
+        Ok(())
+    }
+}

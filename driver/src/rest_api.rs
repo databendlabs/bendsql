@@ -19,11 +19,11 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_trait::async_trait;
-use databend_client::response::QueryResponse;
-use databend_client::APIClient;
-
 use tokio_stream::{Stream, StreamExt};
 
+use databend_client::presign::PresignedResponse;
+use databend_client::response::QueryResponse;
+use databend_client::APIClient;
 use databend_sql::error::{Error, Result};
 use databend_sql::rows::{QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress};
 use databend_sql::schema::{Schema, SchemaRef};
@@ -85,10 +85,23 @@ impl Connection for RestAPIConnection {
         }
     }
 
-    async fn upload_to_stage(&self, stage_location: &str, data: Reader, size: u64) -> Result<()> {
-        self.client
-            .upload_to_stage(stage_location, data, size)
-            .await?;
+    async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse> {
+        let sql = format!("PRESIGN {} {}", operation, stage);
+        let row = self.query_row(&sql).await?.ok_or(Error::InvalidResponse(
+            "Empty response from server for presigned request".to_string(),
+        ))?;
+        let (method, headers, url): (String, String, String) =
+            row.try_into().map_err(Error::Parsing)?;
+        let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
+        Ok(PresignedResponse {
+            method,
+            headers,
+            url,
+        })
+    }
+
+    async fn upload_to_stage(&self, stage: &str, data: Reader, size: u64) -> Result<()> {
+        self.client.upload_to_stage(stage, data, size).await?;
         Ok(())
     }
 
@@ -100,14 +113,14 @@ impl Connection for RestAPIConnection {
         file_format_options: Option<BTreeMap<&str, &str>>,
         copy_options: Option<BTreeMap<&str, &str>>,
     ) -> Result<QueryProgress> {
-        let stage_location = format!("@~/client/load/{}", chrono::Utc::now().timestamp_nanos());
-        self.upload_to_stage(&stage_location, data, size).await?;
+        let stage = format!("@~/client/load/{}", chrono::Utc::now().timestamp_nanos());
+        self.upload_to_stage(&stage, data, size).await?;
         let file_format_options =
             file_format_options.unwrap_or_else(Self::default_file_format_options);
         let copy_options = copy_options.unwrap_or_else(Self::default_copy_options);
         let resp = self
             .client
-            .insert_with_stage(sql, &stage_location, file_format_options, copy_options)
+            .insert_with_stage(sql, &stage, file_format_options, copy_options)
             .await?;
         Ok(QueryProgress::from(resp.stats.progresses))
     }

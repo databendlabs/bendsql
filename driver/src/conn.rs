@@ -96,26 +96,9 @@ pub trait Connection: DynClone + Send + Sync {
 
     /// Get presigned url for a given operation and stage location.
     /// The operation can be "UPLOAD" or "DOWNLOAD".
-    async fn get_presigned_url(
-        &self,
-        operation: &str,
-        stage_location: &str,
-    ) -> Result<PresignedResponse> {
-        let sql = format!("PRESIGN {} {}", operation, stage_location);
-        let row = self.query_row(&sql).await?.ok_or(Error::InvalidResponse(
-            "Empty response from server for presigned request".to_string(),
-        ))?;
-        let (method, headers, url): (String, String, String) =
-            row.try_into().map_err(Error::Parsing)?;
-        let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
-        Ok(PresignedResponse {
-            method,
-            headers,
-            url,
-        })
-    }
+    async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse>;
 
-    async fn upload_to_stage(&self, stage_location: &str, data: Reader, size: u64) -> Result<()>;
+    async fn upload_to_stage(&self, stage: &str, data: Reader, size: u64) -> Result<()>;
 
     async fn stream_load(
         &self,
@@ -134,19 +117,19 @@ pub trait Connection: DynClone + Send + Sync {
     async fn put_files(
         &self,
         local_file: &str,
-        stage_path: &str,
+        stage: &str,
     ) -> Result<(Schema, RowProgressIterator)> {
         let local_dsn = url::Url::parse(local_file)?;
         validate_local_scheme(local_dsn.scheme())?;
         let mut results = Vec::new();
-        let stage_path = StageLocation::try_from(stage_path)?;
+        let stage_location = StageLocation::try_from(stage)?;
         for entry in glob::glob(local_dsn.path())? {
             let entry = entry?;
-            let stage_location = stage_path.file_path(entry.file_name().unwrap().to_str().unwrap());
+            let stage_file = stage_location.file_path(entry.file_name().unwrap().to_str().unwrap());
             let data = tokio::fs::File::open(&entry).await?;
             let size = data.metadata().await?.len();
             let (fname, status) = match self
-                .upload_to_stage(&stage_location, Box::new(data), size)
+                .upload_to_stage(&stage_file, Box::new(data), size)
                 .await
             {
                 Ok(_) => (entry.to_string_lossy().to_string(), "SUCCESS".to_owned()),
@@ -165,12 +148,12 @@ pub trait Connection: DynClone + Send + Sync {
 
     async fn get_files(
         &self,
-        stage_location: &str,
+        stage: &str,
         local_file: &str,
     ) -> Result<(Schema, RowProgressIterator)> {
         let local_dsn = url::Url::parse(local_file)?;
         validate_local_scheme(local_dsn.scheme())?;
-        let mut location = StageLocation::try_from(stage_location)?;
+        let mut location = StageLocation::try_from(stage)?;
         if !location.path.ends_with('/') {
             location.path.push('/');
         }

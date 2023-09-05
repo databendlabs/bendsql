@@ -331,13 +331,13 @@ impl APIClient {
     pub async fn insert_with_stage(
         &self,
         sql: &str,
-        stage_location: &str,
+        stage: &str,
         file_format_options: BTreeMap<&str, &str>,
         copy_options: BTreeMap<&str, &str>,
     ) -> Result<QueryResponse> {
         let session_settings = self.make_session().await;
         let stage_attachment = Some(StageAttachmentConfig {
-            location: stage_location,
+            location: stage,
             file_format_options: Some(file_format_options),
             copy_options: Some(copy_options),
         });
@@ -384,8 +384,8 @@ impl APIClient {
         Ok(resp)
     }
 
-    async fn get_presigned_upload_url(&self, stage_location: &str) -> Result<PresignedResponse> {
-        let sql = format!("PRESIGN UPLOAD {}", stage_location);
+    async fn get_presigned_upload_url(&self, stage: &str) -> Result<PresignedResponse> {
+        let sql = format!("PRESIGN UPLOAD {}", stage);
         let resp = self.query_wait(&sql).await?;
         if resp.data.len() != 1 {
             return Err(Error::Request(
@@ -415,17 +415,11 @@ impl APIClient {
         })
     }
 
-    pub async fn upload_to_stage(
-        &self,
-        stage_location: &str,
-        data: Reader,
-        size: u64,
-    ) -> Result<()> {
+    pub async fn upload_to_stage(&self, stage: &str, data: Reader, size: u64) -> Result<()> {
         if self.presigned_url_disabled {
-            self.upload_to_stage_with_stream(stage_location, data, size)
-                .await
+            self.upload_to_stage_with_stream(stage, data, size).await
         } else {
-            let presigned = self.get_presigned_upload_url(stage_location).await?;
+            let presigned = self.get_presigned_upload_url(stage).await?;
             presign_upload_to_stage(presigned, data, size).await
         }
     }
@@ -433,12 +427,12 @@ impl APIClient {
     /// Upload data to stage with stream api, should not be used directly, use `upload_to_stage` instead.
     async fn upload_to_stage_with_stream(
         &self,
-        stage_location: &str,
+        stage: &str,
         data: Reader,
         size: u64,
     ) -> Result<()> {
         let endpoint = self.endpoint.join("v1/upload_to_stage")?;
-        let location = StageLocation::try_from(stage_location)?;
+        let location = StageLocation::try_from(stage)?;
         let mut headers = self.make_headers().await?;
         headers.insert("stage_name", location.name.parse()?);
         let stream = Body::wrap_stream(ReaderStream::new(data));
@@ -527,23 +521,6 @@ mod test {
         let dsn = "databend://username:3a@SC(nYE1k={{R@localhost:8000";
         let client = APIClient::from_dsn(dsn).await?;
         assert_eq!(client.password, Some("3a@SC(nYE1k={{R".to_string()));
-        Ok(())
-    }
-
-    #[test]
-    fn parse_stage() -> Result<()> {
-        let location = "@stage_name/path/to/file";
-        let stage_location = StageLocation::try_from(location)?;
-        assert_eq!(stage_location.name, "stage_name");
-        assert_eq!(stage_location.path, "path/to/file");
-        Ok(())
-    }
-
-    #[test]
-    fn parse_stage_fail() -> Result<()> {
-        let location = "stage_name/path/to/file";
-        let stage_location = StageLocation::try_from(location);
-        assert!(stage_location.is_err());
         Ok(())
     }
 }

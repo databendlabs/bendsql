@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -30,7 +30,7 @@ use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use tonic::Streaming;
 use url::Url;
 
-use databend_client::presign::presign_upload_to_stage;
+use databend_client::presign::{presign_upload_to_stage, PresignedResponse};
 use databend_sql::error::{Error, Result};
 use databend_sql::rows::{
     QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress, Rows,
@@ -94,6 +94,21 @@ impl Connection for FlightSQLConnection {
         let flight_data = client.do_get(ticket.clone()).await?;
         let (schema, rows) = FlightSQLRows::try_from_flight_data(flight_data).await?;
         Ok((schema, RowProgressIterator::new(Box::pin(rows))))
+    }
+
+    async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse> {
+        let sql = format!("PRESIGN {} {}", operation, stage);
+        let row = self.query_row(&sql).await?.ok_or(Error::InvalidResponse(
+            "Empty response from server for presigned request".to_string(),
+        ))?;
+        let (method, headers, url): (String, String, String) =
+            row.try_into().map_err(Error::Parsing)?;
+        let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
+        Ok(PresignedResponse {
+            method,
+            headers,
+            url,
+        })
     }
 
     /// Always use presigned url to upload stage for FlightSQL
