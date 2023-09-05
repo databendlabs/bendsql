@@ -61,7 +61,6 @@ pub async fn presign_download_from_stage(
     if let Some(p) = local_path.parent() {
         tokio::fs::create_dir_all(p).await?;
     }
-
     let client = HttpClient::new();
     let mut builder = client.get(presigned.url);
     for (k, v) in presigned.headers {
