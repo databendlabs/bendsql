@@ -49,9 +49,9 @@ impl TryFrom<&str> for StageLocation {
 impl StageLocation {
     pub fn file_path(&self, file_name: &str) -> String {
         if self.path.ends_with('/') {
-            format!("{}{}", self.path, file_name)
+            format!("{}{}", self, file_name)
         } else {
-            format!("{}/{}", self.path, file_name)
+            format!("{}/{}", self, file_name)
         }
     }
 }
