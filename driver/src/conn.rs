@@ -159,7 +159,7 @@ pub trait Connection: DynClone + Send + Sync {
         }
         Ok((
             put_get_schema(),
-            RowProgressIterator::new(Box::pin(futures::stream::iter(results))),
+            RowProgressIterator::new(Box::pin(tokio_stream::iter(results))),
         ))
     }
 
@@ -198,7 +198,7 @@ pub trait Connection: DynClone + Send + Sync {
         }
         Ok((
             put_get_schema(),
-            RowProgressIterator::new(Box::pin(futures::stream::iter(results))),
+            RowProgressIterator::new(Box::pin(tokio_stream::iter(results))),
         ))
     }
 }
