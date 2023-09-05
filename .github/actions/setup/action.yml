@@ -27,7 +27,6 @@ runs:
       with:
         path: |
           ~/.cargo/registry/
-          ~/.cargo/bin/cargo-*
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}-${{ steps.toolchain.outputs.cachekey }}-${{ inputs.cache-key }}
         restore-keys: |
           ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}-${{ steps.toolchain.outputs.cachekey }}
