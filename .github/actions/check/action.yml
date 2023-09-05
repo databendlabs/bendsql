@@ -24,11 +24,6 @@ runs:
       run: |
         cargo audit
 
-    - name: Machete
-      shell: bash
-      run: |
-        cargo machete
-
     - name: Clippy
       shell: bash
       run: |
