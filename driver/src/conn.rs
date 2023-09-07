@@ -125,7 +125,18 @@ pub trait Connection: DynClone + Send + Sync {
         let stage_location = StageLocation::try_from(stage)?;
         for entry in glob::glob(local_dsn.path())? {
             let entry = entry?;
-            let stage_file = stage_location.file_path(entry.file_name().unwrap().to_str().unwrap());
+            let filename = entry
+                .file_name()
+                .ok_or(Error::BadArgument(format!(
+                    "Invalid local file path: {:?}",
+                    entry
+                )))?
+                .to_str()
+                .ok_or(Error::BadArgument(format!(
+                    "Invalid local file path: {:?}",
+                    entry
+                )))?;
+            let stage_file = stage_location.file_path(filename);
             let data = tokio::fs::File::open(&entry).await?;
             let size = data.metadata().await?.len();
             let (fname, status) = match self
