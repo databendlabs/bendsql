@@ -202,8 +202,8 @@ pub trait Connection: DynClone + Send + Sync {
                 Err(e) => e.to_string(),
             };
             let mut progress = QueryProgress::default();
-            progress.write_bytes = total_size;
-            progress.write_rows = total_count;
+            progress.read_bytes = total_size;
+            progress.read_rows = total_count;
             results.push(Ok(RowWithProgress::Progress(progress)));
             results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
                 Value::String(local_file.to_string_lossy().to_string()),
