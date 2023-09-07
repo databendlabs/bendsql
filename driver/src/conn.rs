@@ -152,9 +152,14 @@ pub trait Connection: DynClone + Send + Sync {
                 }
                 Err(e) => (entry.to_string_lossy().to_string(), e.to_string()),
             };
-            let mut progress = QueryProgress::default();
-            progress.write_bytes = total_size;
-            progress.write_rows = total_count;
+            let progress = QueryProgress {
+                total_rows: 0,
+                total_bytes: 0,
+                read_rows: 0,
+                read_bytes: 0,
+                write_rows: total_count,
+                write_bytes: total_size,
+            };
             results.push(Ok(RowWithProgress::Progress(progress)));
             results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
                 Value::String(fname),
@@ -202,9 +207,14 @@ pub trait Connection: DynClone + Send + Sync {
                 }
                 Err(e) => (e.to_string(), 0),
             };
-            let mut progress = QueryProgress::default();
-            progress.read_bytes = total_size;
-            progress.read_rows = total_count;
+            let progress = QueryProgress {
+                total_rows: 0,
+                total_bytes: 0,
+                read_rows: total_count,
+                read_bytes: total_size,
+                write_rows: 0,
+                write_bytes: 0,
+            };
             results.push(Ok(RowWithProgress::Progress(progress)));
             results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
                 Value::String(local_file.to_string_lossy().to_string()),
