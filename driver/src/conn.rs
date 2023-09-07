@@ -28,8 +28,8 @@ use databend_client::presign::{presign_download_from_stage, PresignedResponse};
 use databend_client::stage::StageLocation;
 use databend_sql::error::{Error, Result};
 use databend_sql::rows::{QueryProgress, Row, RowIterator, RowProgressIterator, RowWithProgress};
-use databend_sql::schema::{DataType, Field, Schema};
-use databend_sql::value::Value;
+use databend_sql::schema::{DataType, Field, NumberDataType, Schema};
+use databend_sql::value::{NumberValue, Value};
 
 use crate::rest_api::RestAPIConnection;
 
@@ -159,6 +159,7 @@ pub trait Connection: DynClone + Send + Sync {
             results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
                 Value::String(fname),
                 Value::String(status),
+                Value::Number(NumberValue::UInt64(size)),
             ]))));
         }
         Ok((
@@ -193,13 +194,13 @@ pub trait Connection: DynClone + Send + Sync {
             let presign = self.get_presigned_url("DOWNLOAD", &stage_file).await?;
             let local_file = Path::new(local_dsn.path()).join(&name);
             let status = presign_download_from_stage(presign, &local_file).await;
-            let status = match status {
+            let (status, size) = match status {
                 Ok(size) => {
                     total_count += 1;
                     total_size += size as usize;
-                    "SUCCESS".to_owned()
+                    ("SUCCESS".to_owned(), size)
                 }
-                Err(e) => e.to_string(),
+                Err(e) => (e.to_string(), 0),
             };
             let mut progress = QueryProgress::default();
             progress.read_bytes = total_size;
@@ -208,6 +209,7 @@ pub trait Connection: DynClone + Send + Sync {
             results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
                 Value::String(local_file.to_string_lossy().to_string()),
                 Value::String(status),
+                Value::Number(NumberValue::UInt64(size)),
             ]))));
         }
         Ok((
@@ -227,6 +229,10 @@ fn put_get_schema() -> Schema {
         Field {
             name: "status".to_string(),
             data_type: DataType::String,
+        },
+        Field {
+            name: "size".to_string(),
+            data_type: DataType::Number(NumberDataType::UInt64),
         },
     ])
 }
