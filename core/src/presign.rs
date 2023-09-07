@@ -59,7 +59,7 @@ pub async fn presign_upload_to_stage(
 pub async fn presign_download_from_stage(
     presigned: PresignedResponse,
     local_path: &Path,
-) -> Result<()> {
+) -> Result<u64> {
     if let Some(p) = local_path.parent() {
         tokio::fs::create_dir_all(p).await?;
     }
@@ -79,7 +79,8 @@ pub async fn presign_download_from_stage(
                 file.write_all(&chunk?).await?;
             }
             file.flush().await?;
-            Ok(())
+            let metadata = file.metadata().await?;
+            Ok(metadata.len())
         }
         _ => Err(Error::IO(format!(
             "Download with presigned url failed: {}",

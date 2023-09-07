@@ -119,6 +119,8 @@ pub trait Connection: DynClone + Send + Sync {
         local_file: &str,
         stage: &str,
     ) -> Result<(Schema, RowProgressIterator)> {
+        let mut total_count: usize = 0;
+        let mut total_size: usize = 0;
         let local_dsn = url::Url::parse(local_file)?;
         validate_local_scheme(local_dsn.scheme())?;
         let mut results = Vec::new();
@@ -143,9 +145,17 @@ pub trait Connection: DynClone + Send + Sync {
                 .upload_to_stage(&stage_file, Box::new(data), size)
                 .await
             {
-                Ok(_) => (entry.to_string_lossy().to_string(), "SUCCESS".to_owned()),
+                Ok(_) => {
+                    total_count += 1;
+                    total_size += size as usize;
+                    (entry.to_string_lossy().to_string(), "SUCCESS".to_owned())
+                }
                 Err(e) => (entry.to_string_lossy().to_string(), e.to_string()),
             };
+            let mut progress = QueryProgress::default();
+            progress.write_bytes = total_size;
+            progress.write_rows = total_count;
+            results.push(Ok(RowWithProgress::Progress(progress)));
             results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
                 Value::String(fname),
                 Value::String(status),
@@ -162,6 +172,8 @@ pub trait Connection: DynClone + Send + Sync {
         stage: &str,
         local_file: &str,
     ) -> Result<(Schema, RowProgressIterator)> {
+        let mut total_count: usize = 0;
+        let mut total_size: usize = 0;
         let local_dsn = url::Url::parse(local_file)?;
         validate_local_scheme(local_dsn.scheme())?;
         let mut location = StageLocation::try_from(stage)?;
@@ -182,9 +194,17 @@ pub trait Connection: DynClone + Send + Sync {
             let local_file = Path::new(local_dsn.path()).join(&name);
             let status = presign_download_from_stage(presign, &local_file).await;
             let status = match status {
-                Ok(_) => "SUCCESS".to_owned(),
+                Ok(size) => {
+                    total_count += 1;
+                    total_size += size as usize;
+                    "SUCCESS".to_owned()
+                }
                 Err(e) => e.to_string(),
             };
+            let mut progress = QueryProgress::default();
+            progress.write_bytes = total_size;
+            progress.write_rows = total_count;
+            results.push(Ok(RowWithProgress::Progress(progress)));
             results.push(Ok(RowWithProgress::Row(Row::from_vec(vec![
                 Value::String(local_file.to_string_lossy().to_string()),
                 Value::String(status),
