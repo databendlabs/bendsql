@@ -63,7 +63,6 @@ jobs:
         id: opts
         shell: bash
         run: |
-          echo "DOCKER_OPTS=--env RUSTC_WRAPPER=sccache --env SCCACHE_GHA_ENABLED=true" >> $GITHUB_OUTPUT
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "BUILD_ARGS=--strip --out dist" >> $GITHUB_OUTPUT
           else
@@ -75,8 +74,8 @@ jobs:
           working-directory: bindings/python
           target: ${{ matrix.target }}
           manylinux: auto
+          sccache: 'true'
           args: ${{ steps.opts.outputs.BUILD_ARGS }}
-          docker-options: ${{ steps.opts.outputs.DOCKER_OPTS }}
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
