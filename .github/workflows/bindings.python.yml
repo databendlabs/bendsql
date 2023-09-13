@@ -81,3 +81,20 @@ jobs:
         with:
           name: dist
           path: bindings/python/dist/*.whl
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, integration]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: pypi
+      url: https://pypi.org/p/databend-driver
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v3
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
