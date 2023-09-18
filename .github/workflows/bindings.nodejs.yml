@@ -112,7 +112,7 @@ jobs:
       id-token: write
     environment:
       name: npmjs
-      url: https://www.npmjs.com/package/databend-driver/v/${{ github.ref_name }}
+      url: https://www.npmjs.com/package/databend-driver
     steps:
       - uses: actions/checkout@v4
       - name: Setup node
