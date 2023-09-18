@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: crates
-      url: https://crates.io/crates/bendsql/${{ github.ref }}
+      url: https://crates.io/crates/bendsql/${{ github.ref_name }}
     steps:
     - uses: actions/checkout@v4
     - name: Setup Cargo Release
