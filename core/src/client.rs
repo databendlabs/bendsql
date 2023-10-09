@@ -298,11 +298,6 @@ impl APIClient {
         self.wait_for_query(resp).await
     }
 
-    // TODO(liyz): for backward compatibility, remove it later when we've make sure the derived drivers did not call this method.
-    pub async fn query_wait(&self, sql: &str) -> Result<QueryResponse> {
-        self.query(sql).await
-    }
-
     async fn make_session(&self) -> Option<SessionConfig> {
         let session_settings = self.session_settings.lock().await;
         let database = self.database.lock().await;
