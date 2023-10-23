@@ -589,61 +589,78 @@ impl std::fmt::Display for NumberValue {
 
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Value::Null => write!(f, "NULL"),
-            Value::EmptyArray => write!(f, "[]"),
-            Value::EmptyMap => write!(f, "{{}}"),
-            Value::Boolean(b) => write!(f, "{}", b),
-            Value::Number(n) => write!(f, "{}", n),
-            Value::String(s) => write!(f, "{}", s),
-            Value::Timestamp(i) => {
-                let secs = i / 1_000_000;
-                let nanos = ((i % 1_000_000) * 1000) as u32;
-                let t = NaiveDateTime::from_timestamp_opt(secs, nanos).unwrap_or_default();
+        encode_value(f, &self, true)
+    }
+}
+
+// Compatible with Databend, inner values of nested types are quoted.
+fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std::fmt::Result {
+    match val {
+        Value::Null => write!(f, "NULL"),
+        Value::EmptyArray => write!(f, "[]"),
+        Value::EmptyMap => write!(f, "{{}}"),
+        Value::Boolean(b) => write!(f, "{}", b),
+        Value::Number(n) => write!(f, "{}", n),
+        Value::String(s) | Value::Bitmap(s) | Value::Variant(s) => {
+            if raw {
+                write!(f, "{}", s)
+            } else {
+                write!(f, "'{}'", s)
+            }
+        }
+        Value::Timestamp(i) => {
+            let secs = i / 1_000_000;
+            let nanos = ((i % 1_000_000) * 1000) as u32;
+            let t = NaiveDateTime::from_timestamp_opt(secs, nanos).unwrap_or_default();
+            if raw {
                 write!(f, "{}", t)
+            } else {
+                write!(f, "'{}'", t)
             }
-            Value::Date(i) => {
-                let days = i + DAYS_FROM_CE;
-                let d = NaiveDate::from_num_days_from_ce_opt(days).unwrap_or_default();
+        }
+        Value::Date(i) => {
+            let days = i + DAYS_FROM_CE;
+            let d = NaiveDate::from_num_days_from_ce_opt(days).unwrap_or_default();
+            if raw {
                 write!(f, "{}", d)
+            } else {
+                write!(f, "'{}'", d)
             }
-            Value::Array(vals) => {
-                write!(f, "[")?;
-                for (i, val) in vals.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ",")?;
-                    }
-                    write!(f, "{}", val)?;
+        }
+        Value::Array(vals) => {
+            write!(f, "[")?;
+            for (i, val) in vals.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
                 }
-                write!(f, "]")?;
-                Ok(())
+                encode_value(f, &val, false)?;
             }
-            Value::Map(kvs) => {
-                write!(f, "{{")?;
-                for (i, (key, val)) in kvs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ",")?;
-                    }
-                    write!(f, "{}", key)?;
-                    write!(f, ":")?;
-                    write!(f, "{}", val)?;
+            write!(f, "]")?;
+            Ok(())
+        }
+        Value::Map(kvs) => {
+            write!(f, "{{")?;
+            for (i, (key, val)) in kvs.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
                 }
-                write!(f, "}}")?;
-                Ok(())
+                encode_value(f, &key, false)?;
+                write!(f, ":")?;
+                encode_value(f, &val, false)?;
             }
-            Value::Tuple(vals) => {
-                write!(f, "(")?;
-                for (i, val) in vals.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ",")?;
-                    }
-                    write!(f, "{}", val)?;
+            write!(f, "}}")?;
+            Ok(())
+        }
+        Value::Tuple(vals) => {
+            write!(f, "(")?;
+            for (i, val) in vals.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
                 }
-                write!(f, ")")?;
-                Ok(())
+                encode_value(f, &val, false)?;
             }
-            Value::Bitmap(s) => write!(f, "{}", s),
-            Value::Variant(s) => write!(f, "{}", s),
+            write!(f, ")")?;
+            Ok(())
         }
     }
 }
