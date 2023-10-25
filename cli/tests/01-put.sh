@@ -17,7 +17,10 @@ cat <<SQL | ${BENDSQL}
 SELECT * FROM books;
 SQL
 
-echo "put fs://${PWD}/cli/tests/data/b*.parquet @ss_temp/abc/" | ${BENDSQL}
+mkdir -p /tmp/abc
+cp "${PWD}/cli/tests/data/books.parquet" /tmp/abc/books.parquet
+
+echo "put fs:///tmp/abc/b*.parquet @ss_temp/abc/" | ${BENDSQL}
 echo 'get @ss_temp/abc fs:///tmp/edf' | ${BENDSQL}
 
 cat <<SQL | ${BENDSQL}
