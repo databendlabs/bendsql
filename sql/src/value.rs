@@ -589,7 +589,7 @@ impl std::fmt::Display for NumberValue {
 
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        encode_value(f, &self, true)
+        encode_value(f, self, true)
     }
 }
 
@@ -633,7 +633,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
                 if i > 0 {
                     write!(f, ",")?;
                 }
-                encode_value(f, &val, false)?;
+                encode_value(f, val, false)?;
             }
             write!(f, "]")?;
             Ok(())
@@ -644,9 +644,9 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
                 if i > 0 {
                     write!(f, ",")?;
                 }
-                encode_value(f, &key, false)?;
+                encode_value(f, key, false)?;
                 write!(f, ":")?;
-                encode_value(f, &val, false)?;
+                encode_value(f, val, false)?;
             }
             write!(f, "}}")?;
             Ok(())
@@ -657,7 +657,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
                 if i > 0 {
                     write!(f, ",")?;
                 }
-                encode_value(f, &val, false)?;
+                encode_value(f, val, false)?;
             }
             write!(f, ")")?;
             Ok(())
