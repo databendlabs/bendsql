@@ -259,7 +259,7 @@ impl Session {
                 }
                 TokenKind::Newline => {
                     in_comment = false;
-                    self.query.push(' ');
+                    self.query.push('\n');
                 }
                 TokenKind::CommentBlockStart => {
                     if !self.in_comment_block {

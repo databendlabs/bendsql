@@ -13,13 +13,17 @@ CREATE TABLE books
 );
 SQL
 
-echo 'put fs://cli/tests/data/b*.parquet @ss_temp/abc/' | ${BENDSQL}
+cat <<SQL | ${BENDSQL}
+SELECT * FROM books;
+SQL
+
+echo "put fs://${PWD}/cli/tests/data/b*.parquet @ss_temp/abc/" | ${BENDSQL}
 echo 'get @ss_temp/abc fs:///tmp/edf' | ${BENDSQL}
 
 cat <<SQL | ${BENDSQL}
-COPY INTO books FROM @ss_tmp/abc/ files=('books.parquet') FILE_FORMAT = (TYPE = PARQUET);
+COPY INTO books FROM @ss_temp/abc/ files=('books.parquet') FILE_FORMAT = (TYPE = PARQUET);
 SQL
 
 cat <<SQL | ${BENDSQL}
-SELECT * FROM books;
+SELECT * FROM books LIMIT 2;
 SQL
