@@ -74,7 +74,7 @@ jobs:
         with:
           working-directory: bindings/python
           target: ${{ matrix.target }}
-          manylinux: auto
+          manylinux: "2_28"
           sccache: 'true'
           args: ${{ steps.opts.outputs.BUILD_ARGS }}
       - name: Upload artifact
