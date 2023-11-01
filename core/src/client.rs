@@ -231,6 +231,7 @@ impl APIClient {
             let resp_err = QueryError {
                 code: resp.status().as_u16(),
                 message: resp.text().await?,
+                detail: None,
             };
             return Err(Error::InvalidResponse(resp_err));
         }
@@ -264,6 +265,7 @@ impl APIClient {
             let resp_err = QueryError {
                 code: resp.status().as_u16(),
                 message: resp.text().await?,
+                detail: None,
             };
             return Err(Error::InvalidResponse(resp_err));
         }
@@ -289,6 +291,7 @@ impl APIClient {
             let resp_err = QueryError {
                 code: resp.status().as_u16(),
                 message: format!("kill query failed: {}", resp.text().await?),
+                detail: None,
             };
             return Err(Error::InvalidResponse(resp_err));
         }
@@ -421,6 +424,7 @@ impl APIClient {
             let resp_err = QueryError {
                 code: resp.status().as_u16(),
                 message: resp.text().await?,
+                detail: None,
             };
             return Err(Error::InvalidResponse(resp_err));
         }
