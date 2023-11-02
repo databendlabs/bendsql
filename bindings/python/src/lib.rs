@@ -138,10 +138,7 @@ impl Row {
     pub fn values<'p>(&'p self, py: Python<'p>) -> PyResult<PyObject> {
         let res = PyTuple::new(
             py,
-            self.0
-                .values()
-                .iter()
-                .map(|v| Value(v.clone()).into_py(py)), // FIXME: do not clone
+            self.0.values().iter().map(|v| Value(v.clone()).into_py(py)), // FIXME: do not clone
         );
         Ok(res.into_py(py))
     }
