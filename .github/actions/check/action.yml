@@ -23,6 +23,7 @@ runs:
         cargo install cargo-quickinstall
         cargo quickinstall cargo-machete
         cargo quickinstall cargo-deny
+        cargo quickinstall cargo-xwin
         cargo quickinstall sccache
 
     - name: Machete
