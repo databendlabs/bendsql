@@ -76,7 +76,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn deserailize_session_config() {
+    fn deserialize_session_config() {
         let session_json = r#"{"database":"default","settings":{}}"#;
         let session_config: SessionConfig = serde_json::from_str(session_json).unwrap();
         assert_eq!(session_config.database, Some("default".to_string()));
