@@ -39,7 +39,7 @@ pub struct Client {
     dsn: String,
 }
 
-impl<'c> Client {
+impl Client {
     pub fn new(dsn: String) -> Self {
         Self { dsn }
     }
