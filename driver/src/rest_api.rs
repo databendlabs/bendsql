@@ -98,9 +98,9 @@ impl Connection for RestAPIConnection {
     async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse> {
         info!("get presigned url: {} {}", operation, stage);
         let sql = format!("PRESIGN {} {}", operation, stage);
-        let row = self.query_row(&sql).await?.ok_or(Error::InvalidResponse(
-            "Empty response from server for presigned request".to_string(),
-        ))?;
+        let row = self.query_row(&sql).await?.ok_or_else(|| {
+            Error::InvalidResponse("Empty response from server for presigned request".to_string())
+        })?;
         let (method, headers, url): (String, String, String) =
             row.try_into().map_err(Error::Parsing)?;
         let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
@@ -161,9 +161,9 @@ impl Connection for RestAPIConnection {
         if !format_options.contains_key("type") {
             let file_type = fp
                 .extension()
-                .ok_or(Error::BadArgument("file type not specified".to_string()))?
+                .ok_or_else(|| Error::BadArgument("file type not specified".to_string()))?
                 .to_str()
-                .ok_or(Error::BadArgument("file type empty".to_string()))?;
+                .ok_or_else(|| Error::BadArgument("file type empty".to_string()))?;
             format_options.insert("type", file_type);
         }
         self.load_data(sql, data, size, Some(format_options), copy_options)
