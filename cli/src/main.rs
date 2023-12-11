@@ -227,6 +227,7 @@ impl ConnectionArgs {
             _ = dsn.set_scheme("databend+https");
         }
         let mut query = url::form_urlencoded::Serializer::new(String::new());
+        query.append_pair("display_warnings", "1");
         if !self.args.is_empty() {
             for (k, v) in self.args {
                 query.append_pair(&k, &v);

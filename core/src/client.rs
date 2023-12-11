@@ -70,6 +70,7 @@ pub struct APIClient {
     tls_ca_file: Option<String>,
 
     presigned_url_disabled: bool,
+    display_warnings: bool,
 }
 
 impl APIClient {
@@ -148,6 +149,18 @@ impl APIClient {
                 }
                 "access_token_file" => {
                     client.auth = Arc::new(AccessTokenFileAuth::new(v.to_string()));
+                }
+                "display_warnings" => {
+                    client.display_warnings = match v.as_ref() {
+                        "true" | "1" => true,
+                        "false" | "0" => false,
+                        _ => {
+                            return Err(Error::BadArgument(format!(
+                                "Invalid value for display_warnings: {}",
+                                v
+                            )))
+                        }
+                    }
                 }
                 _ => {
                     session_settings.insert(k.to_string(), v.to_string());
@@ -231,6 +244,9 @@ impl APIClient {
     }
 
     pub fn handle_warnings(&self, warnings: &[String]) {
+        if !self.display_warnings {
+            return;
+        }
         for w in warnings {
             warn!("warning from server: {}", w);
         }
@@ -535,6 +551,7 @@ impl Default for APIClient {
             page_request_timeout: Duration::from_secs(30),
             tls_ca_file: None,
             presigned_url_disabled: false,
+            display_warnings: false,
         }
     }
 }
