@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use http::StatusCode;
-use log::info;
+use log::{info, warn};
 use once_cell::sync::Lazy;
 use percent_encoding::percent_decode_str;
 use reqwest::header::HeaderMap;
@@ -215,6 +215,12 @@ impl APIClient {
         }
     }
 
+    pub fn handle_warnings(&self, warnings: &[String]) {
+        for w in warnings {
+            warn!("warning from server: {}", w);
+        }
+    }
+
     pub async fn start_query(&self, sql: &str) -> Result<QueryResponse> {
         info!("start query: {}", sql);
         let session_state = self.session_state().await;
@@ -260,6 +266,7 @@ impl APIClient {
             return Err(Error::InvalidResponse(err));
         }
         self.handle_session(&resp.session).await;
+        self.handle_warnings(&resp.warnings);
         Ok(resp)
     }
 
@@ -291,6 +298,7 @@ impl APIClient {
         }
         let resp: QueryResponse = resp.json().await?;
         self.handle_session(&resp.session).await;
+        self.handle_warnings(&resp.warnings);
         match resp.error {
             Some(err) => Err(Error::InvalidResponse(err)),
             None => Ok(resp),
