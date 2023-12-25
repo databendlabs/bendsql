@@ -93,8 +93,6 @@ impl BlockingDatabendConnection {
             ))
         })?;
         // Use the runtime to block on the synchronous operation
-
-        // Use the runtime to block on the synchronous operation
         let result: Result<RowIterator, PyErr> = rt.block_on(async {
             match this.query_iter(&sql).await {
                 Ok(result) => Ok(RowIterator::new(result)),
