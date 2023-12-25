@@ -86,15 +86,15 @@ impl BlockingDatabendConnection {
 
     pub fn query_iter(&self, sql: String) -> PyResult<RowIterator> {
         let this = self.0.clone();
-        // future_into_py(py, async move {
-        //     let streamer = this.query_iter(&sql).await.unwrap();
-        //     Ok(RowIterator::new(streamer))
-        // })
-        let rt = tokio::runtime::Runtime::new()?;
+        let rt = tokio::runtime::Runtime::new()
+            .map_err(|e| PyErr::new::<exc::Exception, _>(format!("Error creating Tokio runtime: {:?}", e)))?;
+        // Use the runtime to block on the synchronous operation
         let ret = rt.block_on(async move {
-            let streamer = this.query_iter(&sql).await.unwrap();
-            streamer
-        });
+                        let streamer = this.query_iter(&sql)
+                            .map_err(|e| PyErr::new::<exc::Exception, _>(format!("Error querying: {:?}", e)))?;
+                     streamer
+                       });
+
         Ok(RowIterator::new(ret))
     }
 
