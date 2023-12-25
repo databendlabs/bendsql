@@ -87,7 +87,10 @@ impl BlockingDatabendConnection {
     pub fn query_iter(&self, sql: String) -> PyResult<RowIterator> {
         let this = self.0.clone();
         let rt = tokio::runtime::Runtime::new().map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyException, _>(format!("Error creating Tokio runtime: {:?}", e))
+            PyErr::new::<pyo3::exceptions::PyException, _>(format!(
+                "Error creating Tokio runtime: {:?}",
+                e
+            ))
         })?;
         // Use the runtime to block on the synchronous operation
 
@@ -95,9 +98,10 @@ impl BlockingDatabendConnection {
         let result: Result<RowIterator, PyErr> = rt.block_on(async {
             match this.query_iter(&sql).await {
                 Ok(result) => Ok(RowIterator::new(result)),
-                Err(e) => Err(PyErr::new::<pyo3::exceptions::PyException, _>(
-                    format!("Error querying: {:?}", e),
-                )),
+                Err(e) => Err(PyErr::new::<pyo3::exceptions::PyException, _>(format!(
+                    "Error querying: {:?}",
+                    e
+                ))),
             }
         });
 
