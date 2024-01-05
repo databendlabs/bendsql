@@ -21,6 +21,8 @@ use anyhow::Result;
 use tracing_appender::rolling::RollingFileAppender;
 use tracing_appender::rolling::Rotation;
 
+const MAX_LOG_FILES: usize = 10;
+
 #[allow(dyn_drop)]
 pub async fn init_logging(
     dir: &str,
@@ -30,7 +32,11 @@ pub async fn init_logging(
     let mut guards: Vec<Box<dyn Drop + Send + Sync + 'static>> = Vec::new();
     let mut logger = fern::Dispatch::new();
 
-    let rolling = RollingFileAppender::new(Rotation::DAILY, dir, "bendsql");
+    let rolling = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("bendsql.log")
+        .max_log_files(MAX_LOG_FILES)
+        .build(dir)?;
     let (non_blocking, flush_guard) = tracing_appender::non_blocking(rolling);
     let buffered_non_blocking = BufWriter::with_capacity(64 * 1024 * 1024, non_blocking);
 
