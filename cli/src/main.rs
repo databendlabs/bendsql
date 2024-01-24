@@ -65,7 +65,9 @@ impl InputFormat {
                 options.insert("record_delimiter", "\n");
                 options.insert("field_delimiter", ",");
                 options.insert("quote", "\"");
-                options.insert("escape", "\"");
+                // FIXME: BadArguments. Code: 1006,
+                // Text = Invalid CSV option value: ESCAPE is currently set to '\"'. The valid values are '\\\\'
+                // options.insert("escape", "\"");
                 options.insert("skip_header", "0");
                 options.insert("compression", "NONE");
             }
