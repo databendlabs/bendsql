@@ -16,6 +16,15 @@ select [], {};
 
 select /* ignore this block */ 'with comment';
 
+select 1; select 2; select '
+a'; select 3;
+
+select $$aa$$;
+select $$
+def add(a, b):
+	a + b
+$$;
+
 /* ignore this block /* /*
 select 'in comment block';
 */
