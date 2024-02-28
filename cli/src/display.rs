@@ -681,7 +681,7 @@ fn create_table(
 fn render_head(
     schema: SchemaRef,
     widths: &mut [usize],
-    column_map: &mut Vec<i32>,
+    column_map: &mut [i32],
     header: &mut Vec<Cell>,
     aligns: &mut Vec<CellAlignment>,
 ) {
