@@ -333,12 +333,15 @@ impl Connection {
 
     /// Execute a SQL query and fetch all data into the result
     #[napi]
-    pub async fn query_all(&self, sql: String) -> Result<Option<Row>> {
-        self.0
+    pub async fn query_all(&self, sql: String) -> Result<Vec<Row>> {
+        Ok(self
+            .0
             .query_all(&sql)
             .await
-            .map(|row| row.map(Row))
-            .collect()
+            .map_err(format_napi_error)?
+            .into_iter()
+            .map(|row| Row(row))
+            .collect())
     }
 
     /// Execute a SQL query, and return all rows.

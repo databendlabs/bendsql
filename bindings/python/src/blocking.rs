@@ -78,7 +78,7 @@ impl BlockingDatabendConnection {
         Ok(ret.map(Row::new))
     }
 
-    async fn query_all(&self, sql: &str) -> Result<Vec<Row>> {
+    pub fn query_all(&self, py: Python, sql: String) -> PyResult<Vec<Row>> {
         let this = self.0.clone();
         let rows = wait_for_future(py, async move {
             this.query_all(&sql).await.map_err(DriverError::new)
