@@ -289,6 +289,8 @@ pub enum TokenKind {
     BETWEEN,
     #[token("BIGINT", ignore(ascii_case))]
     BIGINT,
+    #[token("BITMAP", ignore(ascii_case))]
+    BITMAP,
     #[token("BOOL", ignore(ascii_case))]
     BOOL,
     #[token("BOOLEAN", ignore(ascii_case))]
@@ -481,6 +483,8 @@ pub enum TokenKind {
     FUSE,
     #[token("GET", ignore(ascii_case))]
     GET,
+    #[token("GEOMETRY", ignore(ascii_case))]
+    GEOMETRY,
     #[token("GLOBAL", ignore(ascii_case))]
     GLOBAL,
     #[token("GRAPH", ignore(ascii_case))]
