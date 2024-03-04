@@ -696,6 +696,7 @@ fn render_head(
         let fields = schema.fields();
         for (idx, col_index) in column_map.iter().enumerate() {
             if *col_index == -1 {
+                println!("{:?}", "333");
                 let cell = Cell::new("···").set_alignment(CellAlignment::Center);
                 header.push(cell);
                 aligns.push(CellAlignment::Center);
