@@ -187,6 +187,21 @@ impl Connection for RestAPIConnection {
         let stats = self.load_data(sql, reader, size, None, None).await?;
         Ok(stats)
     }
+
+    async fn begin(&self) -> Result<()> {
+        self.exec("BEGIN").await.unwrap();
+        Ok(())
+    }
+
+    async fn commit(&self) -> Result<()> {
+        self.exec("COMMIT").await.unwrap();
+        Ok(())
+    }
+
+    async fn rollback(&self) -> Result<()> {
+        self.exec("ROLLBACK").await.unwrap();
+        Ok(())
+    }
 }
 
 impl<'o> RestAPIConnection {
@@ -219,8 +234,8 @@ impl<'o> RestAPIConnection {
             ("record_delimiter", "\n"),
             ("skip_header", "0"),
         ]
-        .into_iter()
-        .collect()
+            .into_iter()
+            .collect()
     }
 
     fn default_copy_options() -> BTreeMap<&'o str, &'o str> {
@@ -228,7 +243,7 @@ impl<'o> RestAPIConnection {
     }
 }
 
-type PageFut = Pin<Box<dyn Future<Output = Result<QueryResponse>> + Send>>;
+type PageFut = Pin<Box<dyn Future<Output=Result<QueryResponse>> + Send>>;
 
 pub struct RestAPIRows {
     client: APIClient,

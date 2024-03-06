@@ -190,6 +190,10 @@ pub trait Connection: DynClone + Send + Sync {
         ))
     }
 
+    async fn begin(&self) -> Result<()>;
+    async fn commit(&self) -> Result<()>;
+    async fn rollback(&self) -> Result<()>;
+
     async fn get_files(&self, stage: &str, local_file: &str) -> Result<RowStatsIterator> {
         let mut total_count: usize = 0;
         let mut total_size: usize = 0;
