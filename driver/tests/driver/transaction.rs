@@ -16,19 +16,20 @@ use databend_driver::Client;
 
 use crate::common::DEFAULT_DSN;
 
-
 #[tokio::test]
 async fn test_commit() {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
 
-    conn.exec("CREATE OR REPLACE TABLE t(c int);").await.unwrap();
+    conn.exec("CREATE OR REPLACE TABLE t(c int);")
+        .await
+        .unwrap();
     conn.begin().await.unwrap();
     conn.exec("INSERT INTO t VALUES(1);").await.unwrap();
     let row = conn.query_row("SELECT * FROM t").await.unwrap();
     let row = row.unwrap();
-    let (val, ): (i32, ) = row.try_into().unwrap();
+    let (val,): (i32,) = row.try_into().unwrap();
     assert_eq!(val, 1);
     conn.commit().await.unwrap();
 }
@@ -39,17 +40,18 @@ async fn test_rollback() {
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
 
-    conn.exec("CREATE OR REPLACE TABLE t(c int);").await.unwrap();
+    conn.exec("CREATE OR REPLACE TABLE t(c int);")
+        .await
+        .unwrap();
     conn.begin().await.unwrap();
     conn.exec("INSERT INTO t VALUES(1);").await.unwrap();
     let row = conn.query_row("SELECT * FROM t").await.unwrap();
     let row = row.unwrap();
-    let (val, ): (i32, ) = row.try_into().unwrap();
+    let (val,): (i32,) = row.try_into().unwrap();
     assert_eq!(val, 1);
     conn.rollback().await.unwrap();
     let row = conn.query_row("SELECT * FROM t").await.unwrap();
     let row = row.unwrap();
-    let (val, ): (Option<i32>, ) = row.try_into().unwrap();
+    let (val,): (Option<i32>,) = row.try_into().unwrap();
     assert_eq!(val, None)
 }
-
