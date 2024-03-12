@@ -521,6 +521,7 @@ impl_try_from_number_value!(f64);
 
 impl TryFrom<Value> for NaiveDateTime {
     type Error = Error;
+    #[allow(deprecated)]
     fn try_from(val: Value) -> Result<Self> {
         match val {
             Value::Timestamp(i) => {
@@ -616,6 +617,7 @@ impl std::fmt::Display for Value {
 }
 
 // Compatible with Databend, inner values of nested types are quoted.
+#[allow(deprecated)]
 fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std::fmt::Result {
     match val {
         Value::Null => write!(f, "NULL"),
