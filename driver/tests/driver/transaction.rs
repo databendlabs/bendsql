@@ -32,9 +32,9 @@ async fn test_commit() {
     let (val,): (i32,) = row.try_into().unwrap();
     assert_eq!(val, 1);
     conn.commit().await.unwrap();
-   let row =  conn.query_row("select 1").await.unwrap();
+    let row = conn.query_row("select 1").await.unwrap();
     let row = row.unwrap();
-    println!("{:?}",row);
+    println!("{:?}", row);
 }
 
 #[tokio::test]
@@ -42,7 +42,6 @@ async fn test_rollback() {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
-
 
     conn.exec("CREATE OR REPLACE TABLE t(c int);")
         .await
