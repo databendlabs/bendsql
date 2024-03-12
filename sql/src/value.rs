@@ -138,6 +138,7 @@ impl Value {
 impl TryFrom<(&DataType, &str)> for Value {
     type Error = Error;
 
+    #[allow(deprecated)]
     fn try_from((t, v): (&DataType, &str)) -> Result<Self> {
         match t {
             DataType::Null => Ok(Self::Null),
