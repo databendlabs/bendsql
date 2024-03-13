@@ -635,6 +635,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
             let secs = i / 1_000_000;
             let nanos = ((i % 1_000_000) * 1000) as u32;
             let t = DateTime::from_timestamp(secs, nanos).unwrap_or_default();
+            let t = t.naive_utc();
             if raw {
                 write!(f, "{}", t)
             } else {
