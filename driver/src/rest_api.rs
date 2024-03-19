@@ -187,21 +187,6 @@ impl Connection for RestAPIConnection {
         let stats = self.load_data(sql, reader, size, None, None).await?;
         Ok(stats)
     }
-
-    async fn begin(&self) -> Result<()> {
-        self.exec("BEGIN").await.unwrap();
-        Ok(())
-    }
-
-    async fn commit(&self) -> Result<()> {
-        self.exec("COMMIT").await.unwrap();
-        Ok(())
-    }
-
-    async fn rollback(&self) -> Result<()> {
-        self.exec("ROLLBACK").await.unwrap();
-        Ok(())
-    }
 }
 
 impl<'o> RestAPIConnection {

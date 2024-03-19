@@ -143,21 +143,6 @@ impl Connection for FlightSQLConnection {
             "STREAM LOAD unavailable for FlightSQL".to_string(),
         ))
     }
-
-    async fn begin(&self) -> Result<()> {
-        self.exec("BEGIN").await.unwrap();
-        Ok(())
-    }
-
-    async fn commit(&self) -> Result<()> {
-        self.exec("COMMIT").await.unwrap();
-        Ok(())
-    }
-
-    async fn rollback(&self) -> Result<()> {
-        self.exec("ROLLBACK").await.unwrap();
-        Ok(())
-    }
 }
 
 impl FlightSQLConnection {
