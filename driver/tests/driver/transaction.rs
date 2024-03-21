@@ -55,6 +55,9 @@ async fn test_rollback() {
     assert_eq!(val, 1);
 
     conn.rollback().await.unwrap();
+
+    let client = Client::new(dsn.to_string());
+    let conn = client.get_conn().await.unwrap();
     let row = conn.query_row("SELECT * FROM t").await.unwrap();
     assert!(row.is_none());
 }
