@@ -191,17 +191,17 @@ pub trait Connection: DynClone + Send + Sync {
     }
 
     async fn begin(&self) -> Result<()> {
-        let _ = self.exec("BEGIN").await;
+        self.exec("BEGIN").await?;
         Ok(())
     }
 
     async fn commit(&self) -> Result<()> {
-        let _ = self.exec("COMMIT").await;
+        self.exec("COMMIT").await?;
         Ok(())
     }
 
     async fn rollback(&self) -> Result<()> {
-        let _ = self.exec("ROLLBACK").await;
+        self.exec("ROLLBACK").await?;
         Ok(())
     }
 
