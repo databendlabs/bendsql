@@ -32,9 +32,10 @@ async fn test_commit() {
     let (val,): (i32,) = row.try_into().unwrap();
     assert_eq!(val, 1);
     conn.commit().await.unwrap();
-    let row = conn.query_row("select 1").await.unwrap();
+    let row = conn.query_row("SELECT * FROM t").await.unwrap();
     let row = row.unwrap();
-    println!("{:?}", row);
+    let (val,): (i32,) = row.try_into().unwrap();
+    assert_eq!(val, 1);
 }
 
 #[tokio::test]
@@ -54,4 +55,6 @@ async fn test_rollback() {
     assert_eq!(val, 1);
 
     conn.rollback().await.unwrap();
+    let row = conn.query_row("SELECT * FROM t").await.unwrap();
+    assert!(row.is_none());
 }
