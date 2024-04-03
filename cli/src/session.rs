@@ -397,7 +397,7 @@ impl Session {
     ) -> Result<Option<ServerStats>> {
         let query = query.trim_end_matches(';').trim();
 
-        if is_repl && query.starts_with("!") {
+        if is_repl && query.starts_with('!') {
             return self.handle_commands(query).await;
         }
 
