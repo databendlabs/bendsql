@@ -131,7 +131,12 @@ impl std::fmt::Display for DataType {
             DataType::Date => write!(f, "Date"),
             DataType::Nullable(inner) => write!(f, "Nullable({})", inner),
             DataType::Array(inner) => write!(f, "Array({})", inner),
-            DataType::Map(inner) => write!(f, "Map({})", inner),
+            DataType::Map(inner) => match inner.as_ref() {
+                DataType::Tuple(tys) => {
+                    write!(f, "Map({}, {})", tys[0], tys[1])
+                }
+                _ => unreachable!(),
+            },
             DataType::Tuple(inner) => {
                 let inner = inner
                     .iter()
