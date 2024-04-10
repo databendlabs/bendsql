@@ -82,6 +82,12 @@ impl APIClient {
         Ok(client)
     }
 
+    pub fn reuse(&self) -> Self {
+        let mut client = self.clone();
+        client.session_state = Arc::new(Mutex::new(SessionState::default()));
+        client
+    }
+
     async fn from_dsn(dsn: &str) -> Result<Self> {
         let u = Url::parse(dsn)?;
         let mut client = Self::default();

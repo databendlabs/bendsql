@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use dyn_clone::DynClone;
@@ -44,7 +44,7 @@ static VERSION: Lazy<String> = Lazy::new(|| {
 pub struct Client {
     dsn: String,
     name: String,
-    conn: Option<Box<dyn Connection>>,
+    conn: Arc<Mutex<Option<Box<dyn Connection>>>>,
 }
 
 impl Client {
@@ -53,7 +53,7 @@ impl Client {
         Self {
             dsn,
             name,
-            conn: None,
+            conn: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -63,26 +63,30 @@ impl Client {
     }
 
     pub async fn get_conn(&self) -> Result<Box<dyn Connection>> {
-        if let Some(conn) = &self.conn {
-            return Ok(conn.clone());
+        if let Some(conn) = self.conn.lock().unwrap().as_ref() {
+            return Ok(conn.reuse());
         }
 
         let u = Url::parse(&self.dsn)?;
-        match u.scheme() {
+        let conn: Box<dyn Connection> = match u.scheme() {
             "databend" | "databend+http" | "databend+https" => {
                 let conn = RestAPIConnection::try_create(&self.dsn, self.name.clone()).await?;
-                Ok(Box::new(conn))
+                Box::new(conn) as _
             }
             #[cfg(feature = "flight-sql")]
             "databend+flight" | "databend+grpc" => {
                 let conn = FlightSQLConnection::try_create(&self.dsn, self.name.clone()).await?;
-                Ok(Box::new(conn))
+                Box::new(conn) as _
             }
-            _ => Err(Error::Parsing(format!(
-                "Unsupported scheme: {}",
-                u.scheme()
-            ))),
-        }
+            _ => {
+                return Err(Error::Parsing(format!(
+                    "Unsupported scheme: {}",
+                    u.scheme()
+                )))
+            }
+        };
+        *self.conn.lock().unwrap() = Some(conn.reuse());
+        Ok(conn)
     }
 }
 
@@ -99,6 +103,8 @@ pub type Reader = Box<dyn AsyncRead + Send + Sync + Unpin + 'static>;
 
 #[async_trait]
 pub trait Connection: DynClone + Send + Sync {
+    fn reuse(&self) -> Box<dyn Connection>;
+
     async fn info(&self) -> ConnectionInfo;
 
     async fn version(&self) -> Result<String> {

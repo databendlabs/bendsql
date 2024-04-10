@@ -47,6 +47,10 @@ pub struct FlightSQLConnection {
 
 #[async_trait]
 impl Connection for FlightSQLConnection {
+    fn reuse(&self) -> Box<dyn Connection> {
+        Box::new(self.clone())
+    }
+
     async fn info(&self) -> ConnectionInfo {
         ConnectionInfo {
             handler: "FlightSQL".to_string(),

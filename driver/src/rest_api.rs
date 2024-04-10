@@ -44,6 +44,12 @@ pub struct RestAPIConnection {
 
 #[async_trait]
 impl Connection for RestAPIConnection {
+    fn reuse(&self) -> Box<dyn Connection> {
+        Box::new(RestAPIConnection {
+            client: self.client.reuse(),
+        })
+    }
+
     async fn info(&self) -> ConnectionInfo {
         ConnectionInfo {
             handler: "RestAPI".to_string(),
