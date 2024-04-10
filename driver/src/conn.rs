@@ -44,12 +44,17 @@ static VERSION: Lazy<String> = Lazy::new(|| {
 pub struct Client {
     dsn: String,
     name: String,
+    conn: Option<Box<dyn Connection>>,
 }
 
 impl Client {
     pub fn new(dsn: String) -> Self {
         let name = format!("databend-driver-rust/{}", VERSION.as_str());
-        Self { dsn, name }
+        Self {
+            dsn,
+            name,
+            conn: None,
+        }
     }
 
     pub fn with_name(mut self, name: String) -> Self {
@@ -58,6 +63,10 @@ impl Client {
     }
 
     pub async fn get_conn(&self) -> Result<Box<dyn Connection>> {
+        if let Some(conn) = &self.conn {
+            return Ok(conn.clone());
+        }
+
         let u = Url::parse(&self.dsn)?;
         match u.scheme() {
             "databend" | "databend+http" | "databend+https" => {
