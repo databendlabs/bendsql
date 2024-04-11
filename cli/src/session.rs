@@ -230,9 +230,6 @@ impl Session {
         'F: loop {
             match rl.readline(&self.prompt().await) {
                 Ok(line) => {
-                    if line == "exit" {
-                        break;
-                    }
                     let queries = self.append_query(&line);
                     for query in queries {
                         let _ = rl.add_history_entry(&query);
