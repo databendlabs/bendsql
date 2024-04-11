@@ -199,7 +199,7 @@ async fn select_array() {
             ]),
             Value::Array(vec![
                 Value::Number(NumberValue::Decimal128(
-                    10,
+                    1000,
                     DecimalSize {
                         precision: 4,
                         scale: 2
