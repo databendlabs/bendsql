@@ -963,8 +963,10 @@ impl ValueDecoder {
         reader: &mut Cursor<R>,
     ) -> Result<Value> {
         let buf = reader.fill_buf()?;
-        let (n_in, n_out) = collect_number(buf);
-        let v = unsafe { std::str::from_utf8_unchecked(&buf[..n_out]) };
+        // parser decimal need fractional part.
+        // 10.00 and 10 is different value.
+        let (n_in, _) = collect_number(buf);
+        let v = unsafe { std::str::from_utf8_unchecked(&buf[..n_in]) };
         let d = parse_decimal(v, *size)?;
         reader.consume(n_in);
         Ok(Value::Number(d))
