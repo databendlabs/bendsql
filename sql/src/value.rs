@@ -891,8 +891,8 @@ impl ValueDecoder {
         if self.match_bytes(reader, NULL_VALUE.as_bytes()) {
             Ok(Value::Null)
         } else {
-            let err_msg = format!("Incorrect null value, expect {}", NULL_VALUE,);
-            Err(ConvertError::new("null", err_msg).into())
+            let buf = reader.fill_buf()?;
+            Err(ConvertError::new("null", String::from_utf8_lossy(buf).to_string()).into())
         }
     }
 
@@ -902,11 +902,8 @@ impl ValueDecoder {
         } else if self.match_bytes(reader, FALSE_VALUE.as_bytes()) {
             Ok(Value::Boolean(false))
         } else {
-            let err_msg = format!(
-                "Incorrect boolean value, expect {} or {}",
-                TRUE_VALUE, FALSE_VALUE
-            );
-            Err(ConvertError::new("boolean", err_msg).into())
+            let buf = reader.fill_buf()?;
+            Err(ConvertError::new("boolean", String::from_utf8_lossy(buf).to_string()).into())
         }
     }
 
