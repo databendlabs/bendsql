@@ -19,7 +19,8 @@ use arrow::datatypes::{i256, ArrowNativeTypeOp};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
 
 use crate::cursor_ext::{
-    collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt, ReadNumberExt,
+    collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
+    ReadNumberExt,
 };
 
 use crate::{
@@ -360,12 +361,12 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
             }
 
             ArrowDataType::Binary => match array.as_any().downcast_ref::<BinaryArray>() {
-                Some(array) => Ok(Value::String(String::from_utf8(array.value(seq).to_vec())?)),
+                Some(array) => Ok(Value::Binary(array.value(seq).to_vec())),
                 None => Err(ConvertError::new("binary", format!("{:?}", array)).into()),
             },
             ArrowDataType::LargeBinary | ArrowDataType::FixedSizeBinary(_) => {
                 match array.as_any().downcast_ref::<LargeBinaryArray>() {
-                    Some(array) => Ok(Value::String(String::from_utf8(array.value(seq).to_vec())?)),
+                    Some(array) => Ok(Value::Binary(array.value(seq).to_vec())),
                     None => Err(ConvertError::new("large binary", format!("{:?}", array)).into()),
                 }
             }
@@ -979,9 +980,11 @@ impl ValueDecoder {
     }
 
     fn read_binary<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
-        let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
-        Ok(Value::Binary(buf))
+        let buf = reader.fill_buf()?;
+        let n = collect_binary_number(buf);
+        let v = buf[..n].to_vec();
+        reader.consume(n);
+        Ok(Value::Binary(hex::decode(v)?))
     }
 
     fn read_date<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {

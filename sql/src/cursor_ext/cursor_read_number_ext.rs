@@ -25,6 +25,23 @@ pub trait ReadNumberExt {
     fn read_float_text<T: FromLexical>(&mut self) -> Result<T>;
 }
 
+pub fn collect_binary_number(buffer: &[u8]) -> usize {
+    let mut index = 0;
+    let len = buffer.len();
+
+    for _ in 0..len {
+        match buffer[index] {
+            b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => {
+                index += 1;
+            }
+            _ => {
+                break;
+            }
+        }
+    }
+    index
+}
+
 pub fn collect_number(buffer: &[u8]) -> (usize, usize) {
     let mut has_number = false;
     let mut index = 0;
