@@ -56,7 +56,7 @@ async def _(context):
 async def _(context, input, output):
     row = await context.conn.query_row(f"SELECT '{input}'")
     value = row.values()[0]
-    assert output == value
+    assert output == value, f"output: {output}"
 
 
 @then("Select types should be expected native types")
@@ -64,25 +64,27 @@ async def _(context, input, output):
 async def _(context):
     # NumberValue::Decimal
     row = await context.conn.query_row("SELECT 15.7563::Decimal(8,4), 2.0+3.0")
-    assert row.values() == (Decimal("15.7563"), Decimal("5.0"))
+    assert row.values() == (Decimal("15.7563"), Decimal("5.0")), f"row: {row}"
 
     # Binary
     row = await context.conn.query_row("select to_binary('xyz')")
-    assert row.values() == (b"xyz",)
+    assert row.values() == (b"xyz",), f"row: {row}"
 
     # Array
     row = await context.conn.query_row("select [10::Decimal(15,2), 1.1+2.3]")
-    assert row.values() == ([Decimal("10.00"), Decimal("3.40")],)
+    assert row.values() == ([Decimal("10.00"), Decimal("3.40")],), f"row: {row}"
 
     # Map
     row = await context.conn.query_row("select {'xx':to_date('2020-01-01')}")
-    assert row.values() == ({"xx": date(2020, 1, 1)},)
+    assert row.values() == ({"xx": date(2020, 1, 1)},), f"row: {row}"
 
     # Tuple
     row = await context.conn.query_row(
         "select (10, '20', to_datetime('2024-04-16 12:34:56.789'))"
     )
-    assert row.values() == ((10, "20", datetime(2024, 4, 16, 12, 34, 56, 789)),)
+    assert row.values() == (
+        (10, "20", datetime(2024, 4, 16, 12, 34, 56, 789)),
+    ), f"row: {row}"
 
 
 @then("Select numbers should iterate all rows")
@@ -93,7 +95,7 @@ async def _(context):
     async for row in rows:
         ret.append(row.values()[0])
     expected = [0, 1, 2, 3, 4]
-    assert ret == expected
+    assert ret == expected, f"ret: {ret}"
 
 
 @then("Insert and Select should be equal")
@@ -116,7 +118,7 @@ async def _(context):
         (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
         (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
-    assert ret == expected
+    assert ret == expected, f"ret: {ret}"
 
 
 @then("Stream load and Select should be equal")
@@ -128,8 +130,8 @@ async def _(context):
         ["-3", "3", "3.0", "3", "2", "2016-04-04", "2016-04-04T11:30:00Z"],
     ]
     progress = await context.conn.stream_load("INSERT INTO test VALUES", values)
-    assert progress.write_rows == 3
-    assert progress.write_bytes == 185
+    assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
+    assert progress.write_bytes == 185, f"progress.write_bytes: {progress.write_bytes}"
 
     rows = await context.conn.query_iter("SELECT * FROM test")
     ret = []
@@ -140,4 +142,4 @@ async def _(context):
         (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
         (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
-    assert ret == expected
+    assert ret == expected, f"ret: {ret}"
