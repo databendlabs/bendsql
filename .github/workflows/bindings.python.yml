@@ -26,7 +26,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: ./.github/actions/setup
         with:
-          cache-key: bindings-python
+          cache-key: bindings-python-integration
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -69,6 +69,11 @@ jobs:
           else
             echo "BUILD_ARGS=--release --strip --out dist" >> $GITHUB_OUTPUT
           fi
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup
+        with:
+          cache-key: bindings-python-${{ matrix.os }}-${{ matrix.arch }}
+          target: ${{ matrix.target }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
