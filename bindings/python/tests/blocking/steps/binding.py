@@ -59,21 +59,24 @@ def _(context, input, output):
 async def _(context):
     # NumberValue::Decimal
     row = context.conn.query_row("SELECT 15.7563::Decimal(8,4), 2.0+3.0")
-    assert row.values() == (Decimal("15.7563"), Decimal("5.0")), f"row: {row.values()}"
+    assert row.values() == (
+        Decimal("15.7563"),
+        Decimal("5.0"),
+    ), f"Decimal: {row.values()}"
 
     # Binary
     row = context.conn.query_row("select to_binary('xyz')")
-    assert row.values() == (b"xyz",), f"row: {row.values()}"
+    assert row.values() == (b"xyz",), f"Binary: {row.values()}"
 
     # Array
     row = context.conn.query_row("select [10::Decimal(15,2), 1.1+2.3]")
     assert row.values() == (
         [Decimal("10.00"), Decimal("3.40")],
-    ), f"row: {row.values()}"
+    ), f"Array: {row.values()}"
 
     # Map
     row = context.conn.query_row("select {'xx':to_date('2020-01-01')}")
-    assert row.values() == ({"xx": date(2020, 1, 1)},), f"row: {row.values()}"
+    assert row.values() == ({"xx": date(2020, 1, 1)},), f"Map: {row.values()}"
 
     # Tuple
     row = context.conn.query_row(
@@ -81,7 +84,7 @@ async def _(context):
     )
     assert row.values() == (
         (10, "20", datetime(2024, 4, 16, 12, 34, 56, 789)),
-    ), f"row: {row.values()}"
+    ), f"Tuple: {row.values()}"
 
 
 @then("Select numbers should iterate all rows")
