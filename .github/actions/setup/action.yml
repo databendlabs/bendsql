@@ -20,7 +20,7 @@ runs:
         targets: ${{ inputs.target }}
 
     - name: Setup sccache
-      uses: mozilla-actions/sccache-action@v0.0.3
+      uses: mozilla-actions/sccache-action@v0.0.4
 
     - name: Cache Cargo
       uses: actions/cache@v3
