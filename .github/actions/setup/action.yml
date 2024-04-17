@@ -23,7 +23,7 @@ runs:
       uses: mozilla-actions/sccache-action@v0.0.4
 
     - name: Cache Cargo
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/registry/
