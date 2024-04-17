@@ -84,7 +84,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: bindings-python-${{ matrix.os }}-${{ matrix.arch }}
           path: bindings/python/dist/*.whl
 
   publish:
@@ -100,6 +100,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
+        with:
+          path: bindings/python/artifacts
+          pattern: bindings-python-*
+          merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+          packages-dir: bindings/python/artifacts
