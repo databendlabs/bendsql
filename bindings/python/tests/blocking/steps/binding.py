@@ -83,7 +83,7 @@ async def _(context):
         "select (10, '20', to_datetime('2024-04-16 12:34:56.789'))"
     )
     assert row.values() == (
-        (10, "20", datetime(2024, 4, 16, 12, 34, 56, 789)),
+        (10, "20", datetime(2024, 4, 16, 12, 34, 56, 789000)),
     ), f"Tuple: {row.values()}"
 
 
