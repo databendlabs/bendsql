@@ -64,19 +64,21 @@ async def _(context, input, output):
 async def _(context):
     # NumberValue::Decimal
     row = await context.conn.query_row("SELECT 15.7563::Decimal(8,4), 2.0+3.0")
-    assert row.values() == (Decimal("15.7563"), Decimal("5.0")), f"row: {row}"
+    assert row.values() == (Decimal("15.7563"), Decimal("5.0")), f"row: {row.values()}"
 
     # Binary
     row = await context.conn.query_row("select to_binary('xyz')")
-    assert row.values() == (b"xyz",), f"row: {row}"
+    assert row.values() == (b"xyz",), f"row: {row.values()}"
 
     # Array
     row = await context.conn.query_row("select [10::Decimal(15,2), 1.1+2.3]")
-    assert row.values() == ([Decimal("10.00"), Decimal("3.40")],), f"row: {row}"
+    assert row.values() == (
+        [Decimal("10.00"), Decimal("3.40")],
+    ), f"row: {row.values()}"
 
     # Map
     row = await context.conn.query_row("select {'xx':to_date('2020-01-01')}")
-    assert row.values() == ({"xx": date(2020, 1, 1)},), f"row: {row}"
+    assert row.values() == ({"xx": date(2020, 1, 1)},), f"row: {row.values()}"
 
     # Tuple
     row = await context.conn.query_row(
@@ -84,7 +86,7 @@ async def _(context):
     )
     assert row.values() == (
         (10, "20", datetime(2024, 4, 16, 12, 34, 56, 789)),
-    ), f"row: {row}"
+    ), f"row: {row.values()}"
 
 
 @then("Select numbers should iterate all rows")
