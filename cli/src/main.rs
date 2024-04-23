@@ -271,7 +271,10 @@ pub async fn main() -> Result<()> {
             ConnectionArgs {
                 host: config.connection.host.clone(),
                 port: config.connection.port,
-                user: config.connection.user.clone(),
+                user: args
+                    .user
+                    .clone()
+                    .unwrap_or_else(|| config.connection.user.clone()),
                 password: SensitiveString::from(""),
                 database: config.connection.database.clone(),
                 flight: args.flight,

@@ -485,7 +485,7 @@ fn compute_render_widths(
 }
 
 /// Convert a series of rows into a table
-fn create_table(
+pub fn create_table(
     schema: SchemaRef,
     results: &[Row],
     replace_newline: bool,
