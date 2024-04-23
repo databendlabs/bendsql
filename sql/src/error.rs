@@ -126,12 +126,6 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<std::str::Utf8Error> for Error {
-    fn from(e: std::str::Utf8Error) -> Self {
-        Error::Parsing(e.to_string())
-    }
-}
-
 impl From<glob::GlobError> for Error {
     fn from(e: glob::GlobError) -> Self {
         Error::IO(e.to_string())
@@ -162,6 +156,12 @@ impl From<tonic::transport::Error> for Error {
 impl From<arrow_schema::ArrowError> for Error {
     fn from(e: arrow_schema::ArrowError) -> Self {
         Error::Arrow(e)
+    }
+}
+
+impl From<std::str::Utf8Error> for Error {
+    fn from(e: std::str::Utf8Error) -> Self {
+        Error::Parsing(e.to_string())
     }
 }
 
