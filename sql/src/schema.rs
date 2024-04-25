@@ -182,7 +182,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
                 if desc.args.is_empty() {
                     DataType::Null
                 } else {
-                    if desc.args.len() != 1 {
+                    if desc.args.len() == 0 {
                         return Err(Error::Parsing(
                             "Nullable type must have one argument".to_string(),
                         ));
@@ -223,7 +223,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
             "Timestamp" => DataType::Timestamp,
             "Date" => DataType::Date,
             "Nullable" => {
-                if desc.args.len() != 1 {
+                if desc.args.len() == 0 {
                     return Err(Error::Parsing(
                         "Nullable type must have one argument".to_string(),
                     ));
