@@ -36,9 +36,15 @@ use tokio_stream::StreamExt;
 use crate::ast::{TokenKind, Tokenizer};
 use crate::config::Settings;
 use crate::config::TimeOption;
+use crate::display::create_table;
 use crate::display::{format_write_progress, ChunkDisplay, FormatDisplay};
 use crate::helper::CliHelper;
 use crate::VERSION;
+
+use databend_driver::DataType;
+use databend_driver::Field;
+use databend_driver::Row;
+use databend_driver::Schema;
 
 static PROMPT_SQL: &str = "select name from system.tables union all select name from system.columns union all select name from system.databases union all select name from system.functions";
 
@@ -469,6 +475,30 @@ impl Session {
             "!configs" => {
                 println!("{:#?}", self.settings);
             }
+            "!options" => {
+                let options: Vec<Row> = self.settings.clone().try_into().unwrap();
+                let schema = Schema::from_vec(vec![
+                    Field {
+                        name: "name".to_string(),
+                        data_type: DataType::String,
+                    },
+                    Field {
+                        name: "value".to_string(),
+                        data_type: DataType::String,
+                    },
+                ]);
+                println!(
+                    "{}",
+                    create_table(
+                        Arc::new(schema),
+                        &options,
+                        self.settings.replace_newline,
+                        self.settings.max_display_rows,
+                        self.settings.max_width,
+                        self.settings.max_col_width
+                    )?
+                );
+            }
             other => {
                 if other.starts_with("!set") {
                     let query = query[4..].split_whitespace().collect::<Vec<_>>();
@@ -478,8 +508,11 @@ impl Session {
                         ));
                     }
                     self.settings.inject_ctrl_cmd(query[0], query[1])?;
-                } else if other.starts_with("!source") {
-                    let query = query[7..].trim();
+                } else if other.starts_with("!source") || other.starts_with("!load") {
+                    let query = query
+                        .strip_prefix("!source")
+                        .or_else(|| query.strip_prefix("!load"))
+                        .unwrap();
                     let path = Path::new(query);
                     if !path.exists() {
                         return Err(anyhow!("File not found: {}", query));

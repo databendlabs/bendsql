@@ -21,6 +21,11 @@ use anyhow::Result;
 use clap::ValueEnum;
 use serde::Deserialize;
 
+use databend_driver::NumberValue;
+use databend_driver::Row;
+use databend_driver::Value;
+use databend_driver::{Error, Result as DriverResult};
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -97,6 +102,67 @@ pub struct Settings {
     pub multi_line: bool,
     /// whether replace '\n' with '\\n', default true.
     pub replace_newline: bool,
+}
+
+impl TryFrom<Settings> for Vec<Row> {
+    type Error = Error;
+
+    fn try_from(settings: Settings) -> DriverResult<Self> {
+        Ok(vec![
+            Row::from_vec(vec![
+                Value::String("display_pretty_sql".to_string()),
+                Value::Boolean(settings.display_pretty_sql),
+            ]),
+            Row::from_vec(vec![
+                Value::String("prompt".to_string()),
+                Value::String(settings.prompt.clone()),
+            ]),
+            Row::from_vec(vec![
+                Value::String("progress_color".to_string()),
+                Value::String(settings.progress_color.clone()),
+            ]),
+            Row::from_vec(vec![
+                Value::String("show_progress".to_string()),
+                Value::Boolean(settings.show_progress),
+            ]),
+            Row::from_vec(vec![
+                Value::String("show_stats".to_string()),
+                Value::Boolean(settings.show_stats),
+            ]),
+            Row::from_vec(vec![
+                Value::String("output_format".to_string()),
+                Value::String(format!("{:?}", settings.output_format)),
+            ]),
+            Row::from_vec(vec![
+                Value::String("quote_style".to_string()),
+                Value::String(format!("{:?}", settings.quote_style)),
+            ]),
+            Row::from_vec(vec![
+                Value::String("expand".to_string()),
+                Value::String(format!("{:?}", settings.expand)),
+            ]),
+            Row::from_vec(vec![
+                Value::String("multi_line".to_string()),
+                Value::Boolean(settings.multi_line),
+            ]),
+            Row::from_vec(vec![
+                Value::String("replace_newline".to_string()),
+                Value::Boolean(settings.replace_newline),
+            ]),
+            Row::from_vec(vec![
+                Value::String("max_display_rows".to_string()),
+                Value::Number(NumberValue::Int64(settings.max_display_rows as i64)),
+            ]),
+            Row::from_vec(vec![
+                Value::String("max_col_width".to_string()),
+                Value::Number(NumberValue::Int64(settings.max_col_width as i64)),
+            ]),
+            Row::from_vec(vec![
+                Value::String("max_width".to_string()),
+                Value::Number(NumberValue::Int64(settings.max_width as i64)),
+            ]),
+        ])
+    }
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize)]
