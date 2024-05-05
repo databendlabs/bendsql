@@ -33,8 +33,13 @@ case $TEST_HANDLER in
 	;;
 "http")
 	echo "==> Testing REST API handler"
-	export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on"
 	export BENDSQL="${CARGO_TARGET_DIR}/debug/bendsql"
+	
+	echo "create user if not exists databend identified by 'databend'" |  bendsql -dsn="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on"
+	export BENDSQL_NEW="${BENDSQL} --user databend --password databend --host ${DATABEND_HOST} --port 8000"
+	$BENDSQL_NEW --query="select 1"
+	
+	export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on"
 	;;
 *)
 	echo "Usage: $0 [flight|http]"
