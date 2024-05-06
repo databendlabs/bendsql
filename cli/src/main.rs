@@ -236,7 +236,7 @@ pub async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let conn_args = match args.dsn {
+    let mut conn_args = match args.dsn {
         Some(dsn) => {
             if args.host.is_some() {
                 eprintln!("warning: --host is ignored when --dsn is set");
@@ -264,36 +264,40 @@ pub async fn main() -> Result<()> {
 
             let user = args.user.unwrap_or_else(|| config.connection.user.clone());
             let password = args.password.unwrap_or_else(|| SensitiveString::from(""));
-            let mut database = config.connection.database.clone();
-            if args.database.is_some() {
-                database = args.database;
-            }
-            let mut connection_args = config.connection.args.clone();
-            if !args.tls {
-                connection_args.insert("sslmode".to_string(), "disable".to_string());
-            }
-
-            // override args if specified in command line
-            for (k, v) in args.set {
-                connection_args.insert(k, v);
-            }
-
-            // override role if specified in command line
-            if let Some(role) = args.role {
-                connection_args.insert("role".to_string(), role);
-            }
 
             ConnectionArgs {
                 host,
                 port,
                 user,
                 password,
-                database,
+                database: config.connection.database.clone(),
                 flight: args.flight,
-                args: connection_args,
+                args: config.connection.args.clone(),
             }
         }
     };
+
+    // Override connection args with command line options
+    {
+        if args.database.is_some() {
+            conn_args.database = args.database.clone();
+        }
+        if !args.tls {
+            conn_args
+                .args
+                .insert("sslmode".to_string(), "disable".to_string());
+        }
+
+        // override args if specified in command line
+        for (k, v) in args.set {
+            conn_args.args.insert(k, v);
+        }
+
+        // override role if specified in command line
+        if let Some(role) = args.role {
+            conn_args.args.insert("role".to_string(), role);
+        }
+    }
 
     let dsn = conn_args.get_dsn()?;
     let mut settings = Settings::default();
