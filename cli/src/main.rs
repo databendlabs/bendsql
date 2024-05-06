@@ -237,7 +237,7 @@ pub async fn main() -> Result<()> {
     }
 
     let mut conn_args = match args.dsn {
-        Some(dsn) => {
+        Some(ref dsn) => {
             if args.host.is_some() {
                 eprintln!("warning: --host is ignored when --dsn is set");
             }
