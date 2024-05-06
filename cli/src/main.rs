@@ -280,17 +280,21 @@ pub async fn main() -> Result<()> {
     // Override connection args with command line options
     {
         if args.database.is_some() {
-            conn_args.database = args.database.clone();
-        }
-        if !args.tls {
-            conn_args
-                .args
-                .insert("sslmode".to_string(), "disable".to_string());
+            conn_args.database.clone_from(&args.database);
         }
 
-        // override args if specified in command line
-        for (k, v) in args.set {
-            conn_args.args.insert(k, v);
+        // override only if args.dsn is none
+        if args.dsn.is_none() {
+            if !args.tls {
+                conn_args
+                    .args
+                    .insert("sslmode".to_string(), "disable".to_string());
+            }
+
+            // override args if specified in command line
+            for (k, v) in args.set {
+                conn_args.args.insert(k, v);
+            }
         }
 
         // override role if specified in command line
