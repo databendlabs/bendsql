@@ -50,7 +50,7 @@ jobs:
 
   build:
     needs: integration
-    name: build-${{ matrix.os }}-${{ matrix.arch }}
+    name: build-${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
@@ -67,7 +67,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: ./.github/actions/setup
         with:
-          cache-key: bindings-nodejs-${{ matrix.os }}-${{ matrix.arch }}
+          cache-key: bindings-nodejs-${{ matrix.target }}
           target: ${{ matrix.target }}
       - name: Setup node
         uses: actions/setup-node@v4
