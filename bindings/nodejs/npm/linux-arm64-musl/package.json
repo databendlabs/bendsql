@@ -1,5 +1,5 @@
 {
-  "name": "@databend-driver/lib-linux-arm64-gnu",
+  "name": "@databend-driver/lib-linux-arm64-musl",
   "repository": "https://github.com/datafuselabs/bendsql.git",
   "version": "0.17.2",
   "os": [
@@ -8,15 +8,15 @@
   "cpu": [
     "arm64"
   ],
-  "main": "databend-driver.linux-arm64-gnu.node",
+  "main": "databend-driver.linux-arm64-musl.node",
   "files": [
-    "databend-driver.linux-arm64-gnu.node"
+    "databend-driver.linux-arm64-musl.node"
   ],
   "license": "Apache-2.0",
   "engines": {
     "node": ">= 10"
   },
   "libc": [
-    "glibc"
+    "musl"
   ]
 }
