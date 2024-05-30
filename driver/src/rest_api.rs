@@ -14,14 +14,17 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
+use std::io::Cursor;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use async_compression::tokio::write::ZstdEncoder;
 use async_trait::async_trait;
 use log::info;
 use tokio::fs::File;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_stream::Stream;
 
 use databend_client::error::Error as ClientError;
@@ -76,27 +79,6 @@ impl Connection for RestAPIConnection {
         Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
     }
 
-    async fn query_row(&self, sql: &str) -> Result<Option<Row>> {
-        info!("query row: {}", sql);
-        let resp = self.client.start_query(sql).await?;
-        let resp = self.wait_for_data(resp).await?;
-        match resp.kill_uri {
-            Some(uri) => self
-                .client
-                .kill_query(&resp.id, &uri)
-                .await
-                .map_err(|e| e.into()),
-            None => Err(Error::InvalidResponse("kill_uri is empty".to_string())),
-        }?;
-        let schema = resp.schema.try_into()?;
-        if resp.data.is_empty() {
-            Ok(None)
-        } else {
-            let row = Row::try_from((Arc::new(schema), &resp.data[0]))?;
-            Ok(Some(row))
-        }
-    }
-
     async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse> {
         info!("get presigned url: {} {}", operation, stage);
         let sql = format!("PRESIGN {} {}", operation, stage);
@@ -134,10 +116,33 @@ impl Connection for RestAPIConnection {
             .timestamp_nanos_opt()
             .ok_or_else(|| Error::IO("Failed to get current timestamp".to_string()))?;
         let stage = format!("@~/client/load/{}", now);
-        self.upload_to_stage(&stage, data, size).await?;
-        let file_format_options =
+
+        let mut file_format_options =
             file_format_options.unwrap_or_else(Self::default_file_format_options);
         let copy_options = copy_options.unwrap_or_else(Self::default_copy_options);
+
+        let mut data = data;
+        let mut size = size;
+
+        if !file_format_options.contains_key("compression") {
+            let mut buffer = Vec::new();
+            let real_size = data.read_to_end(&mut buffer).await?;
+            if real_size != size as usize && size != 0 {
+                return Err(Error::IO(format!(
+                    "Failed to read all data, expected: {}, read: {}",
+                    size, real_size
+                )));
+            }
+            let mut encoder = ZstdEncoder::new(Vec::new());
+            encoder.write_all(&buffer).await?;
+            encoder.shutdown().await?;
+            file_format_options.insert("compression", "ZSTD");
+            let output = encoder.into_inner();
+            size = output.len() as u64;
+            data = Box::new(Cursor::new(output))
+        }
+
+        self.upload_to_stage(&stage, data, size).await?;
         let resp = self
             .client
             .insert_with_stage(sql, &stage, file_format_options, copy_options)
@@ -196,25 +201,6 @@ impl<'o> RestAPIConnection {
         Ok(Self { client })
     }
 
-    async fn wait_for_data(&self, pre: QueryResponse) -> Result<QueryResponse> {
-        if !pre.data.is_empty() {
-            return Ok(pre);
-        }
-        // preserve schema since it is not included in the final response in old servers
-        let pre_schema = pre.schema.clone();
-        let mut result = pre;
-        while let Some(next_uri) = result.next_uri {
-            result = self.client.query_page(&result.id, &next_uri).await?;
-            if !result.data.is_empty() {
-                break;
-            }
-        }
-        if result.schema.is_empty() {
-            result.schema = pre_schema;
-        }
-        Ok(result)
-    }
-
     async fn wait_for_schema(&self, pre: QueryResponse) -> Result<QueryResponse> {
         if !pre.data.is_empty() || !pre.schema.is_empty() {
             return Ok(pre);
@@ -252,6 +238,7 @@ pub struct RestAPIRows {
     client: APIClient,
     schema: SchemaRef,
     data: VecDeque<Vec<String>>,
+    stats: Option<ServerStats>,
     query_id: String,
     next_uri: Option<String>,
     next_page: Option<PageFut>,
@@ -266,6 +253,7 @@ impl RestAPIRows {
             next_uri: resp.next_uri,
             schema: Arc::new(schema.clone()),
             data: resp.data.into(),
+            stats: Some(ServerStats::from(resp.stats)),
             next_page: None,
         };
         Ok((schema, rows))
@@ -276,6 +264,9 @@ impl Stream for RestAPIRows {
     type Item = Result<RowWithStats>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(ss) = self.stats.take() {
+            return Poll::Ready(Some(Ok(RowWithStats::Stats(ss))));
+        }
         if let Some(row) = self.data.pop_front() {
             let row = Row::try_from((self.schema.clone(), &row))?;
             return Poll::Ready(Some(Ok(RowWithStats::Row(row))));
@@ -290,8 +281,8 @@ impl Stream for RestAPIRows {
                     self.query_id = resp.id;
                     self.next_uri = resp.next_uri;
                     self.next_page = None;
-                    let ss = ServerStats::from(resp.stats);
-                    Poll::Ready(Some(Ok(RowWithStats::Stats(ss))))
+                    self.stats = Some(ServerStats::from(resp.stats));
+                    self.poll_next(cx)
                 }
                 Poll::Ready(Err(e)) => {
                     self.next_page = None;

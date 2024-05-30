@@ -12,8 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::io::BufRead;
+use std::io::Cursor;
+
 use arrow::datatypes::{i256, ArrowNativeTypeOp};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
+
+use crate::cursor_ext::{
+    collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
+    ReadNumberExt,
+};
 
 use crate::{
     error::{ConvertError, Error, Result},
@@ -28,6 +38,8 @@ use std::fmt::Write;
 // Thu 1970-01-01 is R.D. 719163
 const DAYS_FROM_CE: i32 = 719_163;
 const NULL_VALUE: &str = "NULL";
+const TRUE_VALUE: &str = "1";
+const FALSE_VALUE: &str = "0";
 
 #[cfg(feature = "flight-sql")]
 use {
@@ -146,7 +158,6 @@ impl TryFrom<(&DataType, &str)> for Value {
             DataType::Boolean => Ok(Self::Boolean(v == "1")),
             DataType::Binary => Ok(Self::Binary(hex::decode(v)?)),
             DataType::String => Ok(Self::String(v.to_string())),
-
             DataType::Number(NumberDataType::Int8) => {
                 Ok(Self::Number(NumberValue::Int8(v.parse()?)))
             }
@@ -177,7 +188,6 @@ impl TryFrom<(&DataType, &str)> for Value {
             DataType::Number(NumberDataType::Float64) => {
                 Ok(Self::Number(NumberValue::Float64(v.parse()?)))
             }
-
             DataType::Decimal(DecimalDataType::Decimal128(size)) => {
                 let d = parse_decimal(v, *size)?;
                 Ok(Self::Number(d))
@@ -186,19 +196,23 @@ impl TryFrom<(&DataType, &str)> for Value {
                 let d = parse_decimal(v, *size)?;
                 Ok(Self::Number(d))
             }
-
             DataType::Timestamp => Ok(Self::Timestamp(
-                chrono::NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.6f")?
+                NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.6f")?
                     .and_utc()
                     .timestamp_micros(),
             )),
             DataType::Date => Ok(Self::Date(
-                chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE,
+                NaiveDate::parse_from_str(v, "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE,
             )),
             DataType::Bitmap => Ok(Self::Bitmap(v.to_string())),
             DataType::Variant => Ok(Self::Variant(v.to_string())),
             DataType::Geometry => Ok(Self::Geometry(v.to_string())),
 
+            DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) => {
+                let mut reader = Cursor::new(v);
+                let decoder = ValueDecoder {};
+                decoder.read_field(t, &mut reader)
+            }
             DataType::Nullable(inner) => {
                 if v == NULL_VALUE {
                     Ok(Self::Null)
@@ -206,9 +220,6 @@ impl TryFrom<(&DataType, &str)> for Value {
                     Self::try_from((inner.as_ref(), v))
                 }
             }
-
-            // TODO:(everpcpc) handle complex types
-            _ => Ok(Self::String(v.to_string())),
         }
     }
 }
@@ -352,12 +363,12 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
             }
 
             ArrowDataType::Binary => match array.as_any().downcast_ref::<BinaryArray>() {
-                Some(array) => Ok(Value::String(String::from_utf8(array.value(seq).to_vec())?)),
+                Some(array) => Ok(Value::Binary(array.value(seq).to_vec())),
                 None => Err(ConvertError::new("binary", format!("{:?}", array)).into()),
             },
             ArrowDataType::LargeBinary | ArrowDataType::FixedSizeBinary(_) => {
                 match array.as_any().downcast_ref::<LargeBinaryArray>() {
-                    Some(array) => Ok(Value::String(String::from_utf8(array.value(seq).to_vec())?)),
+                    Some(array) => Ok(Value::Binary(array.value(seq).to_vec())),
                     None => Err(ConvertError::new("large binary", format!("{:?}", array)).into()),
                 }
             }
@@ -463,6 +474,9 @@ impl TryFrom<Value> for String {
         match val {
             Value::String(s) => Ok(s),
             Value::Bitmap(s) => Ok(s),
+            Value::Number(NumberValue::Decimal128(v, s)) => Ok(display_decimal_128(v, s.scale)),
+            Value::Number(NumberValue::Decimal256(v, s)) => Ok(display_decimal_256(v, s.scale)),
+            Value::Geometry(s) => Ok(s),
             Value::Variant(s) => Ok(s),
             _ => Err(ConvertError::new("string", format!("{:?}", val)).into()),
         }
@@ -526,8 +540,7 @@ impl TryFrom<Value> for NaiveDateTime {
             Value::Timestamp(i) => {
                 let secs = i / 1_000_000;
                 let nanos = ((i % 1_000_000) * 1000) as u32;
-                let t = DateTime::from_timestamp(secs, nanos);
-                match t {
+                match DateTime::from_timestamp(secs, nanos) {
                     Some(t) => Ok(t.naive_utc()),
                     None => Err(ConvertError::new("NaiveDateTime", "".to_string()).into()),
                 }
@@ -543,8 +556,7 @@ impl TryFrom<Value> for NaiveDate {
         match val {
             Value::Date(i) => {
                 let days = i + DAYS_FROM_CE;
-                let d = NaiveDate::from_num_days_from_ce_opt(days);
-                match d {
+                match NaiveDate::from_num_days_from_ce_opt(days) {
                     Some(d) => Ok(d),
                     None => Err(ConvertError::new("NaiveDate", "".to_string()).into()),
                 }
@@ -553,6 +565,130 @@ impl TryFrom<Value> for NaiveDate {
         }
     }
 }
+
+impl<V> TryFrom<Value> for Vec<V>
+where
+    V: TryFrom<Value, Error = Error>,
+{
+    type Error = Error;
+    fn try_from(val: Value) -> Result<Self> {
+        match val {
+            Value::Binary(vals) => vals
+                .into_iter()
+                .map(|v| V::try_from(Value::Number(NumberValue::UInt8(v))))
+                .collect(),
+            Value::Array(vals) => vals.into_iter().map(V::try_from).collect(),
+            Value::EmptyArray => Ok(vec![]),
+            _ => Err(ConvertError::new("Vec", format!("{}", val)).into()),
+        }
+    }
+}
+
+impl<K, V> TryFrom<Value> for HashMap<K, V>
+where
+    K: TryFrom<Value, Error = Error> + Eq + Hash,
+    V: TryFrom<Value, Error = Error>,
+{
+    type Error = Error;
+    fn try_from(val: Value) -> Result<Self> {
+        match val {
+            Value::Map(kvs) => {
+                let mut map = HashMap::new();
+                for (k, v) in kvs {
+                    let k = K::try_from(k)?;
+                    let v = V::try_from(v)?;
+                    map.insert(k, v);
+                }
+                Ok(map)
+            }
+            Value::EmptyMap => Ok(HashMap::new()),
+            _ => Err(ConvertError::new("HashMap", format!("{}", val)).into()),
+        }
+    }
+}
+
+macro_rules! replace_expr {
+    ($_t:tt $sub:expr) => {
+        $sub
+    };
+}
+
+// This macro implements TryFrom for tuple of types
+macro_rules! impl_tuple_from_value {
+    ( $($Ti:tt),+ ) => {
+        impl<$($Ti),+> TryFrom<Value> for ($($Ti,)+)
+        where
+            $($Ti: TryFrom<Value>),+
+        {
+            type Error = String;
+            fn try_from(val: Value) -> Result<Self, String> {
+                // It is not possible yet to get the number of metavariable repetitions
+                // ref: https://github.com/rust-lang/lang-team/issues/28#issue-644523674
+                // This is a workaround
+                let expected_len = <[()]>::len(&[$(replace_expr!(($Ti) ())),*]);
+
+                match val {
+                    Value::Tuple(vals) => {
+                        if expected_len != vals.len() {
+                            return Err(format!("value tuple size mismatch: expected {} columns, got {}", expected_len, vals.len()));
+                        }
+                        let mut vals_iter = vals.into_iter().enumerate();
+
+                        Ok((
+                            $(
+                                {
+                                    let (col_ix, col_value) = vals_iter
+                                        .next()
+                                        .unwrap(); // vals_iter size is checked before this code is reached,
+                                                   // so it is safe to unwrap
+                                    let t = col_value.get_type();
+                                    $Ti::try_from(col_value)
+                                        .map_err(|_| format!("failed converting column {} from type({:?}) to type({})", col_ix, t, std::any::type_name::<$Ti>()))?
+                                }
+                            ,)+
+                        ))
+                    }
+                    _ => Err(format!("expected tuple, got {:?}", val)),
+                }
+            }
+        }
+    }
+}
+
+// Implement From Value for tuples of size up to 16
+impl_tuple_from_value!(T1);
+impl_tuple_from_value!(T1, T2);
+impl_tuple_from_value!(T1, T2, T3);
+impl_tuple_from_value!(T1, T2, T3, T4);
+impl_tuple_from_value!(T1, T2, T3, T4, T5);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7, T8);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16);
+impl_tuple_from_value!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17);
+impl_tuple_from_value!(
+    T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18
+);
+impl_tuple_from_value!(
+    T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19
+);
+impl_tuple_from_value!(
+    T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20
+);
+impl_tuple_from_value!(
+    T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21
+);
+impl_tuple_from_value!(
+    T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21,
+    T22
+);
 
 // This macro implements TryFrom to Option for Nullable column
 macro_rules! impl_try_from_to_option {
@@ -621,7 +757,13 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
         Value::Null => write!(f, "NULL"),
         Value::EmptyArray => write!(f, "[]"),
         Value::EmptyMap => write!(f, "{{}}"),
-        Value::Boolean(b) => write!(f, "{}", b),
+        Value::Boolean(b) => {
+            if *b {
+                write!(f, "true")
+            } else {
+                write!(f, "false")
+            }
+        }
         Value::Number(n) => write!(f, "{}", n),
         Value::Binary(s) => write!(f, "{}", hex::encode_upper(s)),
         Value::String(s) | Value::Bitmap(s) | Value::Variant(s) | Value::Geometry(s) => {
@@ -823,6 +965,277 @@ pub fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
 
 pub fn parse_geometry(raw_data: &[u8]) -> Result<String> {
     let mut data = std::io::Cursor::new(raw_data);
-    let wkt = Ewkt::from_wkb(&mut data, WkbDialect::Ewkb);
-    wkt.map(|g| g.0).map_err(|e| e.into())
+    let wkt = Ewkt::from_wkb(&mut data, WkbDialect::Ewkb)?;
+    Ok(wkt.0)
+}
+
+struct ValueDecoder {}
+
+impl ValueDecoder {
+    fn read_field<R: AsRef<[u8]>>(&self, ty: &DataType, reader: &mut Cursor<R>) -> Result<Value> {
+        match ty {
+            DataType::Null => self.read_null(reader),
+            DataType::EmptyArray => self.read_empty_array(reader),
+            DataType::EmptyMap => self.read_empty_map(reader),
+            DataType::Boolean => self.read_bool(reader),
+            DataType::Number(NumberDataType::Int8) => self.read_int8(reader),
+            DataType::Number(NumberDataType::Int16) => self.read_int16(reader),
+            DataType::Number(NumberDataType::Int32) => self.read_int32(reader),
+            DataType::Number(NumberDataType::Int64) => self.read_int64(reader),
+            DataType::Number(NumberDataType::UInt8) => self.read_uint8(reader),
+            DataType::Number(NumberDataType::UInt16) => self.read_uint16(reader),
+            DataType::Number(NumberDataType::UInt32) => self.read_uint32(reader),
+            DataType::Number(NumberDataType::UInt64) => self.read_uint64(reader),
+            DataType::Number(NumberDataType::Float32) => self.read_float32(reader),
+            DataType::Number(NumberDataType::Float64) => self.read_float64(reader),
+            DataType::Decimal(DecimalDataType::Decimal128(size)) => self.read_decimal(size, reader),
+            DataType::Decimal(DecimalDataType::Decimal256(size)) => self.read_decimal(size, reader),
+            DataType::String => self.read_string(reader),
+            DataType::Binary => self.read_binary(reader),
+            DataType::Timestamp => self.read_timestamp(reader),
+            DataType::Date => self.read_date(reader),
+            DataType::Bitmap => self.read_bitmap(reader),
+            DataType::Variant => self.read_variant(reader),
+            DataType::Geometry => self.read_geometry(reader),
+            DataType::Array(inner_ty) => self.read_array(inner_ty.as_ref(), reader),
+            DataType::Map(inner_ty) => self.read_map(inner_ty.as_ref(), reader),
+            DataType::Tuple(inner_tys) => self.read_tuple(inner_tys.as_ref(), reader),
+            DataType::Nullable(inner_ty) => self.read_nullable(inner_ty.as_ref(), reader),
+        }
+    }
+
+    fn match_bytes<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>, bs: &[u8]) -> bool {
+        let pos = reader.checkpoint();
+        if reader.ignore_bytes(bs) {
+            true
+        } else {
+            reader.rollback(pos);
+            false
+        }
+    }
+
+    fn read_null<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        if self.match_bytes(reader, NULL_VALUE.as_bytes()) {
+            Ok(Value::Null)
+        } else {
+            let buf = reader.fill_buf()?;
+            Err(ConvertError::new("null", String::from_utf8_lossy(buf).to_string()).into())
+        }
+    }
+
+    fn read_bool<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        if self.match_bytes(reader, TRUE_VALUE.as_bytes()) {
+            Ok(Value::Boolean(true))
+        } else if self.match_bytes(reader, FALSE_VALUE.as_bytes()) {
+            Ok(Value::Boolean(false))
+        } else {
+            let buf = reader.fill_buf()?;
+            Err(ConvertError::new("boolean", String::from_utf8_lossy(buf).to_string()).into())
+        }
+    }
+
+    fn read_int8<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let v: i8 = reader.read_int_text()?;
+        Ok(Value::Number(NumberValue::Int8(v)))
+    }
+
+    fn read_int16<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let v: i16 = reader.read_int_text()?;
+        Ok(Value::Number(NumberValue::Int16(v)))
+    }
+
+    fn read_int32<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let v: i32 = reader.read_int_text()?;
+        Ok(Value::Number(NumberValue::Int32(v)))
+    }
+
+    fn read_int64<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let v: i64 = reader.read_int_text()?;
+        Ok(Value::Number(NumberValue::Int64(v)))
+    }
+
+    fn read_uint8<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let v: u8 = reader.read_int_text()?;
+        Ok(Value::Number(NumberValue::UInt8(v)))
+    }
+
+    fn read_uint16<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let v: u16 = reader.read_int_text()?;
+        Ok(Value::Number(NumberValue::UInt16(v)))
+    }
+
+    fn read_uint32<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let v: u32 = reader.read_int_text()?;
+        Ok(Value::Number(NumberValue::UInt32(v)))
+    }
+
+    fn read_uint64<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let v: u64 = reader.read_int_text()?;
+        Ok(Value::Number(NumberValue::UInt64(v)))
+    }
+
+    fn read_float32<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let v: f32 = reader.read_float_text()?;
+        Ok(Value::Number(NumberValue::Float32(v)))
+    }
+
+    fn read_float64<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let v: f64 = reader.read_float_text()?;
+        Ok(Value::Number(NumberValue::Float64(v)))
+    }
+
+    fn read_decimal<R: AsRef<[u8]>>(
+        &self,
+        size: &DecimalSize,
+        reader: &mut Cursor<R>,
+    ) -> Result<Value> {
+        let buf = reader.fill_buf()?;
+        // parser decimal need fractional part.
+        // 10.00 and 10 is different value.
+        let (n_in, _) = collect_number(buf);
+        let v = unsafe { std::str::from_utf8_unchecked(&buf[..n_in]) };
+        let d = parse_decimal(v, *size)?;
+        reader.consume(n_in);
+        Ok(Value::Number(d))
+    }
+
+    fn read_string<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut buf = Vec::new();
+        reader.read_quoted_text(&mut buf, b'\'')?;
+        Ok(Value::String(unsafe { String::from_utf8_unchecked(buf) }))
+    }
+
+    fn read_binary<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let buf = reader.fill_buf()?;
+        let n = collect_binary_number(buf);
+        let v = buf[..n].to_vec();
+        reader.consume(n);
+        Ok(Value::Binary(hex::decode(v)?))
+    }
+
+    fn read_date<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut buf = Vec::new();
+        reader.read_quoted_text(&mut buf, b'\'')?;
+        let v = unsafe { std::str::from_utf8_unchecked(&buf) };
+        let days = NaiveDate::parse_from_str(v, "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE;
+        Ok(Value::Date(days))
+    }
+
+    fn read_timestamp<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut buf = Vec::new();
+        reader.read_quoted_text(&mut buf, b'\'')?;
+        let v = unsafe { std::str::from_utf8_unchecked(&buf) };
+        let ts = NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.6f")?
+            .and_utc()
+            .timestamp_micros();
+        Ok(Value::Timestamp(ts))
+    }
+
+    fn read_bitmap<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut buf = Vec::new();
+        reader.read_quoted_text(&mut buf, b'\'')?;
+        Ok(Value::Bitmap(unsafe { String::from_utf8_unchecked(buf) }))
+    }
+
+    fn read_variant<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut buf = Vec::new();
+        reader.read_quoted_text(&mut buf, b'\'')?;
+        Ok(Value::Variant(unsafe { String::from_utf8_unchecked(buf) }))
+    }
+
+    fn read_geometry<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut buf = Vec::new();
+        reader.read_quoted_text(&mut buf, b'\'')?;
+        Ok(Value::Geometry(unsafe { String::from_utf8_unchecked(buf) }))
+    }
+
+    fn read_nullable<R: AsRef<[u8]>>(
+        &self,
+        ty: &DataType,
+        reader: &mut Cursor<R>,
+    ) -> Result<Value> {
+        match self.read_null(reader) {
+            Ok(val) => Ok(val),
+            Err(_) => self.read_field(ty, reader),
+        }
+    }
+
+    fn read_empty_array<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        reader.must_ignore_byte(b'[')?;
+        reader.must_ignore_byte(b']')?;
+        Ok(Value::EmptyArray)
+    }
+
+    fn read_empty_map<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        reader.must_ignore_byte(b'{')?;
+        reader.must_ignore_byte(b'}')?;
+        Ok(Value::EmptyArray)
+    }
+
+    fn read_array<R: AsRef<[u8]>>(&self, ty: &DataType, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut vals = Vec::new();
+        reader.must_ignore_byte(b'[')?;
+        for idx in 0.. {
+            let _ = reader.ignore_white_spaces();
+            if reader.ignore_byte(b']') {
+                break;
+            }
+            if idx != 0 {
+                reader.must_ignore_byte(b',')?;
+            }
+            let _ = reader.ignore_white_spaces();
+            let val = self.read_field(ty, reader)?;
+            vals.push(val);
+        }
+        Ok(Value::Array(vals))
+    }
+
+    fn read_map<R: AsRef<[u8]>>(&self, ty: &DataType, reader: &mut Cursor<R>) -> Result<Value> {
+        const KEY: usize = 0;
+        const VALUE: usize = 1;
+        let mut kvs = Vec::new();
+        reader.must_ignore_byte(b'{')?;
+        match ty {
+            DataType::Tuple(inner_tys) => {
+                for idx in 0.. {
+                    let _ = reader.ignore_white_spaces();
+                    if reader.ignore_byte(b'}') {
+                        break;
+                    }
+                    if idx != 0 {
+                        reader.must_ignore_byte(b',')?;
+                    }
+                    let _ = reader.ignore_white_spaces();
+                    let key = self.read_field(&inner_tys[KEY], reader)?;
+                    let _ = reader.ignore_white_spaces();
+                    reader.must_ignore_byte(b':')?;
+                    let _ = reader.ignore_white_spaces();
+                    let val = self.read_field(&inner_tys[VALUE], reader)?;
+                    kvs.push((key, val));
+                }
+                Ok(Value::Map(kvs))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn read_tuple<R: AsRef<[u8]>>(
+        &self,
+        tys: &[DataType],
+        reader: &mut Cursor<R>,
+    ) -> Result<Value> {
+        let mut vals = Vec::new();
+        reader.must_ignore_byte(b'(')?;
+        for (idx, ty) in tys.iter().enumerate() {
+            let _ = reader.ignore_white_spaces();
+            if idx != 0 {
+                reader.must_ignore_byte(b',')?;
+            }
+            let _ = reader.ignore_white_spaces();
+            let val = self.read_field(ty, reader)?;
+            vals.push(val);
+        }
+        reader.must_ignore_byte(b')')?;
+        Ok(Value::Tuple(vals))
+    }
 }

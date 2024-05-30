@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::assert_eq;
+use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use databend_driver::{Client, Connection, DecimalSize, NumberValue, Value};
@@ -177,16 +178,149 @@ async fn select_nullable_u64() {
     assert_eq!(val, Some(4950));
 }
 
-// TODO:(everpcoc) parse to real array
-// #[tokio::test]
-// async fn select_array() {
-//     let mut conn = prepare().await;
-//     let row = conn.query_row("select [1, 2, 3, 4, 5]").await.unwrap();
-//     assert!(row.is_some());
-//     let row = row.unwrap();
-//     let (val,): (String,) = row.try_into().unwrap();
-//     assert_eq!(val, "[1,2,3,4,5]");
-// }
+#[tokio::test]
+async fn select_array() {
+    let conn = prepare().await;
+
+    let row1 = conn.query_row("select []").await.unwrap().unwrap();
+    let (val1,): (Vec<String>,) = row1.try_into().unwrap();
+    assert_eq!(val1, Vec::<String>::new());
+
+    let row2 = conn
+        .query_row("select [1, 2, 3, 4, 5]")
+        .await
+        .unwrap()
+        .unwrap();
+    let (val2,): (Vec<u8>,) = row2.try_into().unwrap();
+    assert_eq!(val2, vec![1, 2, 3, 4, 5]);
+
+    let row3 = conn
+        .query_row("select [10::Decimal(15,2), 1.1+2.3]")
+        .await
+        .unwrap()
+        .unwrap();
+    let (val3,): (Vec<String>,) = row3.try_into().unwrap();
+    assert_eq!(val3, vec!["10.00".to_string(), "3.40".to_string()]);
+
+    let row4 = conn
+        .query_row("select [to_binary('xyz')]")
+        .await
+        .unwrap()
+        .unwrap();
+    let (val4,): (Vec<Vec<u8>>,) = row4.try_into().unwrap();
+    assert_eq!(val4, vec![vec![120, 121, 122]]);
+}
+
+#[tokio::test]
+async fn select_map() {
+    let conn = prepare().await;
+
+    let row1 = conn.query_row("select {}").await.unwrap().unwrap();
+    let (val1,): (HashMap<u8, u8>,) = row1.try_into().unwrap();
+    assert_eq!(val1, HashMap::new());
+
+    let row2 = conn
+        .query_row("select {'k1':'v1','k2':'v2'}")
+        .await
+        .unwrap()
+        .unwrap();
+    let (val2,): (HashMap<String, String>,) = row2.try_into().unwrap();
+    assert_eq!(
+        val2,
+        vec![
+            ("k1".to_string(), "v1".to_string()),
+            ("k2".to_string(), "v2".to_string())
+        ]
+        .into_iter()
+        .collect()
+    );
+
+    let row3 = conn
+        .query_row("select {'xx':to_date('2020-01-01')}")
+        .await
+        .unwrap()
+        .unwrap();
+    let (val3,): (HashMap<String, NaiveDate>,) = row3.try_into().unwrap();
+    assert_eq!(
+        val3,
+        vec![(
+            "xx".to_string(),
+            NaiveDate::from_ymd_opt(2020, 1, 1).unwrap()
+        )]
+        .into_iter()
+        .collect()
+    );
+
+    let row4 = conn
+        .query_row("select {1: 'a', 2: 'b'}")
+        .await
+        .unwrap()
+        .unwrap();
+    let (val4,): (HashMap<u8, String>,) = row4.try_into().unwrap();
+    assert_eq!(
+        val4,
+        vec![(1, "a".to_string()), (2, "b".to_string())]
+            .into_iter()
+            .collect()
+    );
+}
+
+#[tokio::test]
+async fn select_tuple() {
+    let conn = prepare().await;
+
+    let row1 = conn
+        .query_row("select (parse_json('[1,2]'), [1,2], true)")
+        .await
+        .unwrap()
+        .unwrap();
+    let (val1,): ((String, Vec<u8>, bool),) = row1.try_into().unwrap();
+    assert_eq!(val1, ("[1,2]".to_string(), vec![1, 2], true,));
+
+    let row2 = conn
+        .query_row("select (to_binary('xyz'), to_timestamp('2024-10-22 10:11:12'))")
+        .await
+        .unwrap()
+        .unwrap();
+    let (val2,): ((Vec<u8>, NaiveDateTime),) = row2.try_into().unwrap();
+    assert_eq!(
+        val2,
+        (
+            vec![120, 121, 122],
+            DateTime::parse_from_rfc3339("2024-10-22T10:11:12Z")
+                .unwrap()
+                .naive_utc()
+        )
+    );
+}
+
+#[tokio::test]
+async fn select_variant() {
+    // TODO:
+}
+
+#[tokio::test]
+async fn select_bitmap() {
+    // TODO:
+    // let (conn, _) = prepare("select_bitmap_string").await;
+    // let mut rows = conn
+    //     .query_iter("select build_bitmap([1,2,3,4,5,6]), 11::String")
+    //     .await
+    //     .unwrap();
+    // let mut result = vec![];
+    // while let Some(row) = rows.next().await {
+    //     let row: (String, String) = row.unwrap().try_into().unwrap();
+    //     assert!(row.0.contains('\0'));
+    //     result.push(row.1);
+    // }
+    // assert_eq!(result, vec!["11".to_string()]);
+}
+
+#[tokio::test]
+async fn select_geometry() {
+    // TODO: response type changed to json after
+    // https://github.com/datafuselabs/databend/pull/15214
+}
 
 #[tokio::test]
 async fn select_multiple_columns() {

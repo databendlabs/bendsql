@@ -20,17 +20,18 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use arrow::ipc::{convert::fb_to_schema, root_as_message};
+use arrow_flight::decode::FlightDataDecoder;
+use arrow_flight::sql::client::FlightSqlServiceClient;
 use arrow_flight::utils::flight_data_to_arrow_batch;
-use arrow_flight::{sql::client::FlightSqlServiceClient, FlightData};
 use arrow_schema::SchemaRef as ArrowSchemaRef;
 use async_trait::async_trait;
 use percent_encoding::percent_decode_str;
 use tokio::sync::Mutex;
 use tokio_stream::{Stream, StreamExt};
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
-use tonic::Streaming;
 use url::Url;
 
+use databend_client::auth::SensitiveString;
 use databend_client::presign::{presign_upload_to_stage, PresignedResponse};
 use databend_sql::error::{Error, Result};
 use databend_sql::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, Rows, ServerStats};
@@ -65,12 +66,6 @@ impl Connection for FlightSQLConnection {
         Ok(affected_rows)
     }
 
-    async fn query_row(&self, sql: &str) -> Result<Option<Row>> {
-        let mut rows = self.query_iter(sql).await?;
-        let row = rows.try_next().await?;
-        Ok(row)
-    }
-
     async fn query_iter(&self, sql: &str) -> Result<RowIterator> {
         let rows_with_progress = self.query_iter_ext(sql).await?;
         let rows = rows_with_progress.filter_rows().await;
@@ -86,7 +81,7 @@ impl Connection for FlightSQLConnection {
             .ticket
             .as_ref()
             .ok_or_else(|| Error::Protocol("Ticket is empty".to_string()))?;
-        let flight_data = client.do_get(ticket.clone()).await?;
+        let flight_data = client.do_get(ticket.clone()).await?.into_inner();
         let (schema, rows) = FlightSQLRows::try_from_flight_data(flight_data).await?;
         Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
     }
@@ -172,7 +167,7 @@ impl FlightSQLConnection {
         }
         let mut client = self.client.lock().await;
         let _token = client
-            .handshake(&self.args.user, &self.args.password)
+            .handshake(&self.args.user, self.args.password.inner())
             .await?;
         *handshaked = true;
         Ok(())
@@ -212,7 +207,7 @@ struct Args {
     host: String,
     port: u16,
     user: String,
-    password: String,
+    password: SensitiveString,
     database: Option<String>,
     tenant: Option<String>,
     warehouse: Option<String>,
@@ -240,7 +235,7 @@ impl Default for Args {
             tls: true,
             tls_ca_file: None,
             user: "root".to_string(),
-            password: "".to_string(),
+            password: SensitiveString::from(""),
             connect_timeout: Duration::from_secs(20),
             query_timeout: Duration::from_secs(60),
             tcp_nodelay: true,
@@ -314,27 +309,28 @@ impl Args {
             None => format!("{}://{}:{}", scheme, host, port),
         };
         args.user = u.username().to_string();
-        args.password = percent_decode_str(u.password().unwrap_or_default())
-            .decode_utf8_lossy()
-            .to_string();
+        let password = u.password().unwrap_or_default();
+        let password = percent_decode_str(password).decode_utf8()?;
+        args.password = SensitiveString::from(password.to_string());
         Ok(args)
     }
 }
 
 pub struct FlightSQLRows {
     schema: ArrowSchemaRef,
-    data: Streaming<FlightData>,
+    data: FlightDataDecoder,
     rows: VecDeque<Row>,
 }
 
 impl FlightSQLRows {
-    async fn try_from_flight_data(flight_data: Streaming<FlightData>) -> Result<(Schema, Self)> {
+    async fn try_from_flight_data(flight_data: FlightDataDecoder) -> Result<(Schema, Self)> {
         let mut data = flight_data;
         let datum = data
             .try_next()
-            .await?
+            .await
+            .map_err(|err| Error::Protocol(format!("Read flight data failed: {err:?}")))?
             .ok_or_else(|| Error::Protocol("No flight data in stream".to_string()))?;
-        let message = root_as_message(&datum.data_header[..])
+        let message = root_as_message(&datum.inner.data_header[..])
             .map_err(|err| Error::Protocol(format!("InvalidFlatbuffer: {}", err)))?;
         let ipc_schema = message.header_as_schema().ok_or_else(|| {
             Error::Protocol("Invalid Message: Cannot get header as Schema".to_string())
@@ -360,13 +356,13 @@ impl Stream for FlightSQLRows {
         match Pin::new(&mut self.data).poll_next(cx) {
             Poll::Ready(Some(Ok(datum))) => {
                 // magic number 1 is used to indicate progress
-                if datum.app_metadata[..] == [0x01] {
-                    let ss: ServerStats = serde_json::from_slice(&datum.data_body)?;
+                if datum.inner.app_metadata[..] == [0x01] {
+                    let ss: ServerStats = serde_json::from_slice(&datum.inner.data_body)?;
                     Poll::Ready(Some(Ok(RowWithStats::Stats(ss))))
                 } else {
                     let dicitionaries_by_id = HashMap::new();
                     let batch = flight_data_to_arrow_batch(
-                        &datum,
+                        &datum.inner,
                         self.schema.clone(),
                         &dicitionaries_by_id,
                     )?;
@@ -375,7 +371,9 @@ impl Stream for FlightSQLRows {
                     self.poll_next(cx)
                 }
             }
-            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err.into()))),
+            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(Error::Transport(format!(
+                "fetch flight sql rows failed: {err:?}"
+            ))))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }

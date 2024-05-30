@@ -19,6 +19,13 @@ select /* ignore this block */ 'with comment';
 select 1; select 2; select '
 a'; select 3;
 
+-- issue 409
+drop table if exists t;
+create table t(id tuple(STRING, array(tuple(array(int), array(STRING NOT NULL)))));
+insert into t values(null);
+select * from t;
+drop table t;
+
 -- enable it after we support code string in databend
 -- select $$aa$$;
 -- select $$
@@ -45,6 +52,8 @@ create table test_nested(a array(int), b map(string, string), c tuple(x int, y s
 insert into test_nested values([1,2,3], null, (1, 'ab')), (null, {'k1':'v1', 'k2':'v2'}, (2, null));
 select * from test_nested;
 select a[1], b['k1'], c:x, c:y from test_nested;
+
+select {'k1':'v1','k2':'v2'}, [to_binary('ab'), to_binary('xyz')], (parse_json('[1,2]'), to_date('2024-04-10'));
 
 select 'bye';
 drop table test;

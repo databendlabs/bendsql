@@ -131,7 +131,12 @@ impl std::fmt::Display for DataType {
             DataType::Date => write!(f, "Date"),
             DataType::Nullable(inner) => write!(f, "Nullable({})", inner),
             DataType::Array(inner) => write!(f, "Array({})", inner),
-            DataType::Map(inner) => write!(f, "Map({})", inner),
+            DataType::Map(inner) => match inner.as_ref() {
+                DataType::Tuple(tys) => {
+                    write!(f, "Map({}, {})", tys[0], tys[1])
+                }
+                _ => unreachable!(),
+            },
             DataType::Tuple(inner) => {
                 let inner = inner
                     .iter()
@@ -172,8 +177,14 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
     type Error = Error;
 
     fn try_from(desc: &TypeDesc) -> Result<Self> {
+        if desc.nullable {
+            let mut desc = desc.clone();
+            desc.nullable = false;
+            let inner = DataType::try_from(&desc)?;
+            return Ok(DataType::Nullable(Box::new(inner)));
+        }
         let dt = match desc.name {
-            "Null" | "NULL" => DataType::Null,
+            "NULL" | "Null" => DataType::Null,
             "Boolean" => DataType::Boolean,
             "Binary" => DataType::Binary,
             "String" => DataType::String,
@@ -211,6 +222,9 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
                         "Nullable type must have one argument".to_string(),
                     ));
                 }
+                let mut desc = desc.clone();
+                // ignore inner NULL indicator
+                desc.nullable = false;
                 let inner = Self::try_from(&desc.args[0])?;
                 DataType::Nullable(Box::new(inner))
             }
@@ -388,6 +402,7 @@ impl TryFrom<ArrowSchemaRef> for Schema {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TypeDesc<'t> {
     name: &'t str,
+    nullable: bool,
     args: Vec<TypeDesc<'t>>,
 }
 
@@ -396,6 +411,7 @@ fn parse_type_desc(s: &str) -> Result<TypeDesc> {
     let mut args = vec![];
     let mut depth = 0;
     let mut start = 0;
+    let mut nullable = false;
     for (i, c) in s.chars().enumerate() {
         match c {
             '(' => {
@@ -417,12 +433,17 @@ fn parse_type_desc(s: &str) -> Result<TypeDesc> {
             }
             ',' => {
                 if depth == 1 {
-                    args.push(parse_type_desc(&s[start..i])?);
+                    let s = &s[start..i];
+                    args.push(parse_type_desc(s)?);
                     start = i + 1;
                 }
             }
             ' ' => {
                 if depth == 0 {
+                    let s = &s[start..i];
+                    if !s.is_empty() {
+                        name = s;
+                    }
                     start = i + 1;
                 }
             }
@@ -433,9 +454,25 @@ fn parse_type_desc(s: &str) -> Result<TypeDesc> {
         return Err(Error::Parsing(format!("Invalid type desc: {}", s)));
     }
     if start < s.len() {
-        name = &s[start..];
+        let s = &s[start..];
+        if !s.is_empty() {
+            if name.is_empty() {
+                name = s;
+            } else if s == "NULL" {
+                nullable = true;
+            } else {
+                return Err(Error::Parsing(format!(
+                    "Invalid type arg for {}: {}",
+                    name, s
+                )));
+            }
+        }
     }
-    Ok(TypeDesc { name, args })
+    Ok(TypeDesc {
+        name,
+        nullable,
+        args,
+    })
 }
 
 #[cfg(test)]
@@ -451,13 +488,13 @@ mod test {
             input: &'t str,
             output: TypeDesc<'t>,
         }
-
         let test_cases = vec![
             TestCase {
                 desc: "plain type",
                 input: "String",
                 output: TypeDesc {
                     name: "String",
+                    nullable: false,
                     args: vec![],
                 },
             },
@@ -466,13 +503,16 @@ mod test {
                 input: "Decimal(42, 42)",
                 output: TypeDesc {
                     name: "Decimal",
+                    nullable: false,
                     args: vec![
                         TypeDesc {
                             name: "42",
+                            nullable: false,
                             args: vec![],
                         },
                         TypeDesc {
                             name: "42",
+                            nullable: false,
                             args: vec![],
                         },
                     ],
@@ -483,8 +523,10 @@ mod test {
                 input: "Nullable(Nothing)",
                 output: TypeDesc {
                     name: "Nullable",
+                    nullable: false,
                     args: vec![TypeDesc {
                         name: "Nothing",
+                        nullable: false,
                         args: vec![],
                     }],
                 },
@@ -494,6 +536,7 @@ mod test {
                 input: "DateTime()",
                 output: TypeDesc {
                     name: "DateTime",
+                    nullable: false,
                     args: vec![],
                 },
             },
@@ -502,8 +545,10 @@ mod test {
                 input: "FixedString(42)",
                 output: TypeDesc {
                     name: "FixedString",
+                    nullable: false,
                     args: vec![TypeDesc {
                         name: "42",
+                        nullable: false,
                         args: vec![],
                     }],
                 },
@@ -513,31 +558,39 @@ mod test {
                 input: "Array(Tuple(Tuple(String, String), Tuple(String, UInt64)))",
                 output: TypeDesc {
                     name: "Array",
+                    nullable: false,
                     args: vec![TypeDesc {
                         name: "Tuple",
+                        nullable: false,
                         args: vec![
                             TypeDesc {
                                 name: "Tuple",
+                                nullable: false,
                                 args: vec![
                                     TypeDesc {
                                         name: "String",
+                                        nullable: false,
                                         args: vec![],
                                     },
                                     TypeDesc {
                                         name: "String",
+                                        nullable: false,
                                         args: vec![],
                                     },
                                 ],
                             },
                             TypeDesc {
                                 name: "Tuple",
+                                nullable: false,
                                 args: vec![
                                     TypeDesc {
                                         name: "String",
+                                        nullable: false,
                                         args: vec![],
                                     },
                                     TypeDesc {
                                         name: "UInt64",
+                                        nullable: false,
                                         args: vec![],
                                     },
                                 ],
@@ -551,17 +604,115 @@ mod test {
                 input: "Map(String, Array(Int64))",
                 output: TypeDesc {
                     name: "Map",
+                    nullable: false,
                     args: vec![
                         TypeDesc {
                             name: "String",
+                            nullable: false,
                             args: vec![],
                         },
                         TypeDesc {
                             name: "Array",
+                            nullable: false,
                             args: vec![TypeDesc {
                                 name: "Int64",
+                                nullable: false,
                                 args: vec![],
                             }],
+                        },
+                    ],
+                },
+            },
+            TestCase {
+                desc: "map nullable value args",
+                input: "Nullable(Map(String, String NULL))",
+                output: TypeDesc {
+                    name: "Nullable",
+                    nullable: false,
+                    args: vec![TypeDesc {
+                        name: "Map",
+                        nullable: false,
+                        args: vec![
+                            TypeDesc {
+                                name: "String",
+                                nullable: false,
+                                args: vec![],
+                            },
+                            TypeDesc {
+                                name: "String",
+                                nullable: true,
+                                args: vec![],
+                            },
+                        ],
+                    }],
+                },
+            },
+        ];
+        for case in test_cases {
+            let output = parse_type_desc(case.input).unwrap();
+            assert_eq!(output, case.output, "{}", case.desc);
+        }
+    }
+
+    #[test]
+    fn test_parse_complex_type_with_null() {
+        struct TestCase<'t> {
+            desc: &'t str,
+            input: &'t str,
+            output: TypeDesc<'t>,
+        }
+        let test_cases = vec![
+            TestCase {
+                desc: "complex nullable type",
+                input: "Nullable(Tuple(String NULL, Array(Tuple(Array(Int32 NULL) NULL, Array(String NULL) NULL) NULL) NULL))",
+                output: TypeDesc {
+                    name: "Nullable",
+                    nullable: false,
+                    args: vec![
+                        TypeDesc {
+                            name: "Tuple",
+                            nullable: false,
+                            args: vec![
+                                TypeDesc {
+                                    name: "String",
+                                    nullable: true,
+                                    args: vec![],
+                                },
+                                TypeDesc {
+                                    name: "Array",
+                                    nullable: true,
+                                    args: vec![
+                                        TypeDesc{
+                                            name: "Tuple",
+                                            nullable: true,
+                                            args: vec![
+                                                TypeDesc {
+                                                    name: "Array",
+                                                    nullable: true,
+                                                    args: vec![
+                                                        TypeDesc {
+                                                            name: "Int32",
+                                                            nullable: true,
+                                                            args: vec![],
+                                                        },
+                                                    ],
+                                                },
+                                                TypeDesc {
+                                                    name: "Array",
+                                                    nullable: true,
+                                                    args: vec![
+                                                        TypeDesc {
+                                                            name: "String",
+                                                            nullable: true,
+                                                            args: vec![],
+                                                        },
+                                                    ],
+                                                },
+                                            ]
+                                        }
+                                    ],
+                                },
+                            ],
                         },
                     ],
                 },

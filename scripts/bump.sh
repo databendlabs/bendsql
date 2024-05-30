@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+set -e
+
 VERSION=$1
 
 if [ -z "$VERSION" ]; then
@@ -22,6 +24,12 @@ if [ -z "$VERSION" ]; then
 fi
 
 echo "Bumping version to $VERSION"
+
+git status
+git checkout main
+git fetch upstream
+git rebase upstream/main
+git checkout -b "bump-$VERSION"
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
   sed -i '' "s/version = \".*\"/version = \"$VERSION\"/g" Cargo.toml

@@ -14,23 +14,20 @@
 
 use std::collections::HashSet;
 use std::fmt::Write;
-use unicode_segmentation::UnicodeSegmentation;
 
 use anyhow::{anyhow, Result};
 use comfy_table::{Cell, CellAlignment, Table};
-use terminal_size::{terminal_size, Width};
-
 use databend_driver::{Row, RowStatsIterator, RowWithStats, SchemaRef, ServerStats};
+use indicatif::{HumanBytes, ProgressBar, ProgressState, ProgressStyle};
 use rustyline::highlight::Highlighter;
+use terminal_size::{terminal_size, Width};
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
+use unicode_segmentation::UnicodeSegmentation;
 
-use indicatif::{HumanBytes, ProgressBar, ProgressState, ProgressStyle};
-
-use crate::config::OutputQuoteStyle;
 use crate::{
     ast::format_query,
-    config::{ExpandMode, OutputFormat, Settings},
+    config::{ExpandMode, OutputFormat, OutputQuoteStyle, Settings},
     helper::CliHelper,
     session::QueryKind,
 };
@@ -38,7 +35,6 @@ use crate::{
 #[async_trait::async_trait]
 pub trait ChunkDisplay {
     async fn display(&mut self) -> Result<ServerStats>;
-    fn total_rows(&self) -> usize;
 }
 
 pub struct FormatDisplay<'a> {
@@ -298,8 +294,13 @@ impl<'a> FormatDisplay<'a> {
                     stats.write_bytes,
                 ),
             };
+            let mut rows_speed_str = rows_str;
             if rows <= 1 {
                 rows_str = rows_str.trim_end_matches('s');
+            }
+            let rows_speed = total_rows as f64 / self.start.elapsed().as_secs_f64();
+            if rows_speed <= 1.0 {
+                rows_speed_str = rows_speed_str.trim_end_matches('s');
             }
             eprintln!(
                 "{} {} {} in {:.3} sec. Processed {} {}, {} ({} {}/s, {}/s)",
@@ -310,8 +311,8 @@ impl<'a> FormatDisplay<'a> {
                 humanize_count(total_rows as f64),
                 rows_str,
                 HumanBytes(total_bytes as u64),
-                humanize_count(total_rows as f64 / self.start.elapsed().as_secs_f64()),
-                rows_str,
+                humanize_count(rows_speed),
+                rows_speed_str,
                 HumanBytes((total_bytes as f64 / self.start.elapsed().as_secs_f64()) as u64),
             );
             eprintln!();
@@ -339,10 +340,6 @@ impl<'a> ChunkDisplay for FormatDisplay<'a> {
         self.display_stats().await;
         let stats = self.stats.take().unwrap_or_default();
         Ok(stats)
-    }
-
-    fn total_rows(&self) -> usize {
-        self.rows
     }
 }
 

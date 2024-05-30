@@ -26,7 +26,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: ./.github/actions/setup
         with:
-          cache-key: bindings-python
+          cache-key: bindings-python-integration
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -40,7 +40,7 @@ jobs:
         run: pipenv install --dev
       - name: Check format
         working-directory: bindings/python
-        run: pipenv run black --check .
+        run: pipenv run ruff format --check .
       - name: Setup develop
         working-directory: bindings/python
         run: pipenv run maturin develop
@@ -53,8 +53,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: linux, arch: x86_64, target: x86_64-unknown-linux-gnu, runner: ubuntu-20.04 }
-          # - { os: linux, arch: aarch64, target: aarch64-unknown-linux-gnu, runner: ubuntu-20.04 }
+          - { os: linux, arch: x86_64, target: x86_64-unknown-linux-gnu, runner: ubuntu-latest }
+          - { os: linux, arch: aarch64, target: aarch64-unknown-linux-gnu, runner: ubuntu-latest }
           - { os: windows, arch: x86_64, target: x86_64-pc-windows-msvc, runner: windows-2019 }
           - { os: macos, arch: x86_64, target: x86_64-apple-darwin, runner: macos-11 }
           - { os: macos, arch: aarch64, target: aarch64-apple-darwin, runner: macos-11 }
@@ -69,17 +69,28 @@ jobs:
           else
             echo "BUILD_ARGS=--release --strip --out dist" >> $GITHUB_OUTPUT
           fi
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            echo "MANYLINUX=2_28" >> $GITHUB_OUTPUT
+          else
+            echo "MANYLINUX=auto" >> $GITHUB_OUTPUT
+          fi
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup
+        with:
+          cache-key: bindings-python-${{ matrix.os }}-${{ matrix.arch }}
+          target: ${{ matrix.target }}
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           working-directory: bindings/python
           target: ${{ matrix.target }}
+          manylinux: ${{ steps.opts.outputs.MANYLINUX }}
           sccache: 'true'
           args: ${{ steps.opts.outputs.BUILD_ARGS }}
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: bindings-python-${{ matrix.os }}-${{ matrix.arch }}
           path: bindings/python/dist/*.whl
 
   publish:
@@ -94,7 +105,12 @@ jobs:
       url: https://pypi.org/p/databend-driver/
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
+        with:
+          path: bindings/python/artifacts
+          pattern: bindings-python-*
+          merge-multiple: true
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+          packages-dir: bindings/python/artifacts

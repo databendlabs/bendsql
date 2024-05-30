@@ -36,6 +36,54 @@ while (row) {
 }
 ```
 
+## Type Mapping
+
+[Databend Types](https://docs.databend.com/sql/sql-reference/data-types/)
+
+### General Data Types
+
+| Databend    | Node.js   |
+| ----------- | --------- |
+| `BOOLEAN`   | `Boolean` |
+| `TINYINT`   | `Number`  |
+| `SMALLINT`  | `Number`  |
+| `INT`       | `Number`  |
+| `BIGINT`    | `Number`  |
+| `FLOAT`     | `Number`  |
+| `DOUBLE`    | `Number`  |
+| `DECIMAL`   | `String`  |
+| `DATE`      | `Date`    |
+| `TIMESTAMP` | `Date`    |
+| `VARCHAR`   | `String`  |
+| `BINARY`    | `Buffer`  |
+
+### Semi-Structured Data Types
+
+| Databend   | Node.js  |
+| ---------- | -------- |
+| `ARRAY`    | `Array`  |
+| `TUPLE`    | `Array`  |
+| `MAP`      | `Object` |
+| `VARIANT`  | `String` |
+| `BITMAP`   | `String` |
+| `GEOMETRY` | `String` |
+
+Note: `VARIANT` is a json encoded string. Example:
+
+```sql
+CREATE TABLE example (
+    data VARIANT
+);
+INSERT INTO example VALUES ('{"a": 1, "b": "hello"}');
+```
+
+```javascript
+const row = await conn.queryRow("SELECT * FROM example limit 1;");
+const data = row.values()[0];
+const value = JSON.parse(data);
+console.log(value);
+```
+
 ## Development
 
 ```shell
