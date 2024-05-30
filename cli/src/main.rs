@@ -27,13 +27,16 @@ use std::{
     io::{stdin, IsTerminal},
 };
 
-use crate::args::ConnectionArgs;
-use crate::config::OutputQuoteStyle;
 use anyhow::{anyhow, Result};
 use clap::{ArgAction, CommandFactory, Parser, ValueEnum};
-use config::{Config, OutputFormat, Settings, TimeOption};
+use databend_client::auth::SensitiveString;
 use log::info;
 use once_cell::sync::Lazy;
+
+use crate::{
+    args::ConnectionArgs,
+    config::{Config, OutputFormat, OutputQuoteStyle, Settings, TimeOption},
+};
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -74,6 +77,8 @@ impl InputFormat {
             }
             InputFormat::NDJSON => {
                 options.insert("type", "NDJSON");
+                options.insert("null_field_as", "NULL");
+                options.insert("missing_field_as", "NULL");
             }
             InputFormat::Parquet => {
                 options.insert("type", "Parquet");
@@ -104,35 +109,64 @@ struct Args {
     #[clap(long, help = "Print help information")]
     help: bool,
 
-    #[clap(long, help = "Using flight sql protocol")]
+    #[clap(long, help = "Using flight sql protocol, ignored when --dsn is set")]
     flight: bool,
 
-    #[clap(long, help = "Enable TLS")]
+    #[clap(long, help = "Enable TLS, ignored when --dsn is set")]
     tls: bool,
 
-    #[clap(short = 'h', long, help = "Databend Server host, Default: 127.0.0.1")]
+    #[clap(
+        short = 'h',
+        long,
+        help = "Databend Server host, Default: 127.0.0.1, ignored when --dsn is set"
+    )]
     host: Option<String>,
 
-    #[clap(short = 'P', long, help = "Databend Server port, Default: 8000")]
+    #[clap(
+        short = 'P',
+        long,
+        help = "Databend Server port, Default: 8000, ignored when --dsn is set"
+    )]
     port: Option<u16>,
 
-    #[clap(short = 'u', long, help = "Default: root")]
+    #[clap(short = 'u', long, help = "Default: root, overrides username in DSN")]
     user: Option<String>,
 
-    #[clap(short = 'p', long, env = "BENDSQL_PASSWORD")]
-    password: Option<String>,
+    #[clap(
+        short = 'p',
+        long,
+        env = "BENDSQL_PASSWORD",
+        hide_env_values = true,
+        help = "Password, overrides password in DSN"
+    )]
+    password: Option<SensitiveString>,
 
-    #[clap(short = 'D', long, help = "Database name")]
+    #[clap(short = 'r', long, help = "Downgrade role name, overrides role in DSN")]
+    role: Option<String>,
+
+    #[clap(short = 'D', long, help = "Database name, overrides database in DSN")]
     database: Option<String>,
 
-    #[clap(long, value_parser = parse_key_val::<String, String>, help = "Settings")]
+    #[clap(long, value_parser = parse_key_val::<String, String>, help = "Settings, overrides settings in DSN")]
     set: Vec<(String, String)>,
 
-    #[clap(long, env = "BENDSQL_DSN", help = "Data source name")]
-    dsn: Option<String>,
+    #[clap(
+        long,
+        env = "BENDSQL_DSN",
+        hide_env_values = true,
+        help = "Data source name"
+    )]
+    dsn: Option<SensitiveString>,
 
     #[clap(short = 'n', long, help = "Force non-interactive mode")]
     non_interactive: bool,
+
+    #[clap(
+        short = 'A',
+        long,
+        help = "Disable loading tables and fields for auto-completion, which offers a quicker start"
+    )]
+    no_auto_complete: bool,
 
     #[clap(long, help = "Check for server status and exit")]
     check: bool,
@@ -152,7 +186,10 @@ struct Args {
     #[clap(short = 'o', long, help = "Output format")]
     output: Option<OutputFormat>,
 
-    #[clap(short = 's', long, help = "Output quote style")]
+    #[clap(
+        long,
+        help = "Output quote style, applies to `csv` and `tsv` output formats"
+    )]
     quote_style: Option<OutputQuoteStyle>,
 
     #[clap(
@@ -177,9 +214,6 @@ struct Args {
 
     #[clap(short = 'l', default_value = "info", long)]
     log_level: String,
-
-    #[clap(short = 'r', long, help = "Downgrade role name")]
-    role: Option<String>,
 }
 
 /// Parse a single key-value pair
@@ -200,7 +234,7 @@ where
 
 #[tokio::main]
 pub async fn main() -> Result<()> {
-    let mut config = Config::load();
+    let config = Config::load();
 
     let args = Args::parse();
     let mut cmd = Args::command();
@@ -210,21 +244,12 @@ pub async fn main() -> Result<()> {
     }
 
     let mut conn_args = match args.dsn {
-        Some(dsn) => {
+        Some(ref dsn) => {
             if args.host.is_some() {
                 eprintln!("warning: --host is ignored when --dsn is set");
             }
             if args.port.is_some() {
                 eprintln!("warning: --port is ignored when --dsn is set");
-            }
-            if args.user.is_some() {
-                eprintln!("warning: --user is ignored when --dsn is set");
-            }
-            if args.password.is_some() {
-                eprintln!("warning: --password is ignored when --dsn is set");
-            }
-            if args.role.is_some() {
-                eprintln!("warning: --role is ignored when --dsn is set");
             }
             if !args.set.is_empty() {
                 eprintln!("warning: --set is ignored when --dsn is set");
@@ -235,47 +260,57 @@ pub async fn main() -> Result<()> {
             if args.flight {
                 eprintln!("warning: --flight is ignored when --dsn is set");
             }
-            ConnectionArgs::from_dsn(&dsn)?
+            ConnectionArgs::from_dsn(dsn.inner())?
         }
         None => {
-            if let Some(host) = args.host {
-                config.connection.host = host;
+            let host = args.host.unwrap_or_else(|| config.connection.host.clone());
+            let mut port = config.connection.port;
+            if args.port.is_some() {
+                port = args.port;
             }
-            if let Some(port) = args.port {
-                config.connection.port = Some(port);
-            }
-            if let Some(user) = args.user {
-                config.connection.user = user;
-            }
-            for (k, v) in args.set {
-                config.connection.args.insert(k, v);
-            }
-            if !args.tls {
-                config
-                    .connection
-                    .args
-                    .insert("sslmode".to_string(), "disable".to_string());
-            }
-            if let Some(role) = args.role {
-                config.connection.args.insert("role".to_string(), role);
-            }
+
+            let user = args.user.unwrap_or_else(|| config.connection.user.clone());
+            let password = args.password.unwrap_or_else(|| SensitiveString::from(""));
+
             ConnectionArgs {
-                host: config.connection.host.clone(),
-                port: config.connection.port,
-                user: config.connection.user.clone(),
-                password: args.password,
+                host,
+                port,
+                user,
+                password,
                 database: config.connection.database.clone(),
                 flight: args.flight,
                 args: config.connection.args.clone(),
             }
         }
     };
-    // override database if specified in command line
-    if args.database.is_some() {
-        conn_args.database = args.database;
-    }
-    let dsn = conn_args.get_dsn()?;
 
+    // Override connection args with command line options
+    {
+        if args.database.is_some() {
+            conn_args.database.clone_from(&args.database);
+        }
+
+        // override only if args.dsn is none
+        if args.dsn.is_none() {
+            if !args.tls {
+                conn_args
+                    .args
+                    .insert("sslmode".to_string(), "disable".to_string());
+            }
+
+            // override args if specified in command line
+            for (k, v) in args.set {
+                conn_args.args.insert(k, v);
+            }
+        }
+
+        // override role if specified in command line
+        if let Some(role) = args.role {
+            conn_args.args.insert("role".to_string(), role);
+        }
+    }
+
+    let dsn = conn_args.get_dsn()?;
     let mut settings = Settings::default();
     let is_terminal = stdin().is_terminal();
     let is_repl = is_terminal && !args.non_interactive && !args.check && args.query.is_none();
@@ -290,6 +325,9 @@ pub async fn main() -> Result<()> {
 
     settings.merge_config(config.settings);
 
+    if args.no_auto_complete {
+        settings.no_auto_complete = true;
+    }
     if let Some(output) = args.output {
         settings.output_format = output;
     }

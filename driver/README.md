@@ -43,3 +43,51 @@ while let Some(row) = rows.next().await {
     println!("{} {} {}", title, author, date);
 }
 ```
+
+## Type Mapping
+
+[Databend Types](https://docs.databend.com/sql/sql-reference/data-types/)
+
+### General Data Types
+
+| Databend    | Rust                    |
+| ----------- | ----------------------- |
+| `BOOLEAN`   | `bool`                  |
+| `TINYINT`   | `i8`,`u8`               |
+| `SMALLINT`  | `i16`,`u16`             |
+| `INT`       | `i32`,`u32`             |
+| `BIGINT`    | `i64`,`u64`             |
+| `FLOAT`     | `f32`                   |
+| `DOUBLE`    | `f64`                   |
+| `DECIMAL`   | `String`                |
+| `DATE`      | `chrono::NaiveDate`     |
+| `TIMESTAMP` | `chrono::NaiveDateTime` |
+| `VARCHAR`   | `String`                |
+| `BINARY`    | `Vec<u8>`               |
+
+### Semi-Structured Data Types
+
+| Databend      | Rust            |
+| ------------- | --------------- |
+| `ARRAY[T]`    | `Vec<T>`        |
+| `TUPLE[T, U]` | `(T, U)`        |
+| `MAP[K, V]`   | `HashMap<K, V>` |
+| `VARIANT`     | `String`        |
+| `BITMAP`      | `String`        |
+| `GEOMETRY`    | `String`        |
+
+Note: `VARIANT` is a json encoded string. Example:
+
+```sql
+CREATE TABLE example (
+    data VARIANT
+);
+INSERT INTO example VALUES ('{"a": 1, "b": "hello"}');
+```
+
+```rust
+let row = conn.query_row("SELECT * FROM example limit 1;").await.unwrap();
+let (data,): (String,) = row.unwrap().try_into().unwrap();
+let value: serde_json::Value = serde_json::from_str(&data).unwrap();
+println!("{:?}", value);
+```

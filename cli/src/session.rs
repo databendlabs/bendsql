@@ -88,16 +88,18 @@ impl Session {
             println!("Connected to {}", version);
             println!();
 
-            let rows = conn.query_iter(PROMPT_SQL).await;
-            match rows {
-                Ok(mut rows) => {
-                    while let Some(row) = rows.next().await {
-                        let name: (String,) = row.unwrap().try_into().unwrap();
-                        keywords.push(name.0);
+            if !settings.no_auto_complete {
+                let rows = conn.query_iter(PROMPT_SQL).await;
+                match rows {
+                    Ok(mut rows) => {
+                        while let Some(row) = rows.next().await {
+                            let name: (String,) = row.unwrap().try_into().unwrap();
+                            keywords.push(name.0);
+                        }
                     }
-                }
-                Err(e) => {
-                    eprintln!("loading auto complete keywords failed: {}", e);
+                    Err(e) => {
+                        eprintln!("loading auto complete keywords failed: {}", e);
+                    }
                 }
             }
         }
@@ -397,8 +399,13 @@ impl Session {
     ) -> Result<Option<ServerStats>> {
         let query = query.trim_end_matches(';').trim();
 
-        if is_repl && query.starts_with('!') {
-            return self.handle_commands(query).await;
+        if is_repl {
+            if query.starts_with('!') {
+                return self.handle_commands(query).await;
+            }
+            if query == "exit" || query == "quit" {
+                return Ok(None);
+            }
         }
 
         let start = Instant::now();
@@ -457,10 +464,6 @@ impl Session {
 
     #[async_recursion]
     pub async fn handle_commands(&mut self, query: &str) -> Result<Option<ServerStats>> {
-        if query == "!exit" || query == "!quit" {
-            return Ok(None);
-        }
-
         match query {
             "!exit" | "!quit" => {
                 return Ok(None);

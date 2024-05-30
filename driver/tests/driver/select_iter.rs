@@ -199,6 +199,23 @@ async fn select_numbers() {
 }
 
 #[tokio::test]
+async fn select_multi_page() {
+    let (conn, _) = prepare("select_multi_page").await;
+    // default page size is 10000
+    let n = 46000;
+    let sql = format!("select * from NUMBERS({n}) order by number");
+    let rows = conn.query_iter(&sql).await.unwrap();
+    let ret: Vec<u64> = rows
+        .map(|r| r.unwrap().try_into().unwrap())
+        .collect::<Vec<(u64,)>>()
+        .await
+        .into_iter()
+        .map(|r| r.0)
+        .collect();
+    assert_eq!(ret, (0..n).collect::<Vec<u64>>());
+}
+
+#[tokio::test]
 async fn select_sleep() {
     let (conn, _) = prepare("select_sleep").await;
     let mut rows = conn.query_iter("select SLEEP(2);").await.unwrap();
@@ -209,19 +226,3 @@ async fn select_sleep() {
     }
     assert_eq!(result, vec![0]);
 }
-
-// #[tokio::test]
-// async fn select_bitmap_string() {
-//     let (conn, _) = prepare("select_bitmap_string").await;
-//     let mut rows = conn
-//         .query_iter("select build_bitmap([1,2,3,4,5,6]), 11::String")
-//         .await
-//         .unwrap();
-//     let mut result = vec![];
-//     while let Some(row) = rows.next().await {
-//         let row: (String, String) = row.unwrap().try_into().unwrap();
-//         assert!(row.0.contains('\0'));
-//         result.push(row.1);
-//     }
-//     assert_eq!(result, vec!["11".to_string()]);
-// }

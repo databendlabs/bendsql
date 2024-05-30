@@ -35,6 +35,7 @@ pub struct SettingsConfig {
     pub display_pretty_sql: Option<bool>,
     pub prompt: Option<String>,
     pub progress_color: Option<String>,
+    pub no_auto_complete: Option<bool>,
     pub show_progress: Option<bool>,
     pub show_stats: Option<bool>,
     pub expand: Option<String>,
@@ -57,7 +58,7 @@ impl From<&str> for ExpandMode {
             "on" => ExpandMode::On,
             "off" => ExpandMode::Off,
             "auto" => ExpandMode::Auto,
-            _ => ExpandMode::Off,
+            _ => ExpandMode::Auto,
         }
     }
 }
@@ -67,6 +68,7 @@ pub struct Settings {
     pub display_pretty_sql: bool,
     pub prompt: String,
     pub progress_color: String,
+    pub no_auto_complete: bool,
 
     /// Show progress [bar] when executing queries.
     /// Only works with output format `table` and `null`.
@@ -139,6 +141,7 @@ impl Settings {
         self.progress_color = cfg
             .progress_color
             .unwrap_or_else(|| self.progress_color.clone());
+        self.no_auto_complete = cfg.no_auto_complete.unwrap_or(self.no_auto_complete);
         self.show_progress = cfg.show_progress.unwrap_or(self.show_progress);
         self.show_stats = cfg.show_stats.unwrap_or(self.show_stats);
         self.expand = cfg
@@ -235,9 +238,10 @@ impl Default for Settings {
             display_pretty_sql: true,
             progress_color: "cyan".to_string(),
             prompt: "{user}@{warehouse}/{database}> ".to_string(),
+            no_auto_complete: false,
             output_format: OutputFormat::Table,
             quote_style: OutputQuoteStyle::Necessary,
-            expand: ExpandMode::Off,
+            expand: ExpandMode::Auto,
             show_progress: false,
             max_display_rows: 40,
             max_col_width: 1024 * 1024,

@@ -9,7 +9,6 @@ maturin develop
 
 ## Usage
 
-
 ### Blocking
 
 ```python
@@ -64,6 +63,54 @@ async def main():
 asyncio.run(main())
 ```
 
+## Type Mapping
+
+[Databend Types](https://docs.databend.com/sql/sql-reference/data-types/)
+
+### General Data Types
+
+| Databend    | Python              |
+| ----------- | ------------------- |
+| `BOOLEAN`   | `bool`              |
+| `TINYINT`   | `int`               |
+| `SMALLINT`  | `int`               |
+| `INT`       | `int`               |
+| `BIGINT`    | `int`               |
+| `FLOAT`     | `float`             |
+| `DOUBLE`    | `float`             |
+| `DECIMAL`   | `decimal.Decimal`   |
+| `DATE`      | `datetime.date`     |
+| `TIMESTAMP` | `datetime.datetime` |
+| `VARCHAR`   | `str`               |
+| `BINARY`    | `bytes`             |
+
+### Semi-Structured Data Types
+
+| Databend   | Python  |
+| ---------- | ------- |
+| `ARRAY`    | `list`  |
+| `TUPLE`    | `tuple` |
+| `MAP`      | `dict`  |
+| `VARIANT`  | `str`   |
+| `BITMAP`   | `str`   |
+| `GEOMETRY` | `str`   |
+
+Note: `VARIANT` is a json encoded string. Example:
+
+```sql
+CREATE TABLE example (
+    data VARIANT
+);
+INSERT INTO example VALUES ('{"a": 1, "b": "hello"}');
+```
+
+```python
+row = await conn.query_row("SELECT * FROM example limit 1;")
+data = row.values()[0]
+value = json.loads(data)
+print(value)
+```
+
 ## APIs
 
 ### AsyncDatabendClient
@@ -105,7 +152,6 @@ class BlockingDatabendConnection:
     def query_iter(self, sql: str) -> RowIterator: ...
     def stream_load(self, sql: str, data: list[list[str]]) -> ServerStats: ...
 ```
-
 
 ### Row
 

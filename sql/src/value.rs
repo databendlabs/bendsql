@@ -197,12 +197,12 @@ impl TryFrom<(&DataType, &str)> for Value {
                 Ok(Self::Number(d))
             }
             DataType::Timestamp => Ok(Self::Timestamp(
-                chrono::NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.6f")?
+                NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.6f")?
                     .and_utc()
                     .timestamp_micros(),
             )),
             DataType::Date => Ok(Self::Date(
-                chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE,
+                NaiveDate::parse_from_str(v, "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE,
             )),
             DataType::Bitmap => Ok(Self::Bitmap(v.to_string())),
             DataType::Variant => Ok(Self::Variant(v.to_string())),
@@ -540,8 +540,7 @@ impl TryFrom<Value> for NaiveDateTime {
             Value::Timestamp(i) => {
                 let secs = i / 1_000_000;
                 let nanos = ((i % 1_000_000) * 1000) as u32;
-                let t = DateTime::from_timestamp(secs, nanos);
-                match t {
+                match DateTime::from_timestamp(secs, nanos) {
                     Some(t) => Ok(t.naive_utc()),
                     None => Err(ConvertError::new("NaiveDateTime", "".to_string()).into()),
                 }
@@ -557,8 +556,7 @@ impl TryFrom<Value> for NaiveDate {
         match val {
             Value::Date(i) => {
                 let days = i + DAYS_FROM_CE;
-                let d = NaiveDate::from_num_days_from_ce_opt(days);
-                match d {
+                match NaiveDate::from_num_days_from_ce_opt(days) {
                     Some(d) => Ok(d),
                     None => Err(ConvertError::new("NaiveDate", "".to_string()).into()),
                 }
@@ -967,8 +965,8 @@ pub fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
 
 pub fn parse_geometry(raw_data: &[u8]) -> Result<String> {
     let mut data = std::io::Cursor::new(raw_data);
-    let wkt = Ewkt::from_wkb(&mut data, WkbDialect::Ewkb);
-    wkt.map(|g| g.0).map_err(|e| e.into())
+    let wkt = Ewkt::from_wkb(&mut data, WkbDialect::Ewkb)?;
+    Ok(wkt.0)
 }
 
 struct ValueDecoder {}
@@ -1119,8 +1117,7 @@ impl ValueDecoder {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
-        let days =
-            chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE;
+        let days = NaiveDate::parse_from_str(v, "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE;
         Ok(Value::Date(days))
     }
 
@@ -1128,7 +1125,7 @@ impl ValueDecoder {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
-        let ts = chrono::NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.6f")?
+        let ts = NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.6f")?
             .and_utc()
             .timestamp_micros();
         Ok(Value::Timestamp(ts))
