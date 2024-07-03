@@ -113,10 +113,6 @@ jobs:
         pyver: [3.8, 3.9, 3.10, 3.11]
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Rust toolchain
-        uses: ./.github/actions/setup
-        with:
-          cache-key: bindings-python-check
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
