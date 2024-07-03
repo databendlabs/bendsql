@@ -258,13 +258,15 @@ pub async fn main() -> Result<()> {
                 if tls {
                     eprintln!("warning: --tls is ignored when --dsn is set");
                 }
-            } else {
-                if let Some(tls) = config.connection.args.get("tls") {
-                    if tls.to_lowercase() == "true" {
-                        eprintln!("warning: --tls is ignored when --dsn is set")
-                    }
+            } else if let Some(tls) = config.connection.args.get("tls") {
+                if tls.to_lowercase() == "true" {
+                    eprintln!("warning: --tls is ignored when --dsn is set")
                 }
+            } else if config.connection.args.get("tls").is_none() {
+                // args.tls is none and not config in config.toml
+                eprintln!("warning: --tls is ignored when --dsn is set");
             }
+
             if args.flight {
                 eprintln!("warning: --flight is ignored when --dsn is set");
             }
@@ -306,14 +308,17 @@ pub async fn main() -> Result<()> {
                         .args
                         .insert("sslmode".to_string(), "disable".to_string());
                 }
-            } else {
-                if let Some(tls) = conn_args.args.get("tls") {
-                    if tls.to_lowercase() != "true" {
-                        conn_args
-                            .args
-                            .insert("sslmode".to_string(), "disable".to_string());
-                    }
+            } else if let Some(tls) = conn_args.args.get("tls") {
+                if tls.to_lowercase() == "false" {
+                    conn_args
+                        .args
+                        .insert("sslmode".to_string(), "disable".to_string());
                 }
+            } else if conn_args.args.get("tls").is_none() {
+                // means arg.tls is none and not config in config.toml
+                conn_args
+                    .args
+                    .insert("sslmode".to_string(), "disable".to_string());
             }
 
             // override args if specified in command line
@@ -329,7 +334,6 @@ pub async fn main() -> Result<()> {
     }
 
     let dsn = conn_args.get_dsn()?;
-    println!("not set dsn : {}", dsn.clone());
     let mut settings = Settings::default();
     let is_terminal = stdin().is_terminal();
     let is_repl = is_terminal && !args.non_interactive && !args.check && args.query.is_none();
