@@ -223,7 +223,10 @@ impl Config {
 
     fn load_from_file(path: &str) -> Self {
         match toml::from_str(&std::fs::read_to_string(path).unwrap()) {
-            Ok(config) => config,
+            Ok(config) => {
+                println!("path is {:?}", path);
+                config
+            }
             Err(e) => {
                 eprintln!("failed to load config file {}: {}, using defaults", path, e);
                 Self::default()
