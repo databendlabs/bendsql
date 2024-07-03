@@ -10,8 +10,8 @@ on:
     branches:
       - main
     paths:
-      - 'sql/**'
-      - 'bindings/python/**'
+      - "sql/**"
+      - "bindings/python/**"
       - ".github/workflows/bindings.python.yml"
 
 concurrency:
@@ -30,9 +30,9 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-          cache: 'pipenv'
-          cache-dependency-path: 'bindings/python/Pipfile.lock'
+          python-version: "3.11"
+          cache: "pipenv"
+          cache-dependency-path: "bindings/python/Pipfile.lock"
       - name: Install pipenv
         run: curl https://raw.githubusercontent.com/pypa/pipenv/master/get-pipenv.py | python
       - name: Install dependencies
@@ -53,11 +53,26 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: linux, arch: x86_64, target: x86_64-unknown-linux-gnu, runner: ubuntu-latest }
-          - { os: linux, arch: aarch64, target: aarch64-unknown-linux-gnu, runner: ubuntu-latest }
-          - { os: windows, arch: x86_64, target: x86_64-pc-windows-msvc, runner: windows-2019 }
-          - { os: macos, arch: x86_64, target: x86_64-apple-darwin, runner: macos-11 }
-          - { os: macos, arch: aarch64, target: aarch64-apple-darwin, runner: macos-11 }
+          - os: linux
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - os: linux
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - os: windows
+            arch: x86_64
+            target: x86_64-pc-windows-msvc
+            runner: windows-2019
+          - os: macos
+            arch: x86_64
+            target: x86_64-apple-darwin
+            runner: macos-13
+          - os: macos
+            arch: aarch64
+            target: aarch64-apple-darwin
+            runner: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: Get opts
@@ -85,7 +100,7 @@ jobs:
           working-directory: bindings/python
           target: ${{ matrix.target }}
           manylinux: ${{ steps.opts.outputs.MANYLINUX }}
-          sccache: 'true'
+          sccache: "true"
           args: ${{ steps.opts.outputs.BUILD_ARGS }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
