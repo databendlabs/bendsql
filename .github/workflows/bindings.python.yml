@@ -106,13 +106,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        pyver: [3.7, 3.8, 3.9, 3.10, 3.11, 3.12]
+        pyver: ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: "${{ matrix.pyver }}"
+          python-version: ${{ matrix.pyver }}
       - name: Prepare
         working-directory: tests
         run: make up
