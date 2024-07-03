@@ -31,16 +31,12 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
-          cache: "pipenv"
-          cache-dependency-path: "bindings/python/Pipfile.lock"
-      - name: Install pipenv
-        run: curl https://raw.githubusercontent.com/pypa/pipenv/master/get-pipenv.py | python
       - name: Install dependencies
         working-directory: bindings/python
-        run: pipenv install --dev
+        run: pip install ruff
       - name: Check format
         working-directory: bindings/python
-        run: pipenv run ruff format --check .
+        run: ruff format --check .
 
   build:
     name: build-${{ matrix.os }}-${{ matrix.arch }}
@@ -117,10 +113,6 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "${{ matrix.pyver }}"
-          cache: "pipenv"
-          cache-dependency-path: "bindings/python/Pipfile.lock"
-      - name: Install pipenv
-        run: curl https://raw.githubusercontent.com/pypa/pipenv/master/get-pipenv.py | python
       - name: Prepare
         working-directory: tests
         run: make up
