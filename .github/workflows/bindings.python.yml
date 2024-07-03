@@ -128,9 +128,16 @@ jobs:
       - name: Prepare
         working-directory: tests
         run: make up
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bindings-python-linux-x86_64
+          path: bindings/python/artifacts
       - name: Install dependencies
         working-directory: bindings/python
-        run: pip install behave
+        run: |
+          pip install behave
+          pip install artifacts/*.whl
       - name: Test
         working-directory: bindings/python
         run: behave tests/*
