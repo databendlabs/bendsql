@@ -258,8 +258,8 @@ pub async fn main() -> Result<()> {
                 if tls {
                     eprintln!("warning: --tls is ignored when --dsn is set");
                 }
-            } else if let Some(tls) = config.connection.args.get("tls") {
-                if tls.to_lowercase() == "true" {
+            } else if let Some(tls) = config.connection.tls {
+                if tls {
                     eprintln!("warning: --tls is ignored when --dsn is set")
                 }
             }
@@ -305,13 +305,13 @@ pub async fn main() -> Result<()> {
                         .args
                         .insert("sslmode".to_string(), "disable".to_string());
                 }
-            } else if let Some(tls) = conn_args.args.get("tls") {
-                if tls.to_lowercase() == "false" {
+            } else if let Some(tls) = config.connection.tls {
+                if !tls {
                     conn_args
                         .args
                         .insert("sslmode".to_string(), "disable".to_string());
                 }
-            } else if !conn_args.args.contains_key("tls") {
+            } else if config.connection.tls.is_none() {
                 // means arg.tls is none and not config in config.toml
                 conn_args
                     .args

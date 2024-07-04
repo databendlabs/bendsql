@@ -106,9 +106,9 @@ sequentially if exists.
 ❯ cat ~/.bendsql/config.toml
 [connection]
 host = "127.0.0.1"
+tls = false
 
 [connection.args]
-tls = "false"
 connect_timeout = "30"
 
 [settings]
