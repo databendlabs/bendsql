@@ -262,9 +262,6 @@ pub async fn main() -> Result<()> {
                 if tls.to_lowercase() == "true" {
                     eprintln!("warning: --tls is ignored when --dsn is set")
                 }
-            } else if !config.connection.args.contains_key("tls") {
-                // args.tls is none and not config in config.toml
-                eprintln!("warning: --tls is ignored when --dsn is set");
             }
 
             if args.flight {
