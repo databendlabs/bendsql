@@ -83,7 +83,7 @@ runs:
       if: inputs.runner == 'aws'
       run: |
         echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-        export SCCACHE_BUCKET=databend-ci
-        export SCCACHE_REGION=us-east-2
-        export SCCACHE_S3_KEY_PREFIX="bendsql/sccache/"
-        export SCCACHE_S3_USE_SSL="true"
+        echo "SCCACHE_BUCKET=databend-ci" >> $GITHUB_ENV
+        echo "SCCACHE_REGION=us-east-2" >> $GITHUB_ENV
+        echo "SCCACHE_S3_KEY_PREFIX=bendsql/sccache/" >> $GITHUB_ENV
+        echo "SCCACHE_S3_USE_SSL=true" >> $GITHUB_ENV
