@@ -50,12 +50,27 @@ jobs:
 
   integration:
     needs: check
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
         with:
           cache-key: integration
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-duration-seconds: 600
+          role-to-assume: arn:aws:iam::034080348588:role/databend-ci
+          aws-region: us-east-2
+      - name: Get License from S3
+        run: |
+          aws s3 cp s3://databend-ci/misc/license.key license.key
+          aws s3 cp s3://databend-ci/misc/license.json license.json
+          cat license.json
+          echo "QUERY_DATABEND_ENTERPRISE_LICENSE=$(cat license.key)" >> $GITHUB_ENV
       - run: make -C tests test-core
       - run: make -C tests test-driver
       - run: make -C tests test-bendsql
