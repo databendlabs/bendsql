@@ -27,7 +27,7 @@ pub fn format_query(query: &str) -> String {
     if kind == QueryKind::Put || kind == QueryKind::Get {
         return query.to_owned();
     }
-    let tokens = tokenize_sql(query).unwrap();
+    let tokens = databend_common_ast::parser::tokenize_sql(query).unwrap();
     let (stmt, _) = parse_sql(&tokens, Dialect::Experimental).unwrap();
     pretty_statement(stmt, 80).unwrap()
 }
