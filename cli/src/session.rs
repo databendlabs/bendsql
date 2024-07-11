@@ -351,17 +351,14 @@ impl Session {
             let mut tokenizer = Tokenizer::new(&self.query);
 
             while let Some(Ok(token)) = tokenizer.next() {
-                match token.kind {
-                    TokenKind::SemiColon => {
-                        // push to current and continue the tokenizer
-                        let (sql, remain) = self.query.split_at(token.span.end as usize);
-                        if !sql.is_empty() {
-                            queries.push(sql.to_string());
-                        }
-                        self.query = remain.to_string();
-                        continue 'Parser;
+                if let TokenKind::SemiColon = token.kind {
+                    // push to current and continue the tokenizer
+                    let (sql, remain) = self.query.split_at(token.span.end as usize);
+                    if !sql.is_empty() {
+                        queries.push(sql.to_string());
                     }
-                    _ => {}
+                    self.query = remain.to_string();
+                    continue 'Parser;
                 }
             }
             break;
