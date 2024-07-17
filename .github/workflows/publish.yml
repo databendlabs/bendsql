@@ -24,7 +24,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cache-key: publish
-      - name: Setup Cargo Release
+      - name: Setup Cargo workspaces
         run: |
           cargo install cargo-quickinstall
           cargo quickinstall cargo-workspaces
