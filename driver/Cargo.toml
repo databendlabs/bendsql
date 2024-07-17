@@ -22,7 +22,7 @@ flight-sql = [
     "dep:arrow-flight",
     "dep:arrow-schema",
     "dep:tonic",
-    "databend-sql/flight-sql",
+    "databend-driver-core/flight-sql",
 ]
 
 [dependencies]
