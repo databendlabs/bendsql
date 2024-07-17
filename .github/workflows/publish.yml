@@ -27,15 +27,14 @@ jobs:
       - name: Setup Cargo Release
         run: |
           cargo install cargo-quickinstall
-          cargo quickinstall cargo-release
-          touch ~/.gitconfig
+          cargo quickinstall cargo-workspaces
       - name: Dry run release
         if: github.event_name == 'pull_request'
         run: |
-          cargo release publish --no-confirm --no-publish
+          cargo workspaces publish --all --dry-run
       - name: Release to crates.io
         if: github.event_name == 'push'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo release publish --execute --no-confirm
+          cargo workspaces publish --all --dry-run
