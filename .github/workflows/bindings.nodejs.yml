@@ -30,20 +30,20 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
       - name: Corepack
         working-directory: bindings/nodejs
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
         run: |
-          yarn install --immutable
+          pnpm install --frozen-lockfile
       - name: Check format
         working-directory: bindings/nodejs
-        run: yarn run prettier --check .
+        run: pnpm run prettier --check .
       - name: Build
         working-directory: bindings/nodejs
-        run: yarn build:debug
+        run: pnpm build:debug
       - name: Check diff
         run: git diff --exit-code
       - run: make -C tests test-bindings-nodejs
@@ -82,16 +82,16 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: yarn install --immutable
+        run: pnpm install --immutable
       - name: build
         working-directory: bindings/nodejs
         shell: bash
         run: |
           export NAPI_TARGET=${{ matrix.target }}
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            yarn build:debug
+            pnpm build:debug
           else
-            yarn build
+            pnpm build
           fi
       - name: strip for macos
         if: endsWith(matrix.target, '-apple-darwin')
@@ -118,13 +118,13 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
       - name: Corepack
         working-directory: bindings/nodejs
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: yarn install --immutable
+        run: pnpm install --frozen-lockfile
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -136,7 +136,7 @@ jobs:
         working-directory: bindings/nodejs
         run: |
           ls -lRh artifacts
-          yarn run napi artifacts
+          pnpm run napi artifacts
           ls -lRh npm
       - name: Add LICENSE
         run: cp LICENSE ./bindings/nodejs
@@ -144,7 +144,7 @@ jobs:
         working-directory: bindings/nodejs
         run: |
           echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-          npm publish --access public --provenance
+          pnpm publish --access public
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -4,8 +4,8 @@
 
 ```shell
 cd bindings/nodejs
-yarn install
-yarn build
+pnpm install
+pnpm build
 ```
 
 ## Usage
@@ -88,7 +88,7 @@ console.log(value);
 
 ```shell
 cd bindings/nodejs
-yarn install
-yarn build:debug
-yarn test
+pnpm install
+pnpm build:debug
+pnpm test
 ```
