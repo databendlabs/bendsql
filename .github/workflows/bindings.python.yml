@@ -143,7 +143,7 @@ jobs:
           python-version: ${{ matrix.pyver }}
       - name: Setup Docker
         run: |
-          brew install colima docker-compose
+          brew install colima docker docker-compose
           colima start
       - name: Prepare
         working-directory: tests
