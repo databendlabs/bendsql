@@ -141,6 +141,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.pyver }}
+      - name: Setup Docker
+        run: |
+          brew install colima
+          colima start
       - name: Prepare
         working-directory: tests
         run: make up
