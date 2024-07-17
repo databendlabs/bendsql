@@ -26,9 +26,9 @@ jobs:
           cache-key: publish
       - name: Setup Cargo Release
         run: |
-          rm -f ~/.gitconfig
           cargo install cargo-quickinstall
           cargo quickinstall cargo-release
+          cat /home/runner/.gitconfig
       - name: Dry run release
         if: github.event_name == 'pull_request'
         run: |
