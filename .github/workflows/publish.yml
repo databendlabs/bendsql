@@ -26,6 +26,7 @@ jobs:
           cache-key: publish
       - name: Setup Cargo Release
         run: |
+          rm -f .gitconfig
           cargo install cargo-quickinstall
           cargo quickinstall cargo-release
       - name: Dry run release
