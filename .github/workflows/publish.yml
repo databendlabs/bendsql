@@ -28,7 +28,7 @@ jobs:
         run: |
           cargo install cargo-quickinstall
           cargo quickinstall cargo-release
-          cat /home/runner/.gitconfig
+          touch ~/.gitconfig
       - name: Dry run release
         if: github.event_name == 'pull_request'
         run: |
