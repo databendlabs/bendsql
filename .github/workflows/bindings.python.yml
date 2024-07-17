@@ -101,9 +101,8 @@ jobs:
           path: bindings/python/dist/*.whl
 
   integration:
-    name: integration-${{ matrix.pyver }}
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
