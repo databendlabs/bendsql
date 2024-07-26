@@ -21,14 +21,5 @@ async fn select_simple() {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let client = APIClient::new(dsn, None).await.unwrap();
     let resp = client.start_query("select 15532").await.unwrap();
-    let result = resp
-        .data
-        .into_iter()
-        .map(|row| {
-            row.into_iter()
-                .map(|v| v.unwrap_or_default())
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(result, [["15532"]]);
+    assert_eq!(resp.data, [[Some("15532".to_string())]]);
 }
