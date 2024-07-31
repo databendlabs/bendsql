@@ -19,13 +19,13 @@ cat <<SQL | ${BENDSQL}
 INSERT INTO books_06 (title, author, date) VALUES ('foo', 'bar', '2021-01-01');
 SQL
 
-export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on&format_null_as_str=0"
+export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on&format_null_as_str=1"
 
 cat <<SQL | ${BENDSQL} --output=csv
 select * from books_06;
 SQL
 
-export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on&format_null_as_str=1"
+export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on&format_null_as_str=0"
 
 cat <<SQL | ${BENDSQL} --output=csv
 select * from books_06;
