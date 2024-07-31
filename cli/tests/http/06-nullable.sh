@@ -21,12 +21,12 @@ SQL
 
 export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on&format_null_as_str=1"
 
-cat <<SQL | ${BENDSQL} --output=csv
+cat <<SQL | ${BENDSQL} --output=table
 select * from books_06;
 SQL
 
 export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on&format_null_as_str=0"
 
-cat <<SQL | ${BENDSQL} --output=csv
+cat <<SQL | ${BENDSQL} --output=table
 select * from books_06;
 SQL
