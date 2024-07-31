@@ -46,16 +46,19 @@ async fn select_null() {
     }
     {
         let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
-        let client = Client::new(format!("{dsn}&format_null_as_str=1"));
-        let conn = client.get_conn().await.unwrap();
-        let row = conn.query_row("select * from select_null").await.unwrap();
-        assert!(row.is_some());
-        let row = row.unwrap();
-        let (val1, val2, val3): (Option<String>, Option<u64>, Option<String>) =
-            row.try_into().unwrap();
-        assert_eq!(val1, Some("NULL".to_string()));
-        assert_eq!(val2, None);
-        assert_eq!(val3, Some("NULL".to_string()));
+        // ignore null to str test for flightsql
+        if !dsn.starts_with("databend+flight://") {
+            let client = Client::new(format!("{dsn}&format_null_as_str=1"));
+            let conn = client.get_conn().await.unwrap();
+            let row = conn.query_row("select * from select_null").await.unwrap();
+            assert!(row.is_some());
+            let row = row.unwrap();
+            let (val1, val2, val3): (Option<String>, Option<u64>, Option<String>) =
+                row.try_into().unwrap();
+            assert_eq!(val1, Some("NULL".to_string()));
+            assert_eq!(val2, None);
+            assert_eq!(val3, Some("NULL".to_string()));
+        }
     }
     {
         let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
