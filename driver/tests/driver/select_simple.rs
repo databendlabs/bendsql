@@ -73,6 +73,10 @@ async fn select_null() {
         assert_eq!(val2, None);
         assert_eq!(val3, None);
     }
+    {
+        let conn = prepare().await;
+        conn.exec("DROP TABLE IF EXISTS select_null").await.unwrap();
+    }
 }
 
 #[tokio::test]
