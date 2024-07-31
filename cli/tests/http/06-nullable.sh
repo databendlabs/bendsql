@@ -11,7 +11,7 @@ select NULL;
 SQL
 
 cat <<SQL | ${BENDSQL} --quote-style=always
-select "NULL";
+select 'NULL';
 SQL
 
 export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on&format_null_as_str=1"
@@ -21,5 +21,5 @@ select NULL;
 SQL
 
 cat <<SQL | ${BENDSQL} --quote-style=always
-select "NULL";
+select 'NULL';
 SQL
