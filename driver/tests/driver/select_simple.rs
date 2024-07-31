@@ -31,16 +31,14 @@ async fn select_null() {
     {
         let conn = prepare().await;
         conn.exec("DROP TABLE IF EXISTS select_null").await.unwrap();
-        let sql_create = format!(
-            "CREATE TABLE `select_null` (
+        let sql_create = "CREATE TABLE `select_null` (
             a String,
             b UInt64,
             c String
-        );"
-        );
-        conn.exec(&sql_create).await.unwrap();
-        let sql_insert = format!("INSERT INTO `select_null` (a) VALUES ('NULL')");
-        conn.exec(&sql_insert).await.unwrap();
+        );";
+        conn.exec(sql_create).await.unwrap();
+        let sql_insert = "INSERT INTO `select_null` (a) VALUES ('NULL')";
+        conn.exec(sql_insert).await.unwrap();
     }
     {
         let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
