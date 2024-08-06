@@ -43,6 +43,7 @@ const HEADER_TENANT: &str = "X-DATABEND-TENANT";
 const HEADER_WAREHOUSE: &str = "X-DATABEND-WAREHOUSE";
 const HEADER_STAGE_NAME: &str = "X-DATABEND-STAGE-NAME";
 const HEADER_ROUTE_HINT: &str = "X-DATABEND-ROUTE-HINT";
+const TXN_STATE_ACTIVE: &str = "Active";
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -242,6 +243,15 @@ impl APIClient {
     pub async fn current_role(&self) -> Option<String> {
         let guard = self.session_state.lock().await;
         guard.role.clone()
+    }
+
+    async fn in_active_transaction(&self) -> bool {
+        let guard = self.session_state.lock().await;
+        guard
+            .txn_state
+            .as_ref()
+            .map(|s| s.eq_ignore_ascii_case(TXN_STATE_ACTIVE))
+            .unwrap_or(false)
     }
 
     pub fn username(&self) -> String {
