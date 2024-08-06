@@ -64,7 +64,7 @@ pub struct APIClient {
     tenant: Option<String>,
     warehouse: Arc<Mutex<Option<String>>>,
     session_state: Arc<Mutex<SessionState>>,
-    route_hint_gen: Arc<RouteHintGenerator>,
+    route_hint: Arc<RouteHintGenerator>,
 
     wait_time_secs: Option<i64>,
     max_rows_in_buffer: Option<i64>,
@@ -294,7 +294,7 @@ impl APIClient {
     pub async fn start_query(&self, sql: &str) -> Result<QueryResponse> {
         info!("start query: {}", sql);
         if !self.in_active_transaction().await {
-            self.route_hint_gen.next();
+            self.route_hint.next();
         }
         let session_state = self.session_state().await;
         let req = QueryRequest::new(sql)
@@ -450,7 +450,7 @@ impl APIClient {
         if let Some(warehouse) = &*warehouse {
             headers.insert(HEADER_WAREHOUSE, warehouse.parse()?);
         }
-        let route_hint = self.route_hint_gen.current();
+        let route_hint = self.route_hint.current();
         headers.insert(HEADER_ROUTE_HINT, route_hint.parse()?);
         headers.insert(HEADER_QUERY_ID, query_id.parse()?);
         Ok(headers)
@@ -606,7 +606,7 @@ impl Default for APIClient {
             page_request_timeout: Duration::from_secs(30),
             tls_ca_file: None,
             presign: PresignMode::Auto,
-            route_hint_gen: Arc::new(RouteHintGenerator::new()),
+            route_hint: Arc::new(RouteHintGenerator::new()),
         }
     }
 }
