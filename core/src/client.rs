@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,6 +42,7 @@ const HEADER_QUERY_ID: &str = "X-DATABEND-QUERY-ID";
 const HEADER_TENANT: &str = "X-DATABEND-TENANT";
 const HEADER_WAREHOUSE: &str = "X-DATABEND-WAREHOUSE";
 const HEADER_STAGE_NAME: &str = "X-DATABEND-STAGE-NAME";
+const HEADER_ROUTE_HINT: &str = "X-DATABEND-ROUTE-HINT";
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -61,6 +63,7 @@ pub struct APIClient {
     tenant: Option<String>,
     warehouse: Arc<Mutex<Option<String>>>,
     session_state: Arc<Mutex<SessionState>>,
+    route_hint_gen: Arc<RouteHintGenerator>,
 
     wait_time_secs: Option<i64>,
     max_rows_in_buffer: Option<i64>,
@@ -434,6 +437,8 @@ impl APIClient {
         if let Some(warehouse) = &*warehouse {
             headers.insert(HEADER_WAREHOUSE, warehouse.parse()?);
         }
+        let route_hint = self.route_hint_gen.current();
+        headers.insert(HEADER_ROUTE_HINT, route_hint.parse()?);
         headers.insert(HEADER_QUERY_ID, query_id.parse()?);
         Ok(headers)
     }
@@ -588,7 +593,38 @@ impl Default for APIClient {
             page_request_timeout: Duration::from_secs(30),
             tls_ca_file: None,
             presign: PresignMode::Auto,
+            route_hint_gen: Arc::new(RouteHintGenerator::new()),
         }
+    }
+}
+
+struct RouteHintGenerator {
+    nonce: AtomicU64,
+    current: std::sync::Mutex<String>,
+}
+
+impl RouteHintGenerator {
+    fn new() -> Self {
+        let mut gen = Self {
+            nonce: AtomicU64::new(0),
+            current: std::sync::Mutex::new("".to_string()),
+        };
+        gen.next();
+        gen
+    }
+
+    fn current(&self) -> String {
+        let guard = self.current.lock().unwrap();
+        guard.clone()
+    }
+
+    fn next(&mut self) -> String {
+        let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
+        let uuid = uuid::Uuid::new_v4();
+        let current = format!("rh:{}:{:06}", uuid, nonce);
+        let mut guard = self.current.lock().unwrap();
+        *guard = current.clone();
+        current
     }
 }
 
