@@ -324,13 +324,16 @@ impl APIClient {
             )));
         }
 
-        let resp: QueryResponse = resp.json().await?;
-        self.handle_session(&resp.session).await;
-        if let Some(err) = resp.error {
+        if let Some(route_hint) = resp.headers().get(HEADER_ROUTE_HINT) {
+            self.route_hint.set(route_hint.to_str().unwrap_or_default());
+        }
+        let result: QueryResponse = resp.json().await?;
+        self.handle_session(&result.session).await;
+        if let Some(err) = result.error {
             return Err(Error::InvalidResponse(err));
         }
-        self.handle_warnings(&resp);
-        Ok(resp)
+        self.handle_warnings(&result);
+        Ok(result)
     }
 
     pub async fn query_page(&self, query_id: &str, next_uri: &str) -> Result<QueryResponse> {
@@ -629,6 +632,11 @@ impl RouteHintGenerator {
     fn current(&self) -> String {
         let guard = self.current.lock().unwrap();
         guard.clone()
+    }
+
+    fn set(&self, hint: &str) {
+        let mut guard = self.current.lock().unwrap();
+        *guard = hint.to_string();
     }
 
     fn next(&self) -> String {
