@@ -293,6 +293,9 @@ impl APIClient {
 
     pub async fn start_query(&self, sql: &str) -> Result<QueryResponse> {
         info!("start query: {}", sql);
+        if !self.in_active_transaction().await {
+            self.route_hint_gen.next();
+        }
         let session_state = self.session_state().await;
         let req = QueryRequest::new(sql)
             .with_pagination(self.make_pagination())
@@ -615,7 +618,7 @@ struct RouteHintGenerator {
 
 impl RouteHintGenerator {
     fn new() -> Self {
-        let mut gen = Self {
+        let gen = Self {
             nonce: AtomicU64::new(0),
             current: std::sync::Mutex::new("".to_string()),
         };
@@ -628,7 +631,7 @@ impl RouteHintGenerator {
         guard.clone()
     }
 
-    fn next(&mut self) -> String {
+    fn next(&self) -> String {
         let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
         let uuid = uuid::Uuid::new_v4();
         let current = format!("rh:{}:{:06}", uuid, nonce);
