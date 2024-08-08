@@ -113,16 +113,22 @@ impl Session {
             }
             // server keywords
             if !settings.no_auto_complete {
-                let mut batch = sled::Batch::default();
                 let rows = conn.query_iter(PROMPT_SQL).await;
                 match rows {
                     Ok(mut rows) => {
+                        let mut count = 0;
+                        let mut batch = sled::Batch::default();
                         while let Some(Ok(row)) = rows.next().await {
                             let (w, t): (String, String) = row.try_into().unwrap();
                             batch.insert(w.as_str(), t.as_str());
+                            count += 1;
+                            if count % 1000 == 0 {
+                                db.apply_batch(batch)?;
+                                batch = sled::Batch::default();
+                            }
                         }
-                        println!("Loaded {} auto complete keywords from server.", db.len());
                         db.apply_batch(batch)?;
+                        println!("Loaded {} auto complete keywords from server.", db.len());
                     }
                     Err(e) => {
                         eprintln!("WARN: loading auto complete keywords failed: {}", e);
