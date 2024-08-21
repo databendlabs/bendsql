@@ -19,16 +19,14 @@ use anyhow::{anyhow, Result};
 use comfy_table::{Cell, CellAlignment, Table};
 use databend_driver::{Row, RowStatsIterator, RowWithStats, SchemaRef, ServerStats};
 use indicatif::{HumanBytes, ProgressBar, ProgressState, ProgressStyle};
-use rustyline::highlight::Highlighter;
 use terminal_size::{terminal_size, Width};
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    ast::format_query,
+    ast::{format_query, highlight_query},
     config::{ExpandMode, OutputFormat, OutputQuoteStyle, Settings},
-    helper::CliHelper,
     session::QueryKind,
 };
 
@@ -93,7 +91,7 @@ impl<'a> FormatDisplay<'a> {
     async fn display_table(&mut self) -> Result<()> {
         if self.settings.display_pretty_sql {
             let format_sql = format_query(self.query);
-            let format_sql = CliHelper::new().highlight(&format_sql, format_sql.len());
+            let format_sql = highlight_query(&format_sql);
             println!("\n{}\n", format_sql);
         }
         let mut rows = Vec::new();
@@ -152,21 +150,18 @@ impl<'a> FormatDisplay<'a> {
                 );
             }
             ExpandMode::Auto => {
-                if rows.len() > 1 {
-                    println!(
-                        "{}",
-                        create_table(
-                            schema,
-                            &rows,
-                            self.replace_newline,
-                            self.settings.max_display_rows,
-                            self.settings.max_width,
-                            self.settings.max_col_width
-                        )?
-                    );
-                } else {
-                    print_expanded(schema, &rows)?;
-                }
+                // FIXME: depends on terminal size
+                println!(
+                    "{}",
+                    create_table(
+                        schema,
+                        &rows,
+                        self.replace_newline,
+                        self.settings.max_display_rows,
+                        self.settings.max_width,
+                        self.settings.max_col_width
+                    )?
+                );
             }
         }
 
@@ -272,7 +267,7 @@ impl<'a> FormatDisplay<'a> {
             let (rows, mut rows_str, kind, total_rows, total_bytes) = match self.kind {
                 QueryKind::Explain => (self.rows, "rows", "explain", 0, 0),
                 QueryKind::Query => (self.rows, "rows", "read", stats.read_rows, stats.read_bytes),
-                QueryKind::Update => (
+                QueryKind::Update | QueryKind::AlterUserPassword => (
                     stats.write_rows,
                     "rows",
                     "written",

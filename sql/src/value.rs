@@ -147,6 +147,23 @@ impl Value {
     }
 }
 
+impl TryFrom<(&DataType, Option<&str>)> for Value {
+    type Error = Error;
+
+    fn try_from((t, v): (&DataType, Option<&str>)) -> Result<Self> {
+        match v {
+            Some(v) => Self::try_from((t, v)),
+            None => match t {
+                DataType::Null => Ok(Self::Null),
+                DataType::Nullable(_) => Ok(Self::Null),
+                _ => Err(Error::InvalidResponse(
+                    "NULL value for non-nullable field".to_string(),
+                )),
+            },
+        }
+    }
+}
+
 impl TryFrom<(&DataType, &str)> for Value {
     type Error = Error;
 
@@ -213,13 +230,18 @@ impl TryFrom<(&DataType, &str)> for Value {
                 let decoder = ValueDecoder {};
                 decoder.read_field(t, &mut reader)
             }
-            DataType::Nullable(inner) => {
-                if v == NULL_VALUE {
-                    Ok(Self::Null)
-                } else {
-                    Self::try_from((inner.as_ref(), v))
+            DataType::Nullable(inner) => match inner.as_ref() {
+                DataType::String => Ok(Self::String(v.to_string())),
+                _ => {
+                    // not string type, try to check if it is NULL
+                    // for compatible with old version server
+                    if v == NULL_VALUE {
+                        Ok(Self::Null)
+                    } else {
+                        Self::try_from((inner.as_ref(), v))
+                    }
                 }
-            }
+            },
         }
     }
 }

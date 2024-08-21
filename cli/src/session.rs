@@ -21,6 +21,7 @@ use anyhow::anyhow;
 use anyhow::Result;
 use async_recursion::async_recursion;
 use chrono::NaiveDateTime;
+use databend_common_ast::parser::all_reserved_keywords;
 use databend_common_ast::parser::token::TokenKind;
 use databend_common_ast::parser::token::Tokenizer;
 use databend_driver::ServerStats;
@@ -41,7 +42,7 @@ use crate::display::{format_write_progress, ChunkDisplay, FormatDisplay};
 use crate::helper::CliHelper;
 use crate::VERSION;
 
-static PROMPT_SQL: &str = "select name from system.tables union all select name from system.columns union all select name from system.databases union all select name from system.functions";
+static PROMPT_SQL: &str = "select name, 'f' as type from system.functions union all select name, 'd' as type from system.databases union all select name, 't' as type from system.tables union all select name, 'c' as type from system.columns limit 10000";
 
 static VERSION_SHORT: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -52,6 +53,16 @@ static VERSION_SHORT: Lazy<String> = Lazy::new(|| {
     }
 });
 
+// alter current user's password tokens
+const ALTER_USER_PASSWORD_TOKENS: [TokenKind; 6] = [
+    TokenKind::USER,
+    TokenKind::USER,
+    TokenKind::LParen,
+    TokenKind::RParen,
+    TokenKind::IDENTIFIED,
+    TokenKind::BY,
+];
+
 pub struct Session {
     client: Client,
     conn: Box<dyn Connection>,
@@ -60,7 +71,7 @@ pub struct Session {
     settings: Settings,
     query: String,
 
-    keywords: Arc<Vec<String>>,
+    keywords: Option<Arc<sled::Db>>,
 }
 
 impl Session {
@@ -68,7 +79,8 @@ impl Session {
         let client = Client::new(dsn).with_name(format!("bendsql/{}", VERSION_SHORT.as_str()));
         let conn = client.get_conn().await?;
         let info = conn.info().await;
-        let mut keywords = Vec::with_capacity(1024);
+        let mut keywords: Option<Arc<sled::Db>> = None;
+
         if is_repl {
             println!("Welcome to BendSQL {}.", VERSION.as_str());
             match info.warehouse {
@@ -85,24 +97,68 @@ impl Session {
                     );
                 }
             }
-            let version = conn.version().await?;
+            let version = match conn.version().await {
+                Ok(version) => version,
+                Err(err) => {
+                    match err {
+                        databend_driver::Error::Api(
+                            databend_client::error::Error::InvalidResponse(ref resp_err),
+                        ) => {
+                            if resp_err.code == 401 {
+                                return Err(err.into());
+                            }
+                        }
+                        databend_driver::Error::Arrow(arrow::error::ArrowError::IpcError(
+                            ref ipc_err,
+                        )) => {
+                            if ipc_err.contains("Unauthenticated") {
+                                return Err(err.into());
+                            }
+                        }
+                        _ => {}
+                    }
+                    "".to_string()
+                }
+            };
             println!("Connected to {}", version);
-            println!();
 
+            let config = sled::Config::new().temporary(true);
+            let db = config.open()?;
+            // ast keywords
+            {
+                let keywords = all_reserved_keywords();
+                let mut batch = sled::Batch::default();
+                for word in keywords {
+                    batch.insert(word.to_ascii_lowercase().as_str(), "k")
+                }
+                db.apply_batch(batch)?;
+            }
+            // server keywords
             if !settings.no_auto_complete {
                 let rows = conn.query_iter(PROMPT_SQL).await;
                 match rows {
                     Ok(mut rows) => {
+                        let mut count = 0;
+                        let mut batch = sled::Batch::default();
                         while let Some(Ok(row)) = rows.next().await {
-                            let name: (String,) = row.try_into().unwrap();
-                            keywords.push(name.0);
+                            let (w, t): (String, String) = row.try_into().unwrap();
+                            batch.insert(w.as_str(), t.as_str());
+                            count += 1;
+                            if count % 1000 == 0 {
+                                db.apply_batch(batch)?;
+                                batch = sled::Batch::default();
+                            }
                         }
+                        db.apply_batch(batch)?;
+                        println!("Loaded {} auto complete keywords from server.", db.len());
                     }
                     Err(e) => {
-                        eprintln!("loading auto complete keywords failed: {}", e);
+                        eprintln!("WARN: loading auto complete keywords failed: {}", e);
                     }
                 }
             }
+            keywords = Some(Arc::new(db));
+            println!();
         }
 
         Ok(Self {
@@ -111,7 +167,7 @@ impl Session {
             is_repl,
             settings,
             query: String::new(),
-            keywords: Arc::new(keywords),
+            keywords,
         })
     }
 
@@ -163,7 +219,7 @@ impl Session {
 
         // server version
         {
-            let version = self.conn.version().await?;
+            let version = self.conn.version().await.unwrap_or_default();
             println!("Server version: {}", version);
         }
 
@@ -222,12 +278,12 @@ impl Session {
 
     pub async fn handle_repl(&mut self) {
         let config = Builder::new()
-            .completion_prompt_limit(5)
-            .completion_type(CompletionType::Circular)
+            .completion_prompt_limit(10)
+            .completion_type(CompletionType::List)
             .build();
         let mut rl = Editor::<CliHelper, DefaultHistory>::with_config(config).unwrap();
 
-        rl.set_helper(Some(CliHelper::with_keywords(self.keywords.clone())));
+        rl.set_helper(Some(CliHelper::new(self.keywords.clone())));
         rl.load_history(&get_history_path()).ok();
 
         'F: loop {
@@ -386,8 +442,14 @@ impl Session {
 
         let start = Instant::now();
         let kind = QueryKind::from(query);
-        match (kind, is_repl) {
-            (QueryKind::Update, false) => {
+        match kind {
+            QueryKind::AlterUserPassword => {
+                // When changing the current user's password,
+                // exit the client and login again with the new password.
+                let _ = self.conn.exec(query).await?;
+                Ok(None)
+            }
+            QueryKind::Update => {
                 let affected = self.conn.exec(query).await?;
                 if is_repl {
                     if affected > 0 {
@@ -410,7 +472,7 @@ impl Session {
                     replace_newline_in_box_display(query)
                 };
 
-                let data = match other.0 {
+                let data = match other {
                     QueryKind::Put => {
                         let args: Vec<String> = get_put_get_args(query);
                         if args.len() != 3 {
@@ -540,7 +602,7 @@ impl Session {
                 "reconnecting to {}:{} as user {}.",
                 info.host, info.port, info.user
             );
-            let version = self.conn.version().await?;
+            let version = self.conn.version().await.unwrap_or_default();
             eprintln!("connected to {}", version);
             eprintln!();
         }
@@ -562,6 +624,7 @@ pub enum QueryKind {
     Explain,
     Put,
     Get,
+    AlterUserPassword,
 }
 
 impl From<&str> for QueryKind {
@@ -572,8 +635,21 @@ impl From<&str> for QueryKind {
                 TokenKind::EXPLAIN => QueryKind::Explain,
                 TokenKind::PUT => QueryKind::Put,
                 TokenKind::GET => QueryKind::Get,
-                TokenKind::ALTER
-                | TokenKind::DELETE
+                TokenKind::ALTER => {
+                    let mut tzs = vec![];
+                    while let Some(Ok(t)) = tz.next() {
+                        tzs.push(t.kind);
+                        if tzs.len() == ALTER_USER_PASSWORD_TOKENS.len() {
+                            break;
+                        }
+                    }
+                    if tzs == ALTER_USER_PASSWORD_TOKENS {
+                        QueryKind::AlterUserPassword
+                    } else {
+                        QueryKind::Update
+                    }
+                }
+                TokenKind::DELETE
                 | TokenKind::UPDATE
                 | TokenKind::INSERT
                 | TokenKind::CREATE

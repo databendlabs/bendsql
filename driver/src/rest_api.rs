@@ -31,9 +31,9 @@ use databend_client::error::Error as ClientError;
 use databend_client::presign::PresignedResponse;
 use databend_client::response::QueryResponse;
 use databend_client::APIClient;
-use databend_sql::error::{Error, Result};
-use databend_sql::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
-use databend_sql::schema::{Schema, SchemaRef};
+use databend_driver_core::error::{Error, Result};
+use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
+use databend_driver_core::schema::{Schema, SchemaRef};
 
 use crate::conn::{Connection, ConnectionInfo, Reader};
 
@@ -237,7 +237,7 @@ type PageFut = Pin<Box<dyn Future<Output = Result<QueryResponse>> + Send>>;
 pub struct RestAPIRows {
     client: APIClient,
     schema: SchemaRef,
-    data: VecDeque<Vec<String>>,
+    data: VecDeque<Vec<Option<String>>>,
     stats: Option<ServerStats>,
     query_id: String,
     next_uri: Option<String>,
@@ -268,7 +268,7 @@ impl Stream for RestAPIRows {
             return Poll::Ready(Some(Ok(RowWithStats::Stats(ss))));
         }
         if let Some(row) = self.data.pop_front() {
-            let row = Row::try_from((self.schema.clone(), &row))?;
+            let row = Row::try_from((self.schema.clone(), row))?;
             return Poll::Ready(Some(Ok(RowWithStats::Row(row))));
         }
         match self.next_page {
