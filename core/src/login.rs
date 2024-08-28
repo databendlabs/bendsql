@@ -14,8 +14,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::request::SessionState;
-use crate::response::QueryError;
+use crate::error_code::ErrorCode;
+use crate::session::SessionState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Debug)]
@@ -31,11 +31,15 @@ pub struct LoginRequest {
 impl From<&SessionState> for LoginRequest {
     fn from(value: &SessionState) -> Self {
         Self {
-            database: value.database.clone(),
             role: value.role.clone(),
             settings: value.settings.clone(),
+            database: value.database.clone(),
         }
     }
+}
+
+fn default_session_token_ttl_in_secs() -> u64 {
+    3600
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -43,40 +47,42 @@ pub struct LoginInfo {
     pub version: String,
     pub session_id: String,
     pub session_token: String,
-    pub session_token_validity_in_secs: u64,
+    #[serde(default = "default_session_token_ttl_in_secs")]
+    pub session_token_ttl_in_secs: u64,
     pub refresh_token: String,
-    #[allow(dead_code)]
-    pub refresh_token_validity_in_secs: u64,
 }
 
 impl LoginInfo {
-    pub fn may_need_renew_token() {
-    }
+    pub fn may_need_refresh_token() {}
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
 pub enum LoginResponse {
     Ok(LoginInfo),
-    Err { error: QueryError },
+    Err { error: ErrorCode },
 }
 
 #[derive(Serialize, Debug)]
-pub struct RenewRequest {
+pub struct RefreshSessionTokenRequest {
     pub session_token: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct RenewInfo {
+pub struct RefreshInfo {
     pub session_token: String,
-    pub session_token_validity_in_secs: u64,
+    pub session_token_ttl_in_secs: u64,
     pub refresh_token: String,
-    pub refresh_token_validity_in_secs: u64,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
-pub enum RenewResponse {
-    Ok(RenewInfo),
-    Err { error: QueryError },
+pub enum RefreshResponse {
+    Ok(RefreshInfo),
+    Err { error: ErrorCode },
+}
+
+#[derive(Serialize, Debug)]
+pub struct LogoutRequest {
+    pub refresh_token: String,
 }
