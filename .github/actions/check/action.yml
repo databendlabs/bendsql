@@ -32,10 +32,10 @@ runs:
       run: |
         cargo machete
 
-    # - name: Deny Check
-    #   shell: bash
-    #   run: |
-    #     cargo deny check
+    - name: Deny Check
+      shell: bash
+      run: |
+        cargo deny check
 
     - name: Clippy
       shell: bash
