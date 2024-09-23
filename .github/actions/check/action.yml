@@ -35,7 +35,7 @@ runs:
     - name: Deny Check
       shell: bash
       run: |
-        # cargo deny check
+        cargo deny check
 
     - name: Clippy
       shell: bash
