@@ -4,7 +4,7 @@ platform: "linux"
 version: "${version}"
 section: "database"
 priority: "extra"
-maintainer: "Databend Authors <opensource@datafuselabs.com>"
+maintainer: "Databend Authors <opensource@databend.com>"
 description: |
   BendSQL is a native command line tool for Databend.
 vendor: "Datafuse Labs"
