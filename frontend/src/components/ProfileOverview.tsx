@@ -1,7 +1,8 @@
 import React from 'react';
+import prettyMilliseconds from 'pretty-ms';
 
 import { IOverview } from '../types/ProfileGraphDashboard';
-import { filterMillisecond } from '../utills';
+
 interface ProfileOverviewProps {
   overviewInfo?: IOverview;
   queryDuration?: number;
@@ -21,7 +22,7 @@ const ProfileOverview: React.FC<ProfileOverviewProps> = ({
       <div className="expensive-nodes-node">
         <div className="expensive-nodes-node-name">Total Execution Time</div>
         <div className="expensive-nodes-node-percentage">
-          ({filterMillisecond(Math.floor(queryDuration/1000/60/24))})
+          ({prettyMilliseconds(Math.floor(queryDuration/1000/60/24))})
           {overviewInfo?.totalTimePercent}
         </div>
       </div>
