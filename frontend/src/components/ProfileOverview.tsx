@@ -22,7 +22,7 @@ const ProfileOverview: React.FC<ProfileOverviewProps> = ({
       <div className="expensive-nodes-node">
         <div className="expensive-nodes-node-name">Total Execution Time</div>
         <div className="expensive-nodes-node-percentage">
-          ({prettyMilliseconds(Math.floor(queryDuration/1000/60/24))})
+          ({prettyMilliseconds(Math.floor(queryDuration/1000/1000))})
           {overviewInfo?.totalTimePercent}
         </div>
       </div>

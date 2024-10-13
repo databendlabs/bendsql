@@ -634,7 +634,7 @@ impl From<&str> for QueryKind {
         match tz.next() {
             Some(Ok(t)) => match t.kind {
                 TokenKind::EXPLAIN => {
-                    if query.to_lowercase().contains("GRAPHICAL") {
+                    if query.to_lowercase().contains("graphical") {
                         QueryKind::Graphical
                     } else {
                         QueryKind::Explain

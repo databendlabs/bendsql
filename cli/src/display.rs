@@ -142,6 +142,7 @@ impl<'a> FormatDisplay<'a> {
         }
 
         if self.kind == QueryKind::Graphical {
+            println!("Graphical query result: -- ");
             let mut explain_results = Vec::new();
             for result in &rows {
                 explain_results.push(result.values()[0].to_string());
