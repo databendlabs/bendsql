@@ -141,6 +141,11 @@ impl<'a> FormatDisplay<'a> {
         }
 
         let schema = self.data.schema();
+        if self.kind == QueryKind::ShowCreate {
+            print_expanded(schema, &rows)?;
+            return Ok(());
+        }
+
         match self.settings.expand {
             ExpandMode::On => {
                 print_expanded(schema, &rows)?;
@@ -275,6 +280,7 @@ impl<'a> FormatDisplay<'a> {
 
             let (rows, mut rows_str, kind, total_rows, total_bytes) = match self.kind {
                 QueryKind::Explain => (self.rows, "rows", "explain", 0, 0),
+                QueryKind::ShowCreate => (self.rows, "rows", "showcreate", 0, 0),
                 QueryKind::Query => (self.rows, "rows", "read", stats.read_rows, stats.read_bytes),
                 QueryKind::Update | QueryKind::AlterUserPassword => (
                     stats.write_rows,
