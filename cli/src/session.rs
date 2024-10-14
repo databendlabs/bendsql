@@ -625,6 +625,7 @@ pub enum QueryKind {
     Put,
     Get,
     AlterUserPassword,
+    ShowCreate,
 }
 
 impl From<&str> for QueryKind {
@@ -633,6 +634,11 @@ impl From<&str> for QueryKind {
         match tz.next() {
             Some(Ok(t)) => match t.kind {
                 TokenKind::EXPLAIN => QueryKind::Explain,
+                TokenKind::SHOW => match tz.next() {
+                    Some(Ok(t)) if t.kind == TokenKind::CREATE => QueryKind::ShowCreate,
+                    _ => QueryKind::Query,
+                },
+
                 TokenKind::PUT => QueryKind::Put,
                 TokenKind::GET => QueryKind::Get,
                 TokenKind::ALTER => {
