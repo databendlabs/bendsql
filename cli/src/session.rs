@@ -626,6 +626,7 @@ pub enum QueryKind {
     Get,
     AlterUserPassword,
     Graphical,
+    ShowCreate,
 }
 
 impl From<&str> for QueryKind {
@@ -639,6 +640,10 @@ impl From<&str> for QueryKind {
                     } else {
                         QueryKind::Explain
                     }
+                },
+                TokenKind::SHOW => match tz.next() {
+                    Some(Ok(t)) if t.kind == TokenKind::CREATE => QueryKind::ShowCreate,
+                    _ => QueryKind::Query,
                 },
                 TokenKind::PUT => QueryKind::Put,
                 TokenKind::GET => QueryKind::Get,
