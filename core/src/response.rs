@@ -14,7 +14,7 @@
 
 use serde::Deserialize;
 
-use crate::request::SessionState;
+use crate::session::SessionState;
 
 #[derive(Deserialize, Debug)]
 pub struct QueryError {
