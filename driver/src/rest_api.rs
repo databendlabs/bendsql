@@ -58,8 +58,12 @@ impl Connection for RestAPIConnection {
     async fn exec(&self, sql: &str) -> Result<i64> {
         info!("exec: {}", sql);
         let mut resp = self.client.start_query(sql).await?;
+        let node_id = resp.node_id.clone();
         while let Some(next_uri) = resp.next_uri {
-            resp = self.client.query_page(&resp.id, &next_uri).await?;
+            resp = self
+                .client
+                .query_page(&resp.id, &next_uri, &node_id)
+                .await?;
         }
         Ok(resp.stats.progresses.write_progress.rows as i64)
     }
@@ -201,14 +205,19 @@ impl<'o> RestAPIConnection {
         Ok(Self { client })
     }
 
-    async fn wait_for_schema(&self, pre: QueryResponse) -> Result<QueryResponse> {
-        if !pre.data.is_empty() || !pre.schema.is_empty() {
-            return Ok(pre);
+    async fn wait_for_schema(&self, resp: QueryResponse) -> Result<QueryResponse> {
+        if !resp.data.is_empty() || !resp.schema.is_empty() {
+            return Ok(resp);
         }
-        let mut result = pre;
-        // preserve schema since it is no included in the final response
+        let node_id = resp.node_id.clone();
+        self.client.set_last_node_id(node_id.clone());
+        let mut result = resp;
+        // preserve schema since it is not included in the final response
         while let Some(next_uri) = result.next_uri {
-            result = self.client.query_page(&result.id, &next_uri).await?;
+            result = self
+                .client
+                .query_page(&result.id, &next_uri, &node_id)
+                .await?;
             if !result.data.is_empty() || !result.schema.is_empty() {
                 break;
             }
@@ -240,6 +249,7 @@ pub struct RestAPIRows {
     data: VecDeque<Vec<Option<String>>>,
     stats: Option<ServerStats>,
     query_id: String,
+    node_id: String,
     next_uri: Option<String>,
     next_page: Option<PageFut>,
 }
@@ -250,6 +260,7 @@ impl RestAPIRows {
         let rows = Self {
             client,
             query_id: resp.id,
+            node_id: resp.node_id,
             next_uri: resp.next_uri,
             schema: Arc::new(schema.clone()),
             data: resp.data.into(),
@@ -278,7 +289,6 @@ impl Stream for RestAPIRows {
                     if self.schema.fields().is_empty() {
                         self.schema = Arc::new(resp.schema.try_into()?);
                     }
-                    self.query_id = resp.id;
                     self.next_uri = resp.next_uri;
                     self.next_page = None;
                     self.stats = Some(ServerStats::from(resp.stats));
@@ -295,9 +305,10 @@ impl Stream for RestAPIRows {
                     let client = self.client.clone();
                     let next_uri = next_uri.clone();
                     let query_id = self.query_id.clone();
+                    let node_id = self.node_id.clone();
                     self.next_page = Some(Box::pin(async move {
                         client
-                            .query_page(&query_id, &next_uri)
+                            .query_page(&query_id, &next_uri, &node_id)
                             .await
                             .map_err(|e| e.into())
                     }));

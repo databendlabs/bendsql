@@ -20,6 +20,7 @@ CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-./target}
 DATABEND_USER=${DATABEND_USER:-root}
 DATABEND_PASSWORD=${DATABEND_PASSWORD:-}
 DATABEND_HOST=${DATABEND_HOST:-localhost}
+DATABEND_PORT=${DATABEND_PORT:-8000}
 
 TEST_HANDLER=$1
 
@@ -32,7 +33,7 @@ case $TEST_HANDLER in
 	;;
 "http")
 	echo "==> Testing REST API handler"
-	export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:8000/?sslmode=disable&presign=on"
+	export BENDSQL_DSN="databend+http://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:${DATABEND_PORT}/?sslmode=disable&presign=on"
 	;;
 *)
 	echo "Usage: $0 [flight|http]"
