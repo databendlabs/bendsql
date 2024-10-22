@@ -55,6 +55,7 @@ pub struct SchemaField {
 #[derive(Deserialize, Debug)]
 pub struct QueryResponse {
     pub id: String,
+    pub node_id: String,
     pub session_id: Option<String>,
     pub session: Option<SessionState>,
     pub schema: Vec<SchemaField>,

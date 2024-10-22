@@ -31,15 +31,17 @@ use url::Url;
 
 use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth};
 use crate::presign::{presign_upload_to_stage, PresignMode, PresignedResponse, Reader};
+use crate::session::SessionState;
 use crate::stage::StageLocation;
 use crate::{
     error::{Error, Result},
-    request::{PaginationConfig, QueryRequest, SessionState, StageAttachmentConfig},
+    request::{PaginationConfig, QueryRequest, StageAttachmentConfig},
     response::{QueryError, QueryResponse},
 };
 
 const HEADER_QUERY_ID: &str = "X-DATABEND-QUERY-ID";
 const HEADER_TENANT: &str = "X-DATABEND-TENANT";
+const HEADER_STICKY_NODE: &str = "X-DATABEND-STICKY-NODE";
 const HEADER_WAREHOUSE: &str = "X-DATABEND-WAREHOUSE";
 const HEADER_STAGE_NAME: &str = "X-DATABEND-STAGE-NAME";
 const HEADER_ROUTE_HINT: &str = "X-DATABEND-ROUTE-HINT";
@@ -76,6 +78,7 @@ pub struct APIClient {
     tls_ca_file: Option<String>,
 
     presign: PresignMode,
+    last_node_id: Arc<parking_lot::Mutex<Option<String>>>,
 }
 
 impl APIClient {
@@ -283,6 +286,13 @@ impl APIClient {
         }
     }
 
+    pub fn set_last_node_id(&self, node_id: String) {
+        *self.last_node_id.lock() = Some(node_id)
+    }
+    pub fn last_node_id(&self) -> Option<String> {
+        self.last_node_id.lock().clone()
+    }
+
     pub fn handle_warnings(&self, resp: &QueryResponse) {
         if let Some(warnings) = &resp.warnings {
             for w in warnings {
@@ -297,12 +307,18 @@ impl APIClient {
             self.route_hint.next();
         }
         let session_state = self.session_state().await;
+        let need_sticky = session_state.need_sticky.unwrap_or(false);
         let req = QueryRequest::new(sql)
             .with_pagination(self.make_pagination())
             .with_session(Some(session_state));
         let endpoint = self.endpoint.join("v1/query")?;
         let query_id = self.gen_query_id();
-        let headers = self.make_headers(&query_id).await?;
+        let mut headers = self.make_headers(&query_id).await?;
+        if need_sticky {
+            if let Some(node_id) = self.last_node_id() {
+                headers.insert(HEADER_STICKY_NODE, node_id.parse()?);
+            }
+        }
         let mut builder = self.cli.post(endpoint.clone()).json(&req);
         builder = self.auth.wrap(builder).await?;
         let mut resp = builder.headers(headers.clone()).send().await?;
@@ -344,7 +360,12 @@ impl APIClient {
         Ok(result)
     }
 
-    pub async fn query_page(&self, query_id: &str, next_uri: &str) -> Result<QueryResponse> {
+    pub async fn query_page(
+        &self,
+        query_id: &str,
+        next_uri: &str,
+        node_id: &str,
+    ) -> Result<QueryResponse> {
         info!("query page: {}", next_uri);
         let endpoint = self.endpoint.join(next_uri)?;
         let headers = self.make_headers(query_id).await?;
@@ -354,6 +375,7 @@ impl APIClient {
             builder = self.auth.wrap(builder).await?;
             builder
                 .headers(headers.clone())
+                .header(HEADER_STICKY_NODE, node_id)
                 .timeout(self.page_request_timeout)
                 .send()
                 .await
@@ -410,12 +432,14 @@ impl APIClient {
 
     pub async fn wait_for_query(&self, resp: QueryResponse) -> Result<QueryResponse> {
         info!("wait for query: {}", resp.id);
+        let node_id = resp.node_id.clone();
+        self.set_last_node_id(node_id.clone());
         if let Some(next_uri) = &resp.next_uri {
             let schema = resp.schema;
             let mut data = resp.data;
-            let mut resp = self.query_page(&resp.id, next_uri).await?;
+            let mut resp = self.query_page(&resp.id, next_uri, &node_id).await?;
             while let Some(next_uri) = &resp.next_uri {
-                resp = self.query_page(&resp.id, next_uri).await?;
+                resp = self.query_page(&resp.id, next_uri, &node_id).await?;
                 data.append(&mut resp.data);
             }
             resp.schema = schema;
@@ -487,6 +511,8 @@ impl APIClient {
             sql, file_format_options, copy_options
         );
         let session_state = self.session_state().await;
+        let need_sticky = session_state.need_sticky.unwrap_or(false);
+
         let stage_attachment = Some(StageAttachmentConfig {
             location: stage,
             file_format_options: Some(file_format_options),
@@ -498,8 +524,12 @@ impl APIClient {
             .with_stage_attachment(stage_attachment);
         let endpoint = self.endpoint.join("v1/query")?;
         let query_id = self.gen_query_id();
-        let headers = self.make_headers(&query_id).await?;
-
+        let mut headers = self.make_headers(&query_id).await?;
+        if need_sticky {
+            if let Some(node_id) = self.last_node_id() {
+                headers.insert(HEADER_STICKY_NODE, node_id.parse()?);
+            }
+        }
         let mut builder = self.cli.post(endpoint.clone()).json(&req);
         builder = self.auth.wrap(builder).await?;
         let mut resp = builder.headers(headers.clone()).send().await?;
@@ -626,6 +656,7 @@ impl Default for APIClient {
             tls_ca_file: None,
             presign: PresignMode::Auto,
             route_hint: Arc::new(RouteHintGenerator::new()),
+            last_node_id: Arc::new(Default::default()),
         }
     }
 }
