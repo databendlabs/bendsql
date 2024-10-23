@@ -11,14 +11,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-use anyhow::Result;
-
-use actix_web::{App, get, HttpResponse, HttpServer, Responder, web};
-use actix_web::middleware::Logger;
 use actix_files as fs;
+use actix_web::middleware::Logger;
+use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
+use anyhow::Result;
 use tokio::net::TcpListener;
-
 
 struct AppState {
     result: String,
@@ -63,18 +60,14 @@ pub async fn start_server<'a>(port: u16, result: String) {
             .wrap(Logger::default())
             .app_data(app_state.clone())
             .service(get_message)
-            .service(
-                fs::Files::new("/", "./frontend/build").index_file("index.html")
-            )
+            .service(fs::Files::new("/", "./frontend/build").index_file("index.html"))
     })
-        .bind(("127.0.0.1", port))
-        .expect("Cannot bind to port")
-        .run()
-        .await
-        .expect("Server run failed");
+    .bind(("127.0.0.1", port))
+    .expect("Cannot bind to port")
+    .run()
+    .await
+    .expect("Server run failed");
 }
-
-
 
 async fn find_available_port(start: u16) -> u16 {
     let mut port = start;
