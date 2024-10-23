@@ -1,0 +1,42 @@
+name: Frontend CI
+
+on:
+  push:
+    branches:
+      - '**'   
+    
+jobs:
+  build_frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Cache node modules
+        uses: actions/cache@v3
+        with:
+          path: ./frontend/node_modules
+          key: ${{ runner.os }}-node_modules-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-node_modules-
+            ${{ runner.os }}-
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: yarn
+
+      - name: Build front-end
+        working-directory: ./frontend
+        run: CI=false yarn build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-build
+          path: ./frontend/build  # Adjust if your build directory is different
