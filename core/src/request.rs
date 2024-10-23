@@ -12,47 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
+use crate::session::SessionState;
 use serde::{Deserialize, Serialize};
+
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 pub struct ServerInfo {
     pub id: String,
     pub start_time: String,
-}
-#[derive(Deserialize, Serialize, Debug, Default, Clone)]
-pub struct SessionState {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub database: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub settings: Option<BTreeMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub secondary_roles: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub txn_state: Option<String>,
-
-    // hide fields of no interest (but need to send back to server in next query)
-    #[serde(flatten)]
-    additional_fields: HashMap<String, serde_json::Value>,
-}
-
-impl SessionState {
-    pub fn with_settings(mut self, settings: Option<BTreeMap<String, String>>) -> Self {
-        self.settings = settings;
-        self
-    }
-
-    pub fn with_database(mut self, database: Option<String>) -> Self {
-        self.database = database;
-        self
-    }
-
-    pub fn with_role(mut self, role: Option<String>) -> Self {
-        self.role = role;
-        self
-    }
 }
 
 #[derive(Serialize, Debug)]
@@ -122,14 +90,9 @@ mod test {
     #[test]
     fn build_request() -> Result<()> {
         let req = QueryRequest::new("select 1")
-            .with_session(Some(SessionState {
-                database: Some("default".to_string()),
-                settings: Some(BTreeMap::new()),
-                role: None,
-                secondary_roles: None,
-                txn_state: None,
-                additional_fields: Default::default(),
-            }))
+            .with_session(Some(
+                SessionState::default().with_database(Some("default".to_string())),
+            ))
             .with_pagination(Some(PaginationConfig {
                 wait_time_secs: Some(1),
                 max_rows_in_buffer: Some(1),
@@ -142,7 +105,7 @@ mod test {
             }));
         assert_eq!(
             serde_json::to_string(&req)?,
-            r#"{"session":{"database":"default","settings":{}},"sql":"select 1","pagination":{"wait_time_secs":1,"max_rows_in_buffer":1,"max_rows_per_page":1},"stage_attachment":{"location":"@~/my_location"}}"#
+            r#"{"session":{"database":"default"},"sql":"select 1","pagination":{"wait_time_secs":1,"max_rows_in_buffer":1,"max_rows_per_page":1},"stage_attachment":{"location":"@~/my_location"}}"#
         );
         Ok(())
     }
