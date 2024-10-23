@@ -6,6 +6,7 @@ check:
 	cargo fmt --all -- --check
 	cargo clippy --all-targets --all-features -- -D warnings
 	cargo deny check
+	# cargo install cargo-machete
 	cargo machete
 	# cargo install hawkeye
 	hawkeye check
