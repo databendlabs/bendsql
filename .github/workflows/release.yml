@@ -34,12 +34,12 @@ jobs:
         working-directory: ./frontend
         run: CI=false yarn build
 
-      # Save frontend build artifacts
-      - name: Upload frontend build artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: frontend-build
-          path: ./frontend/build  # Save frontend build
+      # Move frontend build files to the correct directory for packaging with Rust
+      - name: Move frontend build to Rust project
+        run: |
+          mkdir -p ./target/${{ matrix.target }}/release/frontend/build
+          cp -r ./frontend/build/* ./target/${{ matrix.target }}/release/frontend/build/
+
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -145,18 +145,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Download frontend build artifacts
-      - name: Download frontend build artifacts
-        uses: actions/download-artifact@v2
-        with:
-          name: frontend-build
-
-      - name: Prepare release directory
-        shell: bash
-        run: |
-          mkdir -p dist/release/frontend
-          cp -r frontend/build/* dist/release/frontend/
-
       - name: Setup nfpm
         shell: bash
         run: |
@@ -173,8 +161,6 @@ jobs:
           mkdir -p dist/pkg
           gh release download ${{ github.ref_name }} --pattern "bendsql-${{ matrix.target }}.tar.gz" --dir dist/
           tar -xzf dist/bendsql-${{ matrix.target }}.tar.gz -C dist/
-    
-
 
       # Package everything together
       - name: Package with nfpm
