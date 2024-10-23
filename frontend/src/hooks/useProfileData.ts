@@ -3,8 +3,8 @@ import { clone } from "lodash-es";
 import { transformErrors, getPercent } from "../utills";
 import { Profile, StatisticsDesc, StatisticsData, AttributeData, IOverview, MessageResponse } from "../types/ProfileGraphDashboard";
 
-const CPU_TIEM_KEY = "CpuTime";
-const WAIT_TIEM_KEY = "WaitTime";
+const CPU_TIME_KEY = "CpuTime";
+const WAIT_TIME_KEY = "WaitTime";
 
 export function useProfileData(): {
   plainData: Profile[];
@@ -59,8 +59,8 @@ export function useProfileData(): {
 
   function transformProfiles(profiles: Profile[], statistics_desc: StatisticsDesc) {
 
-    const cpuTimeIndex = statistics_desc[CPU_TIEM_KEY]?.index;
-    const waitTimeIndex = statistics_desc[WAIT_TIEM_KEY]?.index;
+    const cpuTimeIndex = statistics_desc[CPU_TIME_KEY]?.index;
+    const waitTimeIndex = statistics_desc[WAIT_TIME_KEY]?.index;
     let cpuTime = 0;
     let waitTime = 0;
 
