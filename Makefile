@@ -13,8 +13,15 @@ check:
 	# cargo install typos-cli
 	typos
 
+build-frontend:
+	cd frontend && yarn && yarn build
+	mkdir -p target/release/frontend
+	rm -rf target/release/frontend/*
+	cp -r frontend/build/* target/release/frontend/
+
 build:
 	cargo build --release
+	make build-frontend
 
 test:
 	cargo test --all --all-features --lib -- --nocapture
