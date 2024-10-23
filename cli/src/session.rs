@@ -640,7 +640,7 @@ impl From<&str> for QueryKind {
                     } else {
                         QueryKind::Explain
                     }
-                },
+                }
                 TokenKind::SHOW => match tz.next() {
                     Some(Ok(t)) if t.kind == TokenKind::CREATE => QueryKind::ShowCreate,
                     _ => QueryKind::Query,

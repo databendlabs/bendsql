@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 pub mod conn;
 #[cfg(feature = "flight-sql")]
 mod flight_sql;

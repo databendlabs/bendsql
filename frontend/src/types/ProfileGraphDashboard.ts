@@ -116,7 +116,7 @@ export interface IOverview {
   cpuTime: number;
   waitTime: number;
   totalTime: number;
-  isTotalBigerZero?: boolean;
+  isTotalBiggerZero?: boolean;
   totalTimePercent?: string;
   cpuTimePercent?: string;
   waitTimePercent?: string;
