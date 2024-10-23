@@ -15,6 +15,7 @@ check:
 
 build-frontend:
 	cd frontend && yarn && yarn build
+	cd ../
 	mkdir -p target/release/frontend
 	rm -rf target/release/frontend/*
 	cp -r frontend/build/* target/release/frontend/
