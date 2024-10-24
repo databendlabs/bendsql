@@ -15,8 +15,31 @@
 use actix_web::middleware::Logger;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use anyhow::Result;
+use mime_guess::from_path;
 use rust_embed::RustEmbed;
 use tokio::net::TcpListener;
+
+#[derive(RustEmbed)]
+#[folder = "frontend/build/"]
+struct Asset;
+
+async fn embed_file(path: web::Path<String>) -> HttpResponse {
+    let file_path = if path.is_empty() {
+        "index.html".to_string()
+    } else {
+        path.into_inner()
+    };
+
+    match Asset::get(&file_path) {
+        Some(content) => {
+            let mime_type = from_path(&file_path).first_or_octet_stream();
+            HttpResponse::Ok()
+                .content_type(mime_type.as_ref())
+                .body(content.data)
+        }
+        None => HttpResponse::NotFound().body("File not found"),
+    }
+}
 
 struct AppState {
     result: String,
@@ -28,19 +51,6 @@ async fn get_message(data: web::Data<AppState>) -> impl Responder {
         "result": data.result,
     });
     HttpResponse::Ok().json(response)
-}
-
-// Define the struct to embed the frontend build directory
-#[derive(RustEmbed)]
-#[folder = "frontend/build/"]
-struct Asset;
-
-// Serve embedded files from rust-embed
-async fn embed_file(path: web::Path<String>) -> HttpResponse {
-    match Asset::get(&path) {
-        Some(content) => HttpResponse::Ok().body(content.data),
-        None => HttpResponse::NotFound().body("File not found"),
-    }
 }
 
 pub async fn start_server_and_open_browser<'a>(explain_result: String) -> Result<()> {
