@@ -19,13 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Setup Node.js for Frontend build
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
 
-      # Install dependencies and build the frontend
       - name: Install frontend dependencies
         working-directory: ./frontend
         run: yarn install
@@ -48,7 +46,7 @@ jobs:
           curl -sSfLo /tmp/cross.tar.gz https://github.com/cross-rs/cross/releases/download/v0.2.5/cross-x86_64-unknown-linux-gnu.tar.gz
           tar -xzf /tmp/cross.tar.gz -C /tmp
           sudo mv /tmp/cross /usr/local/bin/cross
-      - name: Build Rust project
+      - name: Build
         shell: bash
         run: |
           cross build --release --target=${{ matrix.target }} --bin=bendsql
@@ -149,7 +147,6 @@ jobs:
           tar -xzf /tmp/nfpm.tar.gz -C /tmp
           sudo mv /tmp/nfpm /usr/local/bin/nfpm
 
-      # Download
       - name: Download
         shell: bash
         env:
@@ -159,16 +156,14 @@ jobs:
           gh release download ${{ github.ref_name }} --pattern "bendsql-${{ matrix.target }}.tar.gz" --dir dist/
           tar -xzf dist/bendsql-${{ matrix.target }}.tar.gz -C dist/
 
-      # Package everything together
-      - name: Package with nfpm
+      - name: Package
         shell: bash
         run: |
           export arch=${{ matrix.arch }}
           export version=${{ github.ref_name }}
           nfpm package --packager ${{ matrix.packager }} --target dist/pkg/ -f <(envsubst '${arch} ${version}' < nfpm.yaml)
 
-      # Upload the final package to GitHub Releases
-      - name: Publish package
+      - name: Publish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
