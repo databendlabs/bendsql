@@ -34,13 +34,6 @@ jobs:
         working-directory: ./frontend
         run: CI=false yarn build
 
-      # Move frontend build files to the correct directory for packaging with Rust
-      - name: Move frontend build to Rust project
-        run: |
-          mkdir -p ./target/${{ matrix.target }}/release/frontend/build
-          cp -r ./frontend/build/* ./target/${{ matrix.target }}/release/frontend/build/
-
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable

@@ -30,6 +30,22 @@ async fn get_message(data: web::Data<AppState>) -> impl Responder {
     HttpResponse::Ok().json(response)
 }
 
+// Define the struct to embed the frontend build directory
+#[derive(RustEmbed)]
+#[folder = "frontend/build/"]
+struct Asset;
+
+// Serve embedded files from rust-embed
+async fn embed_file(path: web::Path<String>) -> HttpResponse {
+    let file = match Asset::get(&path) {
+        Some(content) => {
+            HttpResponse::Ok().body(content.data)
+        }
+        None => HttpResponse::NotFound().body("File not found"),
+    };
+    file
+}
+
 pub async fn start_server_and_open_browser<'a>(explain_result: String) -> Result<()> {
     let port = find_available_port(8080).await;
     let server = tokio::spawn(async move {
@@ -61,7 +77,7 @@ pub async fn start_server<'a>(port: u16, result: String) {
             .wrap(Logger::default())
             .app_data(app_state.clone())
             .service(get_message)
-            .service(fs::Files::new("/", "./frontend/build").index_file("index.html"))
+            .route("/{filename:.*}", web::get().to(embed_file))
     })
     .bind(("127.0.0.1", port))
     .expect("Cannot bind to port")
