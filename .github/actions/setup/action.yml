@@ -110,4 +110,4 @@ runs:
       run: |
         rm -rf ../cli/frontend
         mkdir -p ../cli/frontend
-        yarn && yarn build && mv build ../cli/frontend/
+        yarn install && yarn build && mv build ../cli/frontend/
