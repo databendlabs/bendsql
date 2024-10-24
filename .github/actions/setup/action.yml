@@ -110,4 +110,5 @@ runs:
       run: |
         rm -rf ../cli/frontend
         mkdir -p ../cli/frontend
+        yarn config set network-timeout 600000 # Increase network timeout for reliability
         yarn install && yarn build && mv build ../cli/frontend/
