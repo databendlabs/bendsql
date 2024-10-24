@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use actix_files as fs;
 use actix_web::middleware::Logger;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use anyhow::Result;
 use tokio::net::TcpListener;
+use rust_embed::RustEmbed;
 
 struct AppState {
     result: String,
@@ -38,9 +38,7 @@ struct Asset;
 // Serve embedded files from rust-embed
 async fn embed_file(path: web::Path<String>) -> HttpResponse {
     let file = match Asset::get(&path) {
-        Some(content) => {
-            HttpResponse::Ok().body(content.data)
-        }
+        Some(content) => HttpResponse::Ok().body(content.data),
         None => HttpResponse::NotFound().body("File not found"),
     };
     file

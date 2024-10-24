@@ -32,7 +32,10 @@ jobs:
 
       - name: Build frontend
         working-directory: ./frontend
-        run: CI=false yarn build
+        run: |
+          CI=false yarn build
+          mkdir -p ../cli/frontend
+          mv build ../cli/frontend/
 
       - uses: dtolnay/rust-toolchain@stable
         with:
