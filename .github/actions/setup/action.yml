@@ -87,3 +87,11 @@ runs:
         echo "SCCACHE_REGION=us-east-2" >> $GITHUB_ENV
         echo "SCCACHE_S3_KEY_PREFIX=bendsql/sccache/" >> $GITHUB_ENV
         echo "SCCACHE_S3_USE_SSL=true" >> $GITHUB_ENV
+
+    - name: Install Frontend
+      working-directory: frontend
+      shell: bash
+      run: |
+        rm -rf ../cli/frontend
+        mkdir -p ../cli/frontend
+        yarn && yarn build && mv build ../cli/frontend/
