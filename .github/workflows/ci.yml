@@ -20,6 +20,18 @@ jobs:
           cache-key: check
       - uses: ./.github/actions/check
 
+  install-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Frontend
+        working-directory: frontend
+        shell: bash
+        run: |
+          rm -rf ../cli/frontend
+          mkdir -p ../cli/frontend
+          yarn && yarn build && mv build ../cli/frontend/
+
   build:
     needs: check
     runs-on: ${{ matrix.os }}-latest
