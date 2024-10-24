@@ -38,10 +38,12 @@ runs:
         cargo deny check
 
     - name: Install Frontend
+      working-directory: frontend
       shell: bash
       run: |
-        cd frontend
-        yarn && yarn build && mv build ../cli/frontend/ && cd ../
+        rm -rf ../cli/frontend
+        mkdir -p ../cli/frontend
+        yarn && yarn build && mv build ../cli/frontend/
 
     - name: Clippy
       shell: bash

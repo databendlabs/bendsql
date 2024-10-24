@@ -34,6 +34,7 @@ jobs:
         working-directory: ./frontend
         run: |
           yarn build
+          rm -rf ../cli/frontend
           mkdir -p ../cli/frontend
           mv build ../cli/frontend/
 
