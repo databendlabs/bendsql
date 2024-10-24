@@ -15,8 +15,8 @@
 use actix_web::middleware::Logger;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use anyhow::Result;
-use tokio::net::TcpListener;
 use rust_embed::RustEmbed;
+use tokio::net::TcpListener;
 
 struct AppState {
     result: String,
@@ -37,11 +37,10 @@ struct Asset;
 
 // Serve embedded files from rust-embed
 async fn embed_file(path: web::Path<String>) -> HttpResponse {
-    let file = match Asset::get(&path) {
+    match Asset::get(&path) {
         Some(content) => HttpResponse::Ok().body(content.data),
         None => HttpResponse::NotFound().body("File not found"),
-    };
-    file
+    }
 }
 
 pub async fn start_server_and_open_browser<'a>(explain_result: String) -> Result<()> {

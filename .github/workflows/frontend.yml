@@ -33,7 +33,7 @@ jobs:
 
       - name: Build front-end
         working-directory: ./frontend
-        run: CI=false yarn build
+        run: yarn build
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3

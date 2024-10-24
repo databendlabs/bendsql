@@ -33,7 +33,7 @@ jobs:
       - name: Build frontend
         working-directory: ./frontend
         run: |
-          CI=false yarn build
+          yarn build
           mkdir -p ../cli/frontend
           mv build ../cli/frontend/
 
