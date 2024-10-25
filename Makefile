@@ -13,7 +13,19 @@ check:
 	# cargo install typos-cli
 	typos
 
+build-frontend:
+	rm -rf cli/frontend
+	mkdir -p cli/frontend
+	cd frontend && \
+	if [ ! -d node_modules ]; then yarn install; fi && \
+	yarn build && mv build ../cli/frontend/
+
+run:
+	make build-frontend
+	cargo run
+
 build:
+	make build-frontend
 	cargo build --release
 
 test:
