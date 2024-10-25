@@ -87,7 +87,7 @@ async fn get_message(query: Query<MessageQuery>) -> impl Responder {
         })
 }
 
-pub fn start_server<'a>(addr: &str, port: u16) -> Server {
+pub fn start_server(addr: &str, port: u16) -> Server {
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())

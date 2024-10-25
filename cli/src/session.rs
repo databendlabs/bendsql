@@ -166,9 +166,9 @@ impl Session {
 
         let server_handle = if is_repl {
             let port = find_available_port(settings.bind_port).await;
-            let server = start_server(&settings.bind_address, port);
+            let addr = settings.bind_address.clone();
 
-            let server_handle = tokio::spawn(async move { server.await });
+            let server_handle = tokio::spawn(async move { start_server(&addr, port).await });
             println!("Started web server at {}:{}", settings.bind_address, port);
             settings.bind_port = port;
             Some(server_handle)

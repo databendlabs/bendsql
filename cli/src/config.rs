@@ -161,7 +161,7 @@ impl Settings {
         self.max_col_width = cfg.max_col_width.unwrap_or(self.max_col_width);
         self.max_display_rows = cfg.max_display_rows.unwrap_or(self.max_display_rows);
         self.auto_open_browser = c.server.auto_open_browser;
-        self.bind_address = c.server.bind_address.clone();
+        self.bind_address.clone_from(&c.server.bind_address);
         self.bind_port = c.server.bind_port;
     }
 
