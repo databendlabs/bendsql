@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::env;
+
 use actix_web::middleware::Logger;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
 use anyhow::Result;
@@ -59,14 +61,23 @@ pub async fn start_server_and_open_browser<'a>(explain_result: String) -> Result
         start_server(port, explain_result.to_string()).await;
     });
 
+    let url = format!("http://0.0.0.0:{}", port);
+    println!("Started a new server at: {url}");
+
     // Open the browser in a separate task
-    tokio::spawn(async move {
-        if webbrowser::open(&format!("http://127.0.0.1:{}", port)).is_ok() {
-            // eprintln!("Browser opened successfully at http://127.0.0.1:{}", port);
-        } else {
-            println!("Failed to open browser.");
-        }
-    });
+    println!(
+        "env {} | {}",
+        env::var("SSH_CLIENT").is_ok(),
+        env::var("SSH_TTY").is_ok()
+    );
+    let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
+    if !in_sshmode {
+        tokio::spawn(async move {
+            if !webbrowser::open(&format!("http://127.0.0.1:{}", port)).is_ok() {
+                println!("Failed to open browser.");
+            }
+        });
+    }
 
     // Continue with the rest of the code
     server.await.expect("Server task failed");

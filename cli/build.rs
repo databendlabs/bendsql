@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{env, error::Error};
+use std::{env, error::Error, process::Command};
 use vergen::EmitBuilder;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -28,5 +28,55 @@ fn main() -> Result<(), Box<dyn Error>> {
             };
             println!("cargo:rustc-env=BENDSQL_BUILD_INFO={}", info);
         });
+
+    if env::var("BUILD_FRONTEND").is_ok() {
+        println!("cargo:warning=Start to build frontend dir via env BUILD_FRONTEND.");
+        let cwd = env::current_dir().expect("Failed to get current directory");
+        println!("cargo:warning=Current Dir {:?}.", cwd.display());
+
+        env::set_current_dir("../frontend").expect("Failed to change directory to ../frontend");
+        // 删除之前的构建目录
+        let _ = Command::new("rm")
+            .arg("-rf")
+            .arg("../cli/frontend")
+            .status()
+            .expect("Failed to remove old frontend directory");
+
+        // 创建新的构建目录
+        let _ = Command::new("mkdir")
+            .arg("-p")
+            .arg("../cli/frontend")
+            .status()
+            .expect("Failed to create frontend directory");
+
+        // 设置 Yarn 网络超时
+        let _ = Command::new("yarn")
+            .arg("config")
+            .arg("set")
+            .arg("network-timeout")
+            .arg("600000")
+            .status()
+            .expect("Failed to set Yarn network timeout");
+
+        // 安装依赖并构建项目
+        let _ = Command::new("yarn")
+            .arg("install")
+            .status()
+            .expect("Yarn install failed");
+
+        let _ = Command::new("yarn")
+            .arg("build")
+            .status()
+            .expect("Yarn build failed");
+
+        // 移动构建结果
+        let _ = Command::new("mv")
+            .arg("build")
+            .arg("../cli/frontend/")
+            .status()
+            .expect("Failed to move build directory");
+
+        env::set_current_dir(cwd).unwrap();
+    }
     Ok(())
 }

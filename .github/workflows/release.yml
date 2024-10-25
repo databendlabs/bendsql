@@ -24,18 +24,6 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install frontend dependencies
-        working-directory: ./frontend
-        run: yarn install
-
-      - name: Build frontend
-        working-directory: ./frontend
-        run: |
-          yarn build
-          rm -rf ../cli/frontend
-          mkdir -p ../cli/frontend
-          mv build ../cli/frontend/
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -48,6 +36,8 @@ jobs:
           sudo mv /tmp/cross /usr/local/bin/cross
       - name: Build
         shell: bash
+        env:
+          BUILD_FRONTEND: 1
         run: |
           cross build --release --target=${{ matrix.target }} --bin=bendsql
       - name: Publish Binary
@@ -81,6 +71,8 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Build
         shell: bash
+        env:
+          BUILD_FRONTEND: 1
         run: |
           cargo build --release --target=${{ matrix.target }} --bin=bendsql
       - name: Publish Binary
