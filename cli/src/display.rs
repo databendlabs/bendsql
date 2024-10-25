@@ -162,7 +162,7 @@ impl<'a> FormatDisplay<'a> {
                     println!("Failed to open browser, {} ", e);
                 }
             }
-            println!("Click url to show the graphical online: {}", url);
+            println!("View graphical online: \x1B[4m{}\x1B[0m", url);
             println!();
             return Ok(());
         }
