@@ -345,7 +345,7 @@ pub async fn main() -> Result<()> {
         settings.output_format = OutputFormat::TSV;
     }
 
-    settings.merge_config(config.settings);
+    settings.merge_config(&config);
 
     if args.no_auto_complete {
         settings.no_auto_complete = true;

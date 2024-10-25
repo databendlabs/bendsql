@@ -33,6 +33,7 @@ use rustyline::history::DefaultHistory;
 use rustyline::{CompletionType, Editor};
 use tokio::fs::{remove_file, File};
 use tokio::io::AsyncWriteExt;
+use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
@@ -40,6 +41,8 @@ use crate::config::Settings;
 use crate::config::TimeOption;
 use crate::display::{format_write_progress, ChunkDisplay, FormatDisplay};
 use crate::helper::CliHelper;
+use crate::web::find_available_port;
+use crate::web::start_server;
 use crate::VERSION;
 
 static PROMPT_SQL: &str = "select name, 'f' as type from system.functions union all select name, 'd' as type from system.databases union all select name, 't' as type from system.tables union all select name, 'c' as type from system.columns limit 10000";
@@ -71,11 +74,12 @@ pub struct Session {
     settings: Settings,
     query: String,
 
+    server_handle: Option<JoinHandle<std::io::Result<()>>>,
     keywords: Option<Arc<sled::Db>>,
 }
 
 impl Session {
-    pub async fn try_new(dsn: String, settings: Settings, is_repl: bool) -> Result<Self> {
+    pub async fn try_new(dsn: String, mut settings: Settings, is_repl: bool) -> Result<Self> {
         let client = Client::new(dsn).with_name(format!("bendsql/{}", VERSION_SHORT.as_str()));
         let conn = client.get_conn().await?;
         let info = conn.info().await;
@@ -158,9 +162,23 @@ impl Session {
                 }
             }
             keywords = Some(Arc::new(db));
-            println!();
         }
 
+        let server_handle = if is_repl {
+            let port = find_available_port(settings.bind_port).await;
+            let addr = settings.bind_address.clone();
+
+            let server_handle = tokio::spawn(async move { start_server(&addr, port).await });
+            println!("Started web server at {}:{}", settings.bind_address, port);
+            settings.bind_port = port;
+            Some(server_handle)
+        } else {
+            None
+        };
+
+        if is_repl {
+            println!();
+        }
         Ok(Self {
             client,
             conn,
@@ -168,6 +186,7 @@ impl Session {
             settings,
             query: String::new(),
             keywords,
+            server_handle,
         })
     }
 
@@ -690,5 +709,13 @@ fn replace_newline_in_box_display(query: &str) -> bool {
             _ => true,
         },
         _ => true,
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if let Some(handle) = self.server_handle.take() {
+            handle.abort();
+        }
     }
 }
