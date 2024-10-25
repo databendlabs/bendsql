@@ -176,7 +176,9 @@ impl Session {
             None
         };
 
-        println!();
+        if is_repl {
+            println!();
+        }
         Ok(Self {
             client,
             conn,
