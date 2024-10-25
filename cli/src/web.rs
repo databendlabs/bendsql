@@ -68,8 +68,8 @@ pub async fn start_server_and_open_browser<'a>(explain_result: String) -> Result
     let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
     if !in_sshmode {
         tokio::spawn(async move {
-            if !webbrowser::open(&format!("http://127.0.0.1:{}", port)).is_ok() {
-                println!("Failed to open browser.");
+            if let Err(e) = webbrowser::open(&format!("http://127.0.0.1:{}", port)) {
+                println!("Failed to open browser, {} ", e);
             }
         });
     }

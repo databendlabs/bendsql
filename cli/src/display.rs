@@ -153,7 +153,7 @@ impl<'a> FormatDisplay<'a> {
                     eprintln!("Failed to start server: {}", e);
                 }
             });
-            println!("");
+            println!();
             return Ok(());
         }
 
