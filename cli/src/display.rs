@@ -98,6 +98,32 @@ impl<'a> FormatDisplay<'a> {
         }
     }
 
+    async fn display_graphical(&mut self, rows: &[Row]) -> Result<()> {
+        let mut result = String::new();
+        for row in rows {
+            result.push_str(&row.values()[0].to_string());
+        }
+
+        let perf_id = set_data(result);
+
+        let url = format!(
+            "http://{}:{}?perf_id={}",
+            self.settings.bind_address, self.settings.bind_port, perf_id
+        );
+
+        // Open the browser in a separate task if not in ssh mode
+        let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
+        if !in_sshmode && self.settings.auto_open_browser {
+            if let Err(e) = webbrowser::open(&url) {
+                eprintln!("Failed to open browser: {}", e);
+            }
+        }
+
+        println!("View graphical online: \x1B[4m{}\x1B[0m", url);
+        println!();
+        Ok(())
+    }
+
     async fn display_table(&mut self) -> Result<()> {
         if self.settings.display_pretty_sql {
             let format_sql = format_query(self.query);
@@ -142,29 +168,7 @@ impl<'a> FormatDisplay<'a> {
         }
 
         if self.kind == QueryKind::Graphical {
-            let mut explain_results = Vec::new();
-            for result in &rows {
-                explain_results.push(result.values()[0].to_string());
-            }
-
-            let result = explain_results.join("");
-            let perf_id = set_data(result);
-
-            let url = format!(
-                "http://{}:{}?perf_id={}",
-                self.settings.bind_address, self.settings.bind_port, perf_id
-            );
-
-            // Open the browser in a separate task if not in ssh mode
-            let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
-            if !in_sshmode && self.settings.auto_open_browser {
-                if let Err(e) = webbrowser::open(&url) {
-                    println!("Failed to open browser, {} ", e);
-                }
-            }
-            println!("View graphical online: \x1B[4m{}\x1B[0m", url);
-            println!();
-            return Ok(());
+            return self.display_graphical(&rows).await;
         }
 
         let schema = self.data.schema();
