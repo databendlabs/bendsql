@@ -64,12 +64,7 @@ pub async fn start_server_and_open_browser<'a>(explain_result: String) -> Result
     let url = format!("http://0.0.0.0:{}", port);
     println!("Started a new server at: {url}");
 
-    // Open the browser in a separate task
-    println!(
-        "env {} | {}",
-        env::var("SSH_CLIENT").is_ok(),
-        env::var("SSH_TTY").is_ok()
-    );
+    // Open the browser in a separate task if not in ssh mode
     let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
     if !in_sshmode {
         tokio::spawn(async move {
