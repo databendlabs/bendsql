@@ -35,21 +35,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("cargo:warning=Current Dir {:?}.", cwd.display());
 
         env::set_current_dir("../frontend").expect("Failed to change directory to ../frontend");
-        // 删除之前的构建目录
+        // Clean old frontend directory
         let _ = Command::new("rm")
             .arg("-rf")
             .arg("../cli/frontend")
             .status()
             .expect("Failed to remove old frontend directory");
 
-        // 创建新的构建目录
+        // Mkdir new dir
         let _ = Command::new("mkdir")
             .arg("-p")
             .arg("../cli/frontend")
             .status()
             .expect("Failed to create frontend directory");
 
-        // 设置 Yarn 网络超时
         let _ = Command::new("yarn")
             .arg("config")
             .arg("set")
@@ -58,7 +57,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             .status()
             .expect("Failed to set Yarn network timeout");
 
-        // 安装依赖并构建项目
         let _ = Command::new("yarn")
             .arg("install")
             .status()
