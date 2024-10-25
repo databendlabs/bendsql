@@ -27,6 +27,8 @@ pub struct Config {
     pub connection: ConnectionConfig,
     #[serde(default)]
     pub settings: SettingsConfig,
+    #[serde(default)]
+    pub server: ServerConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -99,6 +101,10 @@ pub struct Settings {
     pub multi_line: bool,
     /// whether replace '\n' with '\\n', default true.
     pub replace_newline: bool,
+
+    pub bind_address: String,
+    pub bind_port: u16,
+    pub auto_open_browser: bool,
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize)]
@@ -135,7 +141,9 @@ impl TryFrom<&str> for TimeOption {
 }
 
 impl Settings {
-    pub fn merge_config(&mut self, cfg: SettingsConfig) {
+    pub fn merge_config(&mut self, c: &Config) {
+        let cfg = c.settings.clone();
+
         self.display_pretty_sql = cfg.display_pretty_sql.unwrap_or(self.display_pretty_sql);
         self.prompt = cfg.prompt.unwrap_or_else(|| self.prompt.clone());
         self.progress_color = cfg
@@ -152,6 +160,9 @@ impl Settings {
         self.max_width = cfg.max_width.unwrap_or(self.max_width);
         self.max_col_width = cfg.max_col_width.unwrap_or(self.max_col_width);
         self.max_display_rows = cfg.max_display_rows.unwrap_or(self.max_display_rows);
+        self.auto_open_browser = c.server.auto_open_browser;
+        self.bind_address = c.server.bind_address.clone();
+        self.bind_port = c.server.bind_port;
     }
 
     pub fn inject_ctrl_cmd(&mut self, cmd_name: &str, cmd_value: &str) -> Result<()> {
@@ -203,6 +214,14 @@ pub struct ConnectionConfig {
     pub args: BTreeMap<String, String>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct ServerConfig {
+    pub bind_address: String,
+    pub bind_port: u16,
+    pub auto_open_browser: bool,
+}
+
 impl Config {
     pub fn load() -> Self {
         let paths = [
@@ -251,6 +270,9 @@ impl Default for Settings {
             time: None,
             multi_line: true,
             replace_newline: true,
+            auto_open_browser: false,
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 8080,
         }
     }
 }
@@ -264,6 +286,16 @@ impl Default for ConnectionConfig {
             database: None,
             tls: None,
             args: BTreeMap::new(),
+        }
+    }
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            bind_address: "127.0.0.1".to_string(),
+            bind_port: 8080,
+            auto_open_browser: true,
         }
     }
 }

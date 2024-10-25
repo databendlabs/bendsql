@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashSet;
 use std::fmt::Write;
+use std::{collections::HashSet, env};
 
 use anyhow::{anyhow, Result};
 use comfy_table::{Cell, CellAlignment, Table};
@@ -28,7 +28,7 @@ use crate::{
     ast::{format_query, highlight_query},
     config::{ExpandMode, OutputFormat, OutputQuoteStyle, Settings},
     session::QueryKind,
-    web::start_server_and_open_browser,
+    web::set_data,
 };
 
 #[async_trait::async_trait]
@@ -142,17 +142,27 @@ impl<'a> FormatDisplay<'a> {
         }
 
         if self.kind == QueryKind::Graphical {
-            println!("Graphical query result: -- ");
             let mut explain_results = Vec::new();
             for result in &rows {
                 explain_results.push(result.values()[0].to_string());
             }
 
-            tokio::spawn(async move {
-                if let Err(e) = start_server_and_open_browser(explain_results.join("")).await {
-                    eprintln!("Failed to start server: {}", e);
+            let result = explain_results.join("");
+            let perf_id = set_data(result);
+
+            let url = format!(
+                "http://{}:{}?perf_id={}",
+                self.settings.bind_address, self.settings.bind_port, perf_id
+            );
+
+            // Open the browser in a separate task if not in ssh mode
+            let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
+            if !in_sshmode && self.settings.auto_open_browser {
+                if let Err(e) = webbrowser::open(&url) {
+                    println!("Failed to open browser, {} ", e);
                 }
-            });
+            }
+            println!("Click url to show the graphical online: {}", url);
             println!();
             return Ok(());
         }

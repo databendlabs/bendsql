@@ -21,14 +21,15 @@ export function useProfileData(): {
   const [rangeData, setRangeData] = useState<Profile[]>([]);
   const [statisticsData, setStatisticsData] = useState<StatisticsData[]>([]);
   const [labels, setLabels] = useState<AttributeData[]>([]);
-  const [overviewInfo, setOverviewInfo] = useState<IOverview|undefined>(undefined);
+  const [overviewInfo, setOverviewInfo] = useState<IOverview | undefined>(undefined);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const overviewInfoCurrent = useRef<IOverview | undefined>(undefined);
-
   useEffect(() => {
     const fetchMessage = async () => {
       try {
-        const response: Response = await fetch("/api/message");
+        const urlParams = new URLSearchParams(window.location.search);
+        const perf_id = urlParams.get('perf_id') || '0';
+        const response: Response = await fetch(`/api/message?perf_id=${perf_id}`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -100,7 +101,7 @@ export function useProfileData(): {
         _value: item.statistics[descObj?.index],
       })
     );
-}
+  }
 
   function calculateOverviewInfo(profiles: Profile[], statistics_desc: StatisticsDesc) {
     const cpuTime = profiles.reduce((sum: number, item: Profile) => sum + item.cpuTime, 0);

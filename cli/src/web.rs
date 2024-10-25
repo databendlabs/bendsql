@@ -12,13 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::env;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex};
 
+use actix_web::dev::Server;
 use actix_web::middleware::Logger;
+use actix_web::web::Query;
 use actix_web::{get, web, App, HttpResponse, HttpServer, Responder};
-use anyhow::Result;
 use mime_guess::from_path;
+use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
+use serde::Deserialize;
 use tokio::net::TcpListener;
 
 #[derive(RustEmbed)]
@@ -43,63 +48,58 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
     }
 }
 
-struct AppState {
-    result: String,
+static PERF_ID: AtomicUsize = AtomicUsize::new(0);
+
+static APP_DATA: Lazy<Arc<Mutex<HashMap<usize, String>>>> =
+    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+#[derive(Deserialize, Debug)]
+struct MessageQuery {
+    perf_id: Option<String>,
+}
+
+pub fn set_data(result: String) -> usize {
+    let perf_id = PERF_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let l = APP_DATA.as_ref();
+    l.lock().unwrap().insert(perf_id, result);
+    perf_id
 }
 
 #[get("/api/message")]
-async fn get_message(data: web::Data<AppState>) -> impl Responder {
-    let response = serde_json::json!({
-        "result": data.result,
-    });
-    HttpResponse::Ok().json(response)
+async fn get_message(query: Query<MessageQuery>) -> impl Responder {
+    query
+        .perf_id
+        .as_deref()
+        .unwrap_or("")
+        .parse::<usize>()
+        .ok()
+        .and_then(|id| {
+            APP_DATA.as_ref().lock().unwrap().get(&id).map(|result| {
+                HttpResponse::Ok().json(serde_json::json!({
+                    "result": result,
+                }))
+            })
+        })
+        .unwrap_or_else(|| {
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Perf ID {:?} not found", query.perf_id),
+            }))
+        })
 }
 
-pub async fn start_server_and_open_browser<'a>(explain_result: String) -> Result<()> {
-    let port = find_available_port(8080).await;
-    let server = tokio::spawn(async move {
-        start_server(port, explain_result.to_string()).await;
-    });
-
-    let url = format!("http://0.0.0.0:{}", port);
-    println!("Started a new server at: {url}");
-
-    // Open the browser in a separate task if not in ssh mode
-    let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
-    if !in_sshmode {
-        tokio::spawn(async move {
-            if let Err(e) = webbrowser::open(&format!("http://127.0.0.1:{}", port)) {
-                println!("Failed to open browser, {} ", e);
-            }
-        });
-    }
-
-    // Continue with the rest of the code
-    server.await.expect("Server task failed");
-
-    Ok(())
-}
-
-pub async fn start_server<'a>(port: u16, result: String) {
-    let app_state = web::Data::new(AppState {
-        result: result.clone(),
-    });
-
+pub fn start_server<'a>(addr: &str, port: u16) -> Server {
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
-            .app_data(app_state.clone())
             .service(get_message)
             .route("/{filename:.*}", web::get().to(embed_file))
     })
-    .bind(("127.0.0.1", port))
+    .bind((addr, port))
     .expect("Cannot bind to port")
     .run()
-    .await
-    .expect("Server run failed");
 }
 
-async fn find_available_port(start: u16) -> u16 {
+pub async fn find_available_port(start: u16) -> u16 {
     let mut port = start;
     loop {
         if TcpListener::bind(("127.0.0.1", port)).await.is_ok() {

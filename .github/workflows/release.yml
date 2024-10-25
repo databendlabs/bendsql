@@ -36,9 +36,8 @@ jobs:
           sudo mv /tmp/cross /usr/local/bin/cross
       - name: Build
         shell: bash
-        env:
-          BUILD_FRONTEND: 1
         run: |
+          make build-frontend
           cross build --release --target=${{ matrix.target }} --bin=bendsql
       - name: Publish Binary
         uses: ./.github/actions/publish_binary
@@ -71,9 +70,8 @@ jobs:
           targets: ${{ matrix.target }}
       - name: Build
         shell: bash
-        env:
-          BUILD_FRONTEND: 1
         run: |
+          make build-frontend
           cargo build --release --target=${{ matrix.target }} --bin=bendsql
       - name: Publish Binary
         uses: ./.github/actions/publish_binary
