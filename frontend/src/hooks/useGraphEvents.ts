@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
+import { IG6GraphEvent, IGraph, Item } from "@ant-design/charts";
+
 import { ALL_NODE_ID } from "../constants";
-import { useRefValueListener } from "./useRefValueListener";
-import { IGraph } from "@ant-design/charts";
 import { IOverview, Profile } from "../types/ProfileGraphDashboard";
 
 export function useGraphEvents(
-  graphRef: React.RefObject<IGraph>,
   plainData: Profile[],
   setOverInfo: React.Dispatch<React.SetStateAction<IOverview>>,
   setSelectedNodeId: React.Dispatch<React.SetStateAction<string>>,
@@ -14,39 +13,32 @@ export function useGraphEvents(
   overviewInfoCurrent: React.RefObject<IOverview | undefined>,
   setOverviewInfo: React.Dispatch<React.SetStateAction<IOverview | undefined>>,
 ) {
-
-  const [graph, setGraph] = useState(graphRef.current);
-
-  useRefValueListener(graphRef, (graph: IGraph) => {
-    setGraph(graph);
-  });
-
-  const getAllNodes = useCallback(() => {
+  const getAllNodes = useCallback((graph: IGraph) => {
     return graph?.getNodes();
-  }, [graph]);
+  }, []);
 
-  const setNodeActive = useCallback(( node) => {
-    graph?.setItemState(node, "highlight", true);
-  }, [graph]);
+  const setNodeActive = useCallback((graph: IGraph, node?: Item | string) => {
+    if (node) {
+      graph?.setItemState(node, "highlight", true);
+    }
+  }, []);
 
-  const clearNodeActive = useCallback(() => {
-    getAllNodes()?.forEach(n => {
+  const clearNodeActive = useCallback((graph: IGraph) => {
+    getAllNodes(graph)?.forEach(n => {
       graph?.clearItemStates(n);
     });
-  }, [graph, getAllNodes]);
+  }, [getAllNodes]);
 
-  useEffect(() => {
-    if (!graph) return;
-
-    const handleNodeClick = (evt) => {
-      const modal = evt.item._cfg.model;
+  const bindGraphEvents = useCallback((graph: IGraph) => {
+    const handleNodeClick = (evt: IG6GraphEvent) => {
+      const modal = evt.item?._cfg?.model;
       setOverInfo({
-        ...plainData.find(item => item.id === modal.id),
+        ...plainData.find(item => item.id === modal?.id),
       } as IOverview);
-      setSelectedNodeId(modal.id);
+      setSelectedNodeId(modal?.id as string);
 
-      const nodes = getAllNodes();
-      const id = evt.item._cfg.id;
+      const nodes = getAllNodes(graph);
+      const id = evt.item?._cfg?.id;
       const node = nodes?.find(node => node?._cfg?.id === id);
       nodes
         ?.filter(node => node?._cfg?.id !== id)
@@ -54,7 +46,7 @@ export function useGraphEvents(
           graph?.clearItemStates(n);
         });
 
-      setNodeActive(node);
+      setNodeActive(graph, node);
     };
 
     const handleNodeMouseLeave = () => {
@@ -67,7 +59,7 @@ export function useGraphEvents(
     const handleCanvasClick = () => {
       setSelectedNodeId(ALL_NODE_ID);
       setOverviewInfo(overviewInfoCurrent.current || undefined);
-      clearNodeActive();
+      clearNodeActive(graph);
     };
 
     const handleCanvasDragStart = () => {
@@ -88,12 +80,9 @@ export function useGraphEvents(
     graph.on("canvas:dragstart", handleCanvasDragStart);
     graph.on("canvas:dragend", handleCanvasDragEnd);
 
-    return () => {
-      graph.off("node:click", handleNodeClick);
-      graph.off("node:mouseleave", handleNodeMouseLeave);
-      graph.off("canvas:click", handleCanvasClick);
-      graph.off("canvas:dragstart", handleCanvasDragStart);
-      graph.off("canvas:dragend", handleCanvasDragEnd);
-    };
-  }, [graph, plainData, setOverInfo, setSelectedNodeId, getAllNodes, setNodeActive, clearNodeActive, profileWrapRefCanvas, profileWrapRef, overviewInfoCurrent, setOverviewInfo]);
+  }, [profileWrapRefCanvas, profileWrapRef, overviewInfoCurrent, setOverviewInfo, getAllNodes, setNodeActive, clearNodeActive]);
+
+  return {
+    bindGraphEvents,
+  };
 }

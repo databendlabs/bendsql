@@ -46,8 +46,7 @@ function ProfileGraphDashboard() {
 
   const { handleNodeSelection, setOverInfo } = useNodeSelection(graphRef, plainData, setSelectedNodeId, setOverviewInfo);
 
-  useGraphEvents(
-    graphRef,
+  const { bindGraphEvents } = useGraphEvents(
     plainData,
     setOverInfo as React.Dispatch<React.SetStateAction<IOverview>>,
     setSelectedNodeId,
@@ -71,6 +70,7 @@ function ProfileGraphDashboard() {
             setIsLoading={setIsLoading}
             profileWrapRef={profileWrapRef}
             profileWrapRefCanvas={profileWrapRefCanvas}
+            bindGraphEvents={bindGraphEvents}
           />
           <SidebarContent
             rangeData={rangeData}
@@ -98,6 +98,7 @@ function GraphContent({
   setIsLoading,
   profileWrapRef,
   profileWrapRefCanvas,
+  bindGraphEvents,
 }: {
   isLoading: boolean;
   plainData: Profile[];
@@ -108,6 +109,7 @@ function GraphContent({
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
   profileWrapRef: React.RefObject<HTMLDivElement>;
   profileWrapRefCanvas: React.RefObject<HTMLCanvasElement>;
+  bindGraphEvents: (graph: IGraph) => void;
 }) {
   return (
     <div ref={profileWrapRef} className="flex-1 flex justify-center items-center h-screen">
@@ -124,10 +126,13 @@ function GraphContent({
               graph.fitView();
               graph.refresh();
               setIsLoading(false);
+            } else {
+              graphRef.current = graph;
+              graph.setMaxZoom(2);
+              graph.setMinZoom(0.5);
+
+              bindGraphEvents(graph);
             }
-            graphRef.current = graph;
-            graph.setMaxZoom(2);
-            graph.setMinZoom(0.5);
           }}
         />
       )}

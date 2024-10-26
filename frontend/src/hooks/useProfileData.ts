@@ -24,6 +24,7 @@ export function useProfileData(): {
   const [overviewInfo, setOverviewInfo] = useState<IOverview | undefined>(undefined);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const overviewInfoCurrent = useRef<IOverview | undefined>(undefined);
+
   useEffect(() => {
     const fetchMessage = async () => {
       try {
