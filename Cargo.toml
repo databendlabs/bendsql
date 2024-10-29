@@ -17,7 +17,7 @@ version = "0.22.2"
 license = "Apache-2.0"
 authors = ["Databend Authors <opensource@databend.com>"]
 categories = ["database"]
-keywords = ["databend", "database"]
+keywords = ["databend", "database", "rust"]
 repository = "https://github.com/databendlabs/bendsql"
 
 [workspace.dependencies]
