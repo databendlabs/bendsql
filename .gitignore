@@ -8,5 +8,4 @@ venv/
 *.output
 
 /dist
-cli/frontend
 
