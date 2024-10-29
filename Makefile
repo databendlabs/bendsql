@@ -18,7 +18,7 @@ build-frontend:
 	mkdir -p cli/frontend
 	cd frontend && \
 	if [ ! -d node_modules ]; then yarn install; fi && \
-	yarn build && mv build ../cli/frontend/
+	yarn build && cp -rf build ../cli/frontend/
 
 run:
 	make build-frontend

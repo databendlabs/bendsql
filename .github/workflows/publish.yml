@@ -32,11 +32,19 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           make build-frontend
+          cargo package || echo "package done"
+          sql_dir=`ls target/package | grep bendsql`
+          mkdir -p target/package/${sql_dir}/frontend/
+          cp -r frontend/build target/package/bendsql-*/frontend/
           cargo workspaces publish --all --dry-run --publish-as-is
       - name: Release to crates.io
         if: github.event_name == 'push'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          make build-frontend
+         make build-frontend
+          cargo package || echo "package done"
+          sql_dir=`ls target/package | grep bendsql`
+          mkdir -p target/package/${sql_dir}/frontend/
+          cp -r frontend/build target/package/bendsql-*/frontend/
           cargo workspaces publish --all --publish-as-is --yes
