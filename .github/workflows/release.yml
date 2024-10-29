@@ -37,7 +37,6 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          make build-frontend
           cross build --release --target=${{ matrix.target }} --bin=bendsql
       - name: Publish Binary
         uses: ./.github/actions/publish_binary
@@ -71,7 +70,6 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          make build-frontend
           cargo build --release --target=${{ matrix.target }} --bin=bendsql
       - name: Publish Binary
         uses: ./.github/actions/publish_binary
