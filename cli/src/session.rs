@@ -119,7 +119,7 @@ impl Session {
                                 return Err(err.into());
                             }
                         }
-                        _ => {}
+                        _ => return Err(err.into()),
                     }
                     "".to_string()
                 }
