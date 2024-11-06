@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
-use std::mem;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,8 +21,8 @@ use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth};
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
 use crate::global_cookie_store::GlobalCookieStore;
 use crate::login::{
-    LoginInfo, LoginRequest, LoginResponse, LogoutRequest, RefreshResponse,
-    RefreshSessionTokenRequest,
+    LoginRequest, LoginResponseResult, LogoutRequest, RefreshResponse, RefreshSessionTokenRequest,
+    SessionTokenInfo,
 };
 use crate::presign::{presign_upload_to_stage, PresignMode, PresignedResponse, Reader};
 use crate::stage::StageLocation;
@@ -33,7 +32,7 @@ use crate::{
     response::QueryResponse,
     session::SessionState,
 };
-use log::{info, warn};
+use log::{error, info, warn};
 use once_cell::sync::Lazy;
 use percent_encoding::percent_decode_str;
 use reqwest::cookie::CookieStore;
@@ -41,7 +40,7 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::multipart::{Form, Part};
 use reqwest::{Body, Client as HttpClient, Request, RequestBuilder, Response, StatusCode};
 use serde::Deserialize;
-use tokio::sync::Mutex;
+use tokio::runtime::Runtime;
 use tokio::time::sleep;
 use tokio_retry::strategy::jitter;
 use tokio_util::io::ReaderStream;
@@ -60,6 +59,9 @@ static VERSION: Lazy<String> = Lazy::new(|| {
     version.to_string()
 });
 
+static GLOBAL_RUNTIME: Lazy<Runtime> =
+    Lazy::new(|| Runtime::new().expect("Failed to create Tokio runtime"));
+
 #[derive(Clone)]
 pub struct APIClient {
     pub cli: HttpClient,
@@ -73,11 +75,14 @@ pub struct APIClient {
 
     tenant: Option<String>,
     warehouse: Arc<parking_lot::Mutex<Option<String>>>,
-    session_state: Arc<Mutex<SessionState>>,
+    session_state: Arc<parking_lot::Mutex<SessionState>>,
     route_hint: Arc<RouteHintGenerator>,
 
+    disable_login: bool,
     disable_session_token: bool,
-    login_info: Option<Arc<parking_lot::Mutex<(LoginInfo, Instant)>>>,
+    session_token_info: Option<Arc<parking_lot::Mutex<(SessionTokenInfo, Instant)>>>,
+
+    server_version: Option<String>,
 
     wait_time_secs: Option<i64>,
     max_rows_in_buffer: Option<i64>,
@@ -180,6 +185,18 @@ impl APIClient {
                 "access_token_file" => {
                     client.auth = Arc::new(AccessTokenFileAuth::new(v));
                 }
+                "login" => {
+                    client.disable_login = match v.as_ref() {
+                        "disable" => true,
+                        "enable" => false,
+                        _ => {
+                            return Err(Error::BadArgument(format!(
+                                "Invalid value for login: {}",
+                                v
+                            )))
+                        }
+                    }
+                }
                 "session_token" => {
                     client.disable_session_token = match v.as_ref() {
                         "disable" => true,
@@ -208,7 +225,7 @@ impl APIClient {
         client.scheme = scheme.to_string();
 
         client.endpoint = Url::parse(&format!("{}://{}:{}", scheme, client.host, client.port))?;
-        client.session_state = Arc::new(Mutex::new(
+        client.session_state = Arc::new(parking_lot::Mutex::new(
             SessionState::default()
                 .with_settings(Some(session_settings))
                 .with_role(role)
@@ -226,10 +243,7 @@ impl APIClient {
         let cookie_provider = GlobalCookieStore::new();
         let cookie = HeaderValue::from_str("cookie_enabled=true").unwrap();
         let mut initial_cookies = [&cookie].into_iter();
-        cookie_provider.set_cookies(
-            &mut initial_cookies,
-            &Url::parse("https://a.com").unwrap(),
-        );
+        cookie_provider.set_cookies(&mut initial_cookies, &Url::parse("https://a.com").unwrap());
         let mut cli_builder = HttpClient::builder()
             .user_agent(ua)
             .cookie_provider(Arc::new(cookie_provider))
@@ -632,46 +646,61 @@ impl APIClient {
         let body = response.bytes().await?;
         let response = json_from_slice(&body)?;
         match response {
-            LoginResponse::Err { error } => return Err(Error::AuthFailure(error)),
-            LoginResponse::Ok(info) => {
-                self.login_info = Some(Arc::new(parking_lot::Mutex::new((info, Instant::now()))))
+            LoginResponseResult::Err { error } => return Err(Error::AuthFailure(error)),
+            LoginResponseResult::Ok(info) => {
+                self.server_version = Some(info.version.clone());
+                if !info.token_info.session_token.is_empty() {
+                    self.session_token_info = Some(Arc::new(parking_lot::Mutex::new((
+                        info.token_info,
+                        Instant::now(),
+                    ))))
+                }
             }
         }
         Ok(())
     }
 
-    pub fn build_log_out_request(&self, login_info: LoginInfo) -> Result<Request> {
+    pub fn build_log_out_request(&mut self) -> Result<Request> {
         let endpoint = self.endpoint.join("/v1/session/logout")?;
-        let body = LogoutRequest {
-            refresh_token: login_info.refresh_token.clone(),
-        };
-        let headers = self.make_headers(None)?;
-        let req = self
+
+        let session_state = self.session_state();
+        let refresh_token = self
+            .session_token_info
+            .as_ref()
+            .map(|info| info.lock().0.refresh_token.clone());
+        let body = LogoutRequest { refresh_token };
+
+        let need_sticky = session_state.need_sticky.unwrap_or(false);
+        let mut headers = self.make_headers(None)?;
+        if need_sticky {
+            if let Some(node_id) = self.last_node_id() {
+                headers.insert(HEADER_STICKY_NODE, node_id.parse()?);
+            }
+        }
+        let builder = self
             .cli
             .post(endpoint.clone())
             .json(&body)
-            .headers(headers.clone())
-            .bearer_auth(login_info.session_token.clone())
-            .build()?;
+            .headers(headers.clone());
+
+        let builder = self.wrap_auth_or_session_token(builder)?;
+        let req = builder.build()?;
         Ok(req)
     }
 
-    pub async fn close(&mut self) -> Result<()> {
-        if let Some(info) = mem::take(&mut self.login_info) {
-            let req = self.build_log_out_request(info.lock().0.clone())?;
-            self.cli.execute(req).await?;
-        }
-        Ok(())
+    fn need_logout(&self) -> bool {
+        self.session_token_info.is_some()
+            || self.session_state.lock().need_keep_alive.unwrap_or(false)
     }
 
     pub async fn refresh_session_token(
         &self,
-        self_login_info: Arc<parking_lot::Mutex<(LoginInfo, Instant)>>,
+        self_login_info: Arc<parking_lot::Mutex<(SessionTokenInfo, Instant)>>,
     ) -> Result<()> {
-        let login_info = { self_login_info.lock().clone() };
+        let (session_token_info, _) = { self_login_info.lock().clone() };
         let endpoint = self.endpoint.join("/v1/session/refresh")?;
         let body = RefreshSessionTokenRequest {
-            session_token: login_info.0.session_token.clone(),
+            session_token: session_token_info.session_token.clone(),
         };
         let headers = self.make_headers(None)?;
         let request = self
@@ -679,7 +708,7 @@ impl APIClient {
             .post(endpoint.clone())
             .json(&body)
             .headers(headers.clone())
-            .bearer_auth(login_info.0.refresh_token.clone())
+            .bearer_auth(session_token_info.refresh_token.clone())
             .timeout(self.connect_timeout)
             .build()?;
 
@@ -695,15 +724,7 @@ impl APIClient {
                         return match response {
                             RefreshResponse::Err { error } => Err(Error::AuthFailure(error)),
                             RefreshResponse::Ok(info) => {
-                                *self_login_info.lock() = (
-                                    LoginInfo {
-                                        session_token: info.session_token,
-                                        refresh_token: info.refresh_token,
-                                        session_token_ttl_in_secs: info.session_token_ttl_in_secs,
-                                        ..login_info.0.clone()
-                                    },
-                                    Instant::now(),
-                                );
+                                *self_login_info.lock() = (info, Instant::now());
                                 Ok(())
                             }
                         };
@@ -725,14 +746,14 @@ impl APIClient {
 
     async fn need_pre_refresh_session(
         &self,
-    ) -> Option<Arc<parking_lot::Mutex<(LoginInfo, Instant)>>> {
-        if let Some(login_info) = &self.login_info {
+    ) -> Option<Arc<parking_lot::Mutex<(SessionTokenInfo, Instant)>>> {
+        if let Some(info) = &self.session_token_info {
             let (start, ttl) = {
-                let guard = login_info.lock();
+                let guard = info.lock();
                 (guard.1, guard.0.session_token_ttl_in_secs)
             };
             if Instant::now() > start + Duration::from_secs(ttl) {
-                return Some(login_info.clone());
+                return Some(info.clone());
             }
         }
         None
@@ -772,7 +793,7 @@ impl APIClient {
                                 let e = r.error;
                                 if status == StatusCode::UNAUTHORIZED {
                                     request.headers_mut().remove(reqwest::header::AUTHORIZATION);
-                                    if let Some(login_info) = &self.login_info {
+                                    if let Some(session_token_info) = &self.session_token_info {
                                         info!(
                                             "will retry {} after refresh token on auth error {}",
                                             request.url(),
@@ -782,7 +803,8 @@ impl APIClient {
                                             && !refreshed
                                             && refresh_if_401
                                         {
-                                            self.refresh_session_token(login_info.clone()).await?;
+                                            self.refresh_session_token(session_token_info.clone())
+                                                .await?;
                                             refreshed = true;
                                             true
                                         } else {
@@ -799,7 +821,7 @@ impl APIClient {
                                             HttpClient::new(),
                                             request.try_clone().unwrap(),
                                         );
-                                        let builder = self.auth.wrap(builder).await?;
+                                        let builder = self.auth.wrap(builder)?;
                                         request = builder.build()?;
                                         (Error::AuthFailure(e), true)
                                     } else {
@@ -866,11 +888,15 @@ impl APIClient {
 
 impl Drop for APIClient {
     fn drop(&mut self) {
-        if let Some(info) = mem::take(&mut self.login_info) {
+        if self.need_logout() {
             let cli = self.cli.clone();
-            let req = self.build_log_out_request(info.lock().0.clone()).unwrap();
-            tokio::task::spawn(async move {
-                cli.execute(req).await.ok();
+            let req = self
+                .build_log_out_request()
+                .expect("failed to build logout request");
+            GLOBAL_RUNTIME.block_on(async {
+                if let Err(err) = cli.execute(req).await {
+                    error!("logout request failed: {}", err);
+                };
             });
         }
     }
@@ -900,7 +926,7 @@ impl Default for APIClient {
             tenant: None,
             warehouse: Arc::new(parking_lot::Mutex::new(None)),
             auth: Arc::new(BasicAuth::new("root", "")) as Arc<dyn Auth>,
-            session_state: Arc::new(Mutex::new(SessionState::default())),
+            session_state: Arc::new(parking_lot::Mutex::new(SessionState::default())),
             wait_time_secs: None,
             max_rows_in_buffer: None,
             max_rows_per_page: None,
@@ -911,7 +937,9 @@ impl Default for APIClient {
             route_hint: Arc::new(RouteHintGenerator::new()),
             last_node_id: Arc::new(Default::default()),
             disable_session_token: false,
-            login_info: None,
+            disable_login: false,
+            session_token_info: None,
+            server_version: None,
         }
     }
 }

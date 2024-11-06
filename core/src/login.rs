@@ -43,23 +43,23 @@ fn default_session_token_ttl_in_secs() -> u64 {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct LoginInfo {
-    pub version: String,
-    pub session_id: String,
+pub struct SessionTokenInfo {
     pub session_token: String,
     #[serde(default = "default_session_token_ttl_in_secs")]
     pub session_token_ttl_in_secs: u64,
     pub refresh_token: String,
 }
 
-impl LoginInfo {
-    pub fn may_need_refresh_token() {}
+#[derive(Deserialize, Debug, Clone)]
+pub struct LoginResponse {
+    pub version: String,
+    #[serde(flatten)]
+    pub token_info: SessionTokenInfo,
 }
-
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
-pub enum LoginResponse {
-    Ok(LoginInfo),
+pub enum LoginResponseResult {
+    Ok(LoginResponse),
     Err { error: ErrorCode },
 }
 
@@ -68,21 +68,14 @@ pub struct RefreshSessionTokenRequest {
     pub session_token: String,
 }
 
-#[derive(Deserialize, Debug, Clone)]
-pub struct RefreshInfo {
-    pub session_token: String,
-    pub session_token_ttl_in_secs: u64,
-    pub refresh_token: String,
-}
-
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
 pub enum RefreshResponse {
-    Ok(RefreshInfo),
+    Ok(SessionTokenInfo),
     Err { error: ErrorCode },
 }
 
 #[derive(Serialize, Debug)]
 pub struct LogoutRequest {
-    pub refresh_token: String,
+    pub refresh_token: Option<String>,
 }

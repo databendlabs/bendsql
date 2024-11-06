@@ -24,5 +24,4 @@ pub mod request;
 pub mod response;
 pub mod session;
 pub mod stage;
-
 pub use client::APIClient;
