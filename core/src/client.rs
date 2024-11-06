@@ -40,7 +40,6 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::multipart::{Form, Part};
 use reqwest::{Body, Client as HttpClient, Request, RequestBuilder, Response, StatusCode};
 use serde::Deserialize;
-use tokio::runtime::Runtime;
 use tokio::time::sleep;
 use tokio_retry::strategy::jitter;
 use tokio_util::io::ReaderStream;
@@ -58,9 +57,6 @@ static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     version.to_string()
 });
-
-static GLOBAL_RUNTIME: Lazy<Runtime> =
-    Lazy::new(|| Runtime::new().expect("Failed to create Tokio runtime"));
 
 #[derive(Clone)]
 pub struct APIClient {
@@ -102,7 +98,7 @@ impl APIClient {
         let mut client = Self::from_dsn(dsn).await?;
         client.build_client(name).await?;
         client.check_presign().await?;
-        if !client.disable_session_token {
+        if !client.disable_login {
             client.login().await?;
         }
         Ok(client)
@@ -628,7 +624,10 @@ impl APIClient {
         let endpoint = self.endpoint.join("/v1/session/login")?;
         let headers = self.make_headers(None)?;
         let body = LoginRequest::from(&*self.session_state.lock());
-        let builder = self.cli.post(endpoint.clone()).json(&body);
+        let mut builder = self.cli.post(endpoint.clone()).json(&body);
+        if self.disable_session_token {
+            builder = builder.query(&[("disable_session_token", true)]);
+        }
         let builder = self.auth.wrap(builder)?;
         let request = builder
             .headers(headers.clone())
@@ -893,7 +892,7 @@ impl Drop for APIClient {
             let req = self
                 .build_log_out_request()
                 .expect("failed to build logout request");
-            GLOBAL_RUNTIME.block_on(async {
+            tokio::spawn(async move {
                 if let Err(err) = cli.execute(req).await {
                     error!("logout request failed: {}", err);
                 };
@@ -936,7 +935,7 @@ impl Default for APIClient {
             presign: PresignMode::Auto,
             route_hint: Arc::new(RouteHintGenerator::new()),
             last_node_id: Arc::new(Default::default()),
-            disable_session_token: false,
+            disable_session_token: true,
             disable_login: false,
             session_token_info: None,
             server_version: None,
