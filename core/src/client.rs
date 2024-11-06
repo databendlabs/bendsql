@@ -223,8 +223,16 @@ impl APIClient {
             Some(n) => n,
             None => format!("databend-client-rust/{}", VERSION.as_str()),
         };
+        let cookie_provider = GlobalCookieStore::new();
+        let cookie = HeaderValue::from_str("cookie_enabled=true").unwrap();
+        let mut initial_cookies = [&cookie].into_iter();
+        cookie_provider.set_cookies(
+            &mut initial_cookies,
+            &Url::parse("https://a.com").unwrap(),
+        );
         let mut cli_builder = HttpClient::builder()
             .user_agent(ua)
+            .cookie_provider(Arc::new(cookie_provider))
             .pool_idle_timeout(Duration::from_secs(1));
         #[cfg(any(feature = "rustls", feature = "native-tls"))]
         if self.scheme == "https" {

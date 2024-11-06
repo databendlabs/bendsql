@@ -17,6 +17,7 @@ mod client;
 pub mod auth;
 pub mod error;
 pub mod error_code;
+mod global_cookie_store;
 mod login;
 pub mod presign;
 pub mod request;
