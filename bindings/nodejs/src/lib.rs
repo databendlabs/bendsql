@@ -121,6 +121,7 @@ impl ToNapiValue for Value {
             databend_driver::Value::Bitmap(s) => String::to_napi_value(env, s),
             databend_driver::Value::Variant(s) => String::to_napi_value(env, s),
             databend_driver::Value::Geometry(s) => String::to_napi_value(env, s),
+            databend_driver::Value::Geography(s) => String::to_napi_value(env, s),
         }
     }
 }
