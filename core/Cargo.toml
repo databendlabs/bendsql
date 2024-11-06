@@ -21,7 +21,6 @@ native-tls = ["reqwest/native-tls"]
 [dependencies]
 tokio-stream = { workspace = true }
 
-async-trait = "0.1"
 cookie = "0.18.1"
 log = "0.4"
 once_cell = "1.18"
