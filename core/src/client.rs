@@ -267,23 +267,23 @@ impl APIClient {
         Ok(())
     }
 
-    pub async fn current_warehouse(&self) -> Option<String> {
+    pub fn current_warehouse(&self) -> Option<String> {
         let guard = self.warehouse.lock();
         guard.clone()
     }
 
-    pub async fn current_database(&self) -> Option<String> {
-        let guard = self.session_state.lock().await;
+    pub fn current_database(&self) -> Option<String> {
+        let guard = self.session_state.lock();
         guard.database.clone()
     }
 
     pub async fn current_role(&self) -> Option<String> {
-        let guard = self.session_state.lock().await;
+        let guard = self.session_state.lock();
         guard.role.clone()
     }
 
-    async fn in_active_transaction(&self) -> bool {
-        let guard = self.session_state.lock().await;
+    fn in_active_transaction(&self) -> bool {
+        let guard = self.session_state.lock();
         guard
             .txn_state
             .as_ref()
@@ -307,7 +307,7 @@ impl APIClient {
 
         // save the updated session state from the server side
         {
-            let mut session_state = self.session_state.lock().await;
+            let mut session_state = self.session_state.lock();
             *session_state = session.clone();
         }
 
@@ -339,12 +339,12 @@ impl APIClient {
         self.start_query_inner(sql, None).await
     }
 
-    async fn wrap_auth_or_session_token(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
-        if let Some(info) = &self.login_info {
+    fn wrap_auth_or_session_token(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
+        if let Some(info) = &self.session_token_info {
             let info = info.lock();
             Ok(builder.bearer_auth(info.0.session_token.clone()))
         } else {
-            self.auth.wrap(builder).await
+            self.auth.wrap(builder)
         }
     }
 
@@ -353,13 +353,13 @@ impl APIClient {
         sql: &str,
         stage_attachment_config: Option<StageAttachmentConfig<'_>>,
     ) -> Result<QueryResponse> {
-        if !self.in_active_transaction().await {
+        if !self.in_active_transaction() {
             self.route_hint.next();
         }
         let endpoint = self.endpoint.join("v1/query")?;
 
         // body
-        let session_state = self.session_state().await;
+        let session_state = self.session_state();
         let need_sticky = session_state.need_sticky.unwrap_or(false);
         let req = QueryRequest::new(sql)
             .with_pagination(self.make_pagination())
@@ -375,7 +375,7 @@ impl APIClient {
             }
         }
         let mut builder = self.cli.post(endpoint.clone()).json(&req);
-        builder = self.wrap_auth_or_session_token(builder).await?;
+        builder = self.wrap_auth_or_session_token(builder)?;
         let request = builder.headers(headers.clone()).build()?;
         let response = self.query_request_helper(request, true, true).await?;
         if let Some(route_hint) = response.headers().get(HEADER_ROUTE_HINT) {
@@ -401,7 +401,7 @@ impl APIClient {
         let endpoint = self.endpoint.join(next_uri)?;
         let headers = self.make_headers(Some(query_id))?;
         let mut builder = self.cli.get(endpoint.clone());
-        builder = self.wrap_auth_or_session_token(builder).await?;
+        builder = self.wrap_auth_or_session_token(builder)?;
         let request = builder
             .headers(headers.clone())
             .header(HEADER_STICKY_NODE, node_id)
@@ -430,7 +430,7 @@ impl APIClient {
         let endpoint = self.endpoint.join(kill_uri)?;
         let headers = self.make_headers(Some(query_id))?;
         let mut builder = self.cli.post(endpoint.clone());
-        builder = self.wrap_auth_or_session_token(builder).await?;
+        builder = self.wrap_auth_or_session_token(builder)?;
         let resp = builder.headers(headers.clone()).send().await?;
         if resp.status() != 200 {
             return Err(Error::response_error(resp.status(), &resp.bytes().await?)
@@ -465,8 +465,8 @@ impl APIClient {
         self.wait_for_query(resp).await
     }
 
-    async fn session_state(&self) -> SessionState {
-        self.session_state.lock().await.clone()
+    fn session_state(&self) -> SessionState {
+        self.session_state.lock().clone()
     }
 
     fn make_pagination(&self) -> Option<PaginationConfig> {
@@ -599,7 +599,7 @@ impl APIClient {
         let part = Part::stream_with_length(stream, size).file_name(location.path);
         let form = Form::new().part("upload", part);
         let mut builder = self.cli.put(endpoint.clone());
-        builder = self.wrap_auth_or_session_token(builder).await?;
+        builder = self.wrap_auth_or_session_token(builder)?;
         let resp = builder.headers(headers).multipart(form).send().await?;
         let status = resp.status();
         if status != 200 {
@@ -613,9 +613,9 @@ impl APIClient {
     pub async fn login(&mut self) -> Result<()> {
         let endpoint = self.endpoint.join("/v1/session/login")?;
         let headers = self.make_headers(None)?;
-        let body = LoginRequest::from(&*self.session_state.lock().await);
+        let body = LoginRequest::from(&*self.session_state.lock());
         let builder = self.cli.post(endpoint.clone()).json(&body);
-        let builder = self.auth.wrap(builder).await?;
+        let builder = self.auth.wrap(builder)?;
         let request = builder
             .headers(headers.clone())
             .timeout(self.connect_timeout)

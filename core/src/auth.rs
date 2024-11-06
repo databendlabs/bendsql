@@ -16,9 +16,8 @@ use reqwest::RequestBuilder;
 
 use crate::error::{Error, Result};
 
-#[async_trait::async_trait]
 pub trait Auth: Sync + Send {
-    async fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder>;
+    fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder>;
     fn can_reload(&self) -> bool {
         false
     }
@@ -40,9 +39,8 @@ impl BasicAuth {
     }
 }
 
-#[async_trait::async_trait]
 impl Auth for BasicAuth {
-    async fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
+    fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
         Ok(builder.basic_auth(&self.username, Some(self.password.inner())))
     }
 
@@ -64,9 +62,8 @@ impl AccessTokenAuth {
     }
 }
 
-#[async_trait::async_trait]
 impl Auth for AccessTokenAuth {
-    async fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
+    fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
         Ok(builder.bearer_auth(self.token.inner()))
     }
 
@@ -87,17 +84,14 @@ impl AccessTokenFileAuth {
     }
 }
 
-#[async_trait::async_trait]
 impl Auth for AccessTokenFileAuth {
-    async fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
-        let token = tokio::fs::read_to_string(&self.token_file)
-            .await
-            .map_err(|e| {
-                Error::IO(format!(
-                    "cannot read access token from file {}: {}",
-                    self.token_file, e
-                ))
-            })?;
+    fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
+        let token = std::fs::read_to_string(&self.token_file).map_err(|e| {
+            Error::IO(format!(
+                "cannot read access token from file {}: {}",
+                self.token_file, e
+            ))
+        })?;
         Ok(builder.bearer_auth(token.trim()))
     }
 

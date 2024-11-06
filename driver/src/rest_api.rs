@@ -49,8 +49,8 @@ impl Connection for RestAPIConnection {
             host: self.client.host.clone(),
             port: self.client.port,
             user: self.client.username(),
-            database: self.client.current_database().await,
-            warehouse: self.client.current_warehouse().await,
+            database: self.client.current_database(),
+            warehouse: self.client.current_warehouse(),
         }
     }
 
