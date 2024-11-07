@@ -53,8 +53,7 @@ pub struct SessionTokenInfo {
 #[derive(Deserialize, Debug, Clone)]
 pub struct LoginResponse {
     pub version: String,
-    #[serde(flatten)]
-    pub token_info: SessionTokenInfo,
+    pub tokens: Option<SessionTokenInfo>,
 }
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
@@ -73,9 +72,4 @@ pub struct RefreshSessionTokenRequest {
 pub enum RefreshResponse {
     Ok(SessionTokenInfo),
     Err { error: ErrorCode },
-}
-
-#[derive(Serialize, Debug)]
-pub struct LogoutRequest {
-    pub refresh_token: Option<String>,
 }

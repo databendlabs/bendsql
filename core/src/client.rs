@@ -21,7 +21,7 @@ use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth};
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
 use crate::global_cookie_store::GlobalCookieStore;
 use crate::login::{
-    LoginRequest, LoginResponseResult, LogoutRequest, RefreshResponse, RefreshSessionTokenRequest,
+    LoginRequest, LoginResponseResult, RefreshResponse, RefreshSessionTokenRequest,
     SessionTokenInfo,
 };
 use crate::presign::{presign_upload_to_stage, PresignMode, PresignedResponse, Reader};
@@ -648,11 +648,9 @@ impl APIClient {
             LoginResponseResult::Err { error } => return Err(Error::AuthFailure(error)),
             LoginResponseResult::Ok(info) => {
                 self.server_version = Some(info.version.clone());
-                if !info.token_info.session_token.is_empty() {
-                    self.session_token_info = Some(Arc::new(parking_lot::Mutex::new((
-                        info.token_info,
-                        Instant::now(),
-                    ))))
+                if let Some(tokens) = info.tokens {
+                    self.session_token_info =
+                        Some(Arc::new(parking_lot::Mutex::new((tokens, Instant::now()))))
                 }
             }
         }
@@ -663,12 +661,6 @@ impl APIClient {
         let endpoint = self.endpoint.join("/v1/session/logout")?;
 
         let session_state = self.session_state();
-        let refresh_token = self
-            .session_token_info
-            .as_ref()
-            .map(|info| info.lock().0.refresh_token.clone());
-        let body = LogoutRequest { refresh_token };
-
         let need_sticky = session_state.need_sticky.unwrap_or(false);
         let mut headers = self.make_headers(None)?;
         if need_sticky {
@@ -676,11 +668,7 @@ impl APIClient {
                 headers.insert(HEADER_STICKY_NODE, node_id.parse()?);
             }
         }
-        let builder = self
-            .cli
-            .post(endpoint.clone())
-            .json(&body)
-            .headers(headers.clone());
+        let builder = self.cli.post(endpoint.clone()).headers(headers.clone());
 
         let builder = self.wrap_auth_or_session_token(builder)?;
         let req = builder.build()?;
