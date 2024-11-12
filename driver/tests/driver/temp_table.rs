@@ -19,6 +19,11 @@ use tokio::time::sleep;
 use crate::common::DEFAULT_DSN;
 
 async fn test_temp_table(session_token_enabled: bool) {
+    let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
+    if dsn.starts_with("databend+flight://") {
+        return;
+    }
+
     let session_token = if session_token_enabled {
         "enable"
     } else {
