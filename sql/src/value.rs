@@ -30,6 +30,7 @@ use crate::{
     schema::{DecimalDataType, DecimalSize},
 };
 
+use arrow_array::StringViewArray;
 use geozero::wkb::FromWkb;
 use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
@@ -402,7 +403,10 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                 Some(array) => Ok(Value::String(array.value(seq).to_string())),
                 None => Err(ConvertError::new("large string", format!("{:?}", array)).into()),
             },
-
+            ArrowDataType::Utf8View => match array.as_any().downcast_ref::<StringViewArray>() {
+                Some(array) => Ok(Value::String(array.value(seq).to_string())),
+                None => Err(ConvertError::new("string view", format!("{:?}", array)).into()),
+            },
             // we only support timestamp in microsecond in databend
             ArrowDataType::Timestamp(unit, tz) => {
                 match array.as_any().downcast_ref::<TimestampMicrosecondArray>() {
