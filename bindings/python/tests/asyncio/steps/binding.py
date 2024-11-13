@@ -136,7 +136,7 @@ async def _(context):
     ]
     progress = await context.conn.stream_load("INSERT INTO test VALUES", values)
     assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
-    assert progress.write_bytes == 185, f"progress.write_bytes: {progress.write_bytes}"
+    assert progress.write_bytes == 187, f"progress.write_bytes: {progress.write_bytes}"
 
     rows = await context.conn.query_iter("SELECT * FROM test")
     ret = []

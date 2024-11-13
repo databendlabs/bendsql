@@ -52,3 +52,36 @@ async fn set_timezone_with_dsn() {
     let (val,): (String,) = row.try_into().unwrap();
     assert_eq!(val, "Europe/London");
 }
+
+#[tokio::test]
+async fn change_password() {
+    let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
+    if dsn.starts_with("databend+flight://") {
+        return;
+    }
+    let client = Client::new(dsn.to_string());
+    let conn = client.get_conn().await.unwrap();
+    let n = conn.exec("drop user if exists u1 ").await.unwrap();
+    assert_eq!(n, 0);
+    let n = conn
+        .exec("create user u1 identified by 'p1' ")
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+
+    let dsn = "databend://u1:p1@localhost:8000/default?sslmode=disable&session_token=enable";
+    let client = Client::new(dsn.to_string());
+    let conn = client.get_conn().await.unwrap();
+
+    let n = conn
+        .exec("alter user u1 identified by 'p2' ")
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+
+    let row = conn.query_row("select 1").await.unwrap();
+    assert!(row.is_some());
+    let row = row.unwrap();
+    let (val,): (i64,) = row.try_into().unwrap();
+    assert_eq!(val, 1);
+}
