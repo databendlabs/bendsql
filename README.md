@@ -12,6 +12,18 @@ Databend Native Client in Rust
 
 ## Installation for BendSQL
 
+### Installation script
+
+```bash
+curl -fsSL https://repo.databend.com/install/bendsql.sh | bash
+```
+
+or
+
+```bash
+curl -fsSL https://repo.databend.com/install/bendsql.sh | bash -s -- -y --prefix /usr/local
+```
+
 ### Cargo:
 
 [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) is recommended:
