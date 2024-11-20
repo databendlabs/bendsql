@@ -50,7 +50,7 @@ jobs:
 
   integration:
     needs: check
-    runs-on: [self-hosted, Linux, X64, 4c8g, aws]
+    runs-on: [self-hosted, Linux, X64, 2c8g, aws]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
