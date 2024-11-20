@@ -59,8 +59,8 @@ jobs:
           cache-key: integration
       - name: Get License from S3
         run: |
-          aws s3 cp s3://databend-ci/misc/license.key license.key
-          aws s3 cp s3://databend-ci/misc/license.json license.json
+          aws s3 cp s3://databend-ci/misc/license-trial.key license.key
+          aws s3 cp s3://databend-ci/misc/license-trial.json license.json
           cat license.json
           echo "QUERY_DATABEND_ENTERPRISE_LICENSE=$(cat license.key)" >> $GITHUB_ENV
       - run: make -C tests test-core
