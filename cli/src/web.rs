@@ -49,7 +49,6 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
 }
 
 static PERF_ID: AtomicUsize = AtomicUsize::new(0);
-
 static APP_DATA: Lazy<Arc<Mutex<HashMap<usize, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 

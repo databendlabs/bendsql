@@ -1,0 +1,35 @@
+name: Frontend
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "frontend/**"
+      - ".github/workflows/frontend.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: corepack enable
+
+      - name: Install dependencies
+        working-directory: frontend/
+        run: |
+          yarn install --immutable
+
+      - name: Build
+        working-directory: frontend/
+        run: |
+          yarn build
