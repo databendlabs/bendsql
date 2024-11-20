@@ -21,10 +21,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: "yarn"
 
-      - name: Build Frontend
+      - run: corepack enable
+
+      - name: Install dependencies
+        working-directory: frontend/
         run: |
-          yarn install
+          yarn install --immutable
+
+      - name: Build
+        working-directory: frontend/
+        run: |
           yarn build
-          mv build ../cli/frontend
