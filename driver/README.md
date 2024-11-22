@@ -75,6 +75,7 @@ while let Some(row) = rows.next().await {
 | `VARIANT`     | `String`        |
 | `BITMAP`      | `String`        |
 | `GEOMETRY`    | `String`        |
+| `GEOGRAPHY`   | `String`        |
 
 Note: `VARIANT` is a json encoded string. Example:
 

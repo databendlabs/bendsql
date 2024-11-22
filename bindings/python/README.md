@@ -86,14 +86,15 @@ asyncio.run(main())
 
 ### Semi-Structured Data Types
 
-| Databend   | Python  |
-| ---------- | ------- |
-| `ARRAY`    | `list`  |
-| `TUPLE`    | `tuple` |
-| `MAP`      | `dict`  |
-| `VARIANT`  | `str`   |
-| `BITMAP`   | `str`   |
-| `GEOMETRY` | `str`   |
+| Databend    | Python  |
+| ----------- | ------- |
+| `ARRAY`     | `list`  |
+| `TUPLE`     | `tuple` |
+| `MAP`       | `dict`  |
+| `VARIANT`   | `str`   |
+| `BITMAP`    | `str`   |
+| `GEOMETRY`  | `str`   |
+| `GEOGRAPHY` | `str`   |
 
 Note: `VARIANT` is a json encoded string. Example:
 
