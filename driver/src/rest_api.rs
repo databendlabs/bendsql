@@ -27,7 +27,6 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_stream::Stream;
 
-use databend_client::error::Error as ClientError;
 use databend_client::presign::PresignedResponse;
 use databend_client::response::QueryResponse;
 use databend_client::APIClient;
@@ -39,7 +38,7 @@ use crate::conn::{Connection, ConnectionInfo, Reader};
 
 #[derive(Clone)]
 pub struct RestAPIConnection {
-    client: APIClient,
+    client: Arc<APIClient>,
 }
 
 #[async_trait]
@@ -50,8 +49,8 @@ impl Connection for RestAPIConnection {
             host: self.client.host.clone(),
             port: self.client.port,
             user: self.client.username(),
-            database: self.client.current_database().await,
-            warehouse: self.client.current_warehouse().await,
+            database: self.client.current_database(),
+            warehouse: self.client.current_warehouse(),
         }
     }
 
@@ -151,9 +150,6 @@ impl Connection for RestAPIConnection {
             .client
             .insert_with_stage(sql, &stage, file_format_options, copy_options)
             .await?;
-        if let Some(err) = resp.error {
-            return Err(ClientError::InvalidResponse(err).into());
-        }
         Ok(ServerStats::from(resp.stats))
     }
 
@@ -202,7 +198,9 @@ impl Connection for RestAPIConnection {
 impl<'o> RestAPIConnection {
     pub async fn try_create(dsn: &str, name: String) -> Result<Self> {
         let client = APIClient::new(dsn, Some(name)).await?;
-        Ok(Self { client })
+        Ok(Self {
+            client: Arc::new(client),
+        })
     }
 
     async fn wait_for_schema(&self, resp: QueryResponse) -> Result<QueryResponse> {
@@ -244,7 +242,7 @@ impl<'o> RestAPIConnection {
 type PageFut = Pin<Box<dyn Future<Output = Result<QueryResponse>> + Send>>;
 
 pub struct RestAPIRows {
-    client: APIClient,
+    client: Arc<APIClient>,
     schema: SchemaRef,
     data: VecDeque<Vec<Option<String>>>,
     stats: Option<ServerStats>,
@@ -255,7 +253,7 @@ pub struct RestAPIRows {
 }
 
 impl RestAPIRows {
-    fn from_response(client: APIClient, resp: QueryResponse) -> Result<(Schema, Self)> {
+    fn from_response(client: Arc<APIClient>, resp: QueryResponse) -> Result<(Schema, Self)> {
         let schema: Schema = resp.schema.try_into()?;
         let rows = Self {
             client,

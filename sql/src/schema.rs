@@ -339,7 +339,9 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                 ArrowDataType::Binary
                 | ArrowDataType::LargeBinary
                 | ArrowDataType::FixedSizeBinary(_) => DataType::Binary,
-                ArrowDataType::Utf8 | ArrowDataType::LargeUtf8 => DataType::String,
+                ArrowDataType::Utf8 | ArrowDataType::LargeUtf8 | ArrowDataType::Utf8View => {
+                    DataType::String
+                }
                 ArrowDataType::Timestamp(_, _) => DataType::Timestamp,
                 ArrowDataType::Date32 => DataType::Date,
                 ArrowDataType::Decimal128(p, s) => {

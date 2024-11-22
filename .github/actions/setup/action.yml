@@ -87,28 +87,3 @@ runs:
         echo "SCCACHE_REGION=us-east-2" >> $GITHUB_ENV
         echo "SCCACHE_S3_KEY_PREFIX=bendsql/sccache/" >> $GITHUB_ENV
         echo "SCCACHE_S3_USE_SSL=true" >> $GITHUB_ENV
-
-    - name: Install Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '18'
-
-    - name: Install Yarn
-      shell: bash
-      run: |
-        if ! command -v yarn &> /dev/null
-        then
-          echo "Yarn not found, installing..."
-          npm install --global yarn
-        else
-          echo "Yarn is already installed"
-        fi
-
-    - name: Install Frontend
-      working-directory: frontend
-      shell: bash
-      run: |
-        rm -rf ../cli/frontend
-        mkdir -p ../cli/frontend
-        yarn config set network-timeout 600000 # Increase network timeout for reliability
-        yarn install && yarn build && mv build ../cli/frontend/

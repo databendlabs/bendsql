@@ -29,6 +29,8 @@ pub struct SessionState {
     pub txn_state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub need_sticky: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub need_keep_alive: Option<bool>,
 
     // hide fields of no interest (but need to send back to server in next query)
     #[serde(flatten)]
