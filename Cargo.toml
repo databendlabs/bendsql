@@ -21,10 +21,10 @@ keywords = ["databend", "database", "rust"]
 repository = "https://github.com/databendlabs/bendsql"
 
 [workspace.dependencies]
-databend-client = { path = "core", version = "0.22.2" }
-databend-driver = { path = "driver", version = "0.22.2" }
-databend-driver-core = { path = "sql", version = "0.22.2" }
-databend-driver-macros = { path = "macros", version = "0.22.2" }
+databend-client = { path = "core", version = "0.23.0" }
+databend-driver = { path = "driver", version = "0.23.0" }
+databend-driver-core = { path = "sql", version = "0.23.0" }
+databend-driver-macros = { path = "macros", version = "0.23.0" }
 
 tokio-stream = "0.1"
 chrono = { version = "0.4.35", default-features = false, features = ["clock"] }
