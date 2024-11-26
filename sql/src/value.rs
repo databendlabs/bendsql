@@ -30,7 +30,6 @@ use crate::{
     schema::{DecimalDataType, DecimalSize},
 };
 
-use arrow_array::StringViewArray;
 use geozero::wkb::FromWkb;
 use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
@@ -52,7 +51,8 @@ use {
         Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array,
         Decimal256Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
         LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, MapArray, StringArray,
-        StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+        StringViewArray, StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array,
+        UInt64Array, UInt8Array,
     },
     arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
     std::sync::Arc,
