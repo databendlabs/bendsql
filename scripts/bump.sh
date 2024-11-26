@@ -32,6 +32,7 @@ git rebase upstream/main
 git checkout -b "bump-$VERSION"
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
+  sed -ri '' "s/^version = \".*\"/version = \"$VERSION\"/g" Cargo.toml
   sed -ri '' "s/^databend-(.*)version = \".*\"/databend-\1version = \"$VERSION\"/g" Cargo.toml
   sed -i '' "s/\"version\": \".*\"/\"version\": \"$VERSION\"/g" bindings/nodejs/package.json
   sed -i '' "s/\"version\": \".*\"/\"version\": \"$VERSION\"/g" bindings/nodejs/npm/*/package.json
