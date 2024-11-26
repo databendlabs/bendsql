@@ -38,12 +38,11 @@ pub struct ResponseWithErrorCode {
 
 impl Display for ErrorCode {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "[{}]{}.{}",
-            self.code,
-            self.message,
-            self.detail.clone().unwrap_or("".to_string())
-        )
+        match &self.detail {
+            Some(d) if !d.is_empty() => {
+                write!(f, "[{}]{}\n{}", self.code, self.message, d)
+            }
+            _ => write!(f, "[{}]{}", self.code, self.message,),
+        }
     }
 }
