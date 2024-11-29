@@ -33,7 +33,7 @@ pub(crate) const ARROW_EXT_TYPE_GEOMETRY: &str = "Geometry";
 #[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_GEOGRAPHY: &str = "Geography";
 
-use databend_client::response::SchemaField as APISchemaField;
+use databend_client::SchemaField as APISchemaField;
 
 use crate::error::{Error, Result};
 

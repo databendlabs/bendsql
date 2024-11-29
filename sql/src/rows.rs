@@ -64,8 +64,8 @@ impl ServerStats {
     }
 }
 
-impl From<databend_client::response::QueryStats> for ServerStats {
-    fn from(stats: databend_client::response::QueryStats) -> Self {
+impl From<databend_client::QueryStats> for ServerStats {
+    fn from(stats: databend_client::QueryStats) -> Self {
         let mut p = Self {
             total_rows: 0,
             total_bytes: 0,

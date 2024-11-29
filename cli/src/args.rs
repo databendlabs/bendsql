@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
-use databend_client::auth::SensitiveString;
+use databend_client::SensitiveString;
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 
 #[derive(Debug, Clone, PartialEq, Default)]

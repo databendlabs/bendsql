@@ -30,7 +30,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use clap::{ArgAction, CommandFactory, Parser, ValueEnum};
-use databend_client::auth::SensitiveString;
+use databend_client::SensitiveString;
 use log::info;
 use once_cell::sync::Lazy;
 
@@ -373,7 +373,7 @@ pub async fn main() -> Result<()> {
             // Exit client if user login failed.
             if let Some(error) = err.downcast_ref::<databend_driver::Error>() {
                 match error {
-                    databend_driver::Error::Api(databend_client::error::Error::AuthFailure(_)) => {
+                    databend_driver::Error::Api(databend_client::Error::AuthFailure(_)) => {
                         println!("Authenticate failed wrong password user {}", user);
                         return Ok(());
                     }

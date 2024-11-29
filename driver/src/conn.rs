@@ -26,8 +26,8 @@ use url::Url;
 #[cfg(feature = "flight-sql")]
 use crate::flight_sql::FlightSQLConnection;
 
-use databend_client::presign::{presign_download_from_stage, PresignedResponse};
-use databend_client::stage::StageLocation;
+use databend_client::StageLocation;
+use databend_client::{presign_download_from_stage, PresignedResponse};
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
 use databend_driver_core::schema::{DataType, Field, NumberDataType, Schema};

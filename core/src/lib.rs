@@ -14,14 +14,25 @@
 
 mod client;
 
-pub mod auth;
-pub mod error;
-pub mod error_code;
+mod auth;
+mod error;
+mod error_code;
 mod global_cookie_store;
 mod login;
-pub mod presign;
-pub mod request;
-pub mod response;
-pub mod session;
-pub mod stage;
+mod presign;
+mod request;
+mod response;
+
+mod session;
+mod stage;
+
+pub use auth::SensitiveString;
 pub use client::APIClient;
+pub use error::Error;
+pub use presign::presign_download_from_stage;
+pub use presign::presign_upload_to_stage;
+pub use presign::PresignedResponse;
+pub use response::QueryResponse;
+pub use response::QueryStats;
+pub use response::SchemaField;
+pub use stage::StageLocation;
