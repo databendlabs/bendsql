@@ -208,7 +208,9 @@ impl<'o> RestAPIConnection {
             return Ok(resp);
         }
         let node_id = resp.node_id.clone();
-        self.client.set_last_node_id(node_id.clone());
+        if let Some(node_id) = &node_id {
+            self.client.set_last_node_id(node_id.clone());
+        }
         let mut result = resp;
         // preserve schema since it is not included in the final response
         while let Some(next_uri) = result.next_uri {
@@ -247,7 +249,7 @@ pub struct RestAPIRows {
     data: VecDeque<Vec<Option<String>>>,
     stats: Option<ServerStats>,
     query_id: String,
-    node_id: String,
+    node_id: Option<String>,
     next_uri: Option<String>,
     next_page: Option<PageFut>,
 }
