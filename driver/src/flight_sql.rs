@@ -31,8 +31,8 @@ use tokio_stream::{Stream, StreamExt};
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use url::Url;
 
-use databend_client::auth::SensitiveString;
-use databend_client::presign::{presign_upload_to_stage, PresignedResponse};
+use databend_client::SensitiveString;
+use databend_client::{presign_upload_to_stage, PresignedResponse};
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::rows::{
     Row, RowIterator, RowStatsIterator, RowWithStats, Rows, ServerStats,

@@ -27,9 +27,9 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_stream::Stream;
 
-use databend_client::presign::PresignedResponse;
-use databend_client::response::QueryResponse;
 use databend_client::APIClient;
+use databend_client::PresignedResponse;
+use databend_client::QueryResponse;
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
 use databend_driver_core::schema::{Schema, SchemaRef};
@@ -46,8 +46,8 @@ impl Connection for RestAPIConnection {
     async fn info(&self) -> ConnectionInfo {
         ConnectionInfo {
             handler: "RestAPI".to_string(),
-            host: self.client.host.clone(),
-            port: self.client.port,
+            host: self.client.host().to_string(),
+            port: self.client.port(),
             user: self.client.username(),
             database: self.client.current_database(),
             warehouse: self.client.current_warehouse(),

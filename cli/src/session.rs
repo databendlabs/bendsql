@@ -105,9 +105,7 @@ impl Session {
                 Ok(version) => version,
                 Err(err) => {
                     match err {
-                        databend_driver::Error::Api(
-                            databend_client::error::Error::AuthFailure(_),
-                        ) => {
+                        databend_driver::Error::Api(databend_client::Error::AuthFailure(_)) => {
                             return Err(err.into());
                         }
                         databend_driver::Error::Arrow(arrow::error::ArrowError::IpcError(
@@ -119,7 +117,7 @@ impl Session {
                                 return Err(err.into());
                             }
                         }
-                        databend_driver::Error::Api(databend_client::error::Error::Request(
+                        databend_driver::Error::Api(databend_client::Error::Request(
                             ref resp_err,
                         )) => {
                             if resp_err.contains("error sending request for url") {

@@ -44,7 +44,7 @@ pub enum Error {
     IO(String),
     BadArgument(String),
     InvalidResponse(String),
-    Api(databend_client::error::Error),
+    Api(databend_client::Error),
     #[cfg(feature = "flight-sql")]
     Arrow(arrow_schema::ArrowError),
     Convert(ConvertError),
@@ -183,8 +183,8 @@ impl From<hex::FromHexError> for Error {
     }
 }
 
-impl From<databend_client::error::Error> for Error {
-    fn from(e: databend_client::error::Error) -> Self {
+impl From<databend_client::Error> for Error {
+    fn from(e: databend_client::Error) -> Self {
         Error::Api(e)
     }
 }

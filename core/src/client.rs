@@ -60,10 +60,10 @@ static VERSION: Lazy<String> = Lazy::new(|| {
 
 #[derive(Clone)]
 pub struct APIClient {
-    pub cli: HttpClient,
-    pub scheme: String,
-    pub host: String,
-    pub port: u16,
+    cli: HttpClient,
+    scheme: String,
+    host: String,
+    port: u16,
 
     endpoint: Url,
 
@@ -231,6 +231,14 @@ impl APIClient {
         Ok(client)
     }
 
+    pub fn host(&self) -> &str {
+        self.host.as_str()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
     async fn build_client(&mut self, name: Option<String>) -> Result<()> {
         let ua = match name {
             Some(n) => n,
@@ -309,7 +317,7 @@ impl APIClient {
         uuid::Uuid::new_v4().to_string()
     }
 
-    pub async fn handle_session(&self, session: &Option<SessionState>) {
+    async fn handle_session(&self, session: &Option<SessionState>) {
         let session = match session {
             Some(session) => session,
             None => return,
@@ -333,11 +341,11 @@ impl APIClient {
     pub fn set_last_node_id(&self, node_id: String) {
         *self.last_node_id.lock() = Some(node_id)
     }
-    pub fn last_node_id(&self) -> Option<String> {
+    fn last_node_id(&self) -> Option<String> {
         self.last_node_id.lock().clone()
     }
 
-    pub fn handle_warnings(&self, resp: &QueryResponse) {
+    fn handle_warnings(&self, resp: &QueryResponse) {
         if let Some(warnings) = &resp.warnings {
             for w in warnings {
                 warn!(target: "server_warnings", "server warning: {}", w);
@@ -437,7 +445,8 @@ impl APIClient {
         }
     }
 
-    pub async fn kill_query(&self, query_id: &str, kill_uri: &str) -> Result<()> {
+    #[allow(dead_code)]
+    async fn kill_query(&self, query_id: &str, kill_uri: &str) -> Result<()> {
         info!("kill query: {}", kill_uri);
         let endpoint = self.endpoint.join(kill_uri)?;
         let headers = self.make_headers(Some(query_id))?;
@@ -451,7 +460,7 @@ impl APIClient {
         Ok(())
     }
 
-    pub async fn wait_for_query(&self, resp: QueryResponse) -> Result<QueryResponse> {
+    async fn wait_for_query(&self, resp: QueryResponse) -> Result<QueryResponse> {
         info!("wait for query: {}", resp.id);
         let node_id = resp.node_id.clone();
         if let Some(node_id) = self.last_node_id() {
@@ -624,7 +633,7 @@ impl APIClient {
         Ok(())
     }
 
-    pub async fn login(&mut self) -> Result<()> {
+    async fn login(&mut self) -> Result<()> {
         let endpoint = self.endpoint.join("/v1/session/login")?;
         let headers = self.make_headers(None)?;
         let body = LoginRequest::from(&*self.session_state.lock());
@@ -661,7 +670,7 @@ impl APIClient {
         Ok(())
     }
 
-    pub fn build_log_out_request(&mut self) -> Result<Request> {
+    fn build_log_out_request(&mut self) -> Result<Request> {
         let endpoint = self.endpoint.join("/v1/session/logout")?;
 
         let session_state = self.session_state();
@@ -684,7 +693,7 @@ impl APIClient {
             || self.session_state.lock().need_keep_alive.unwrap_or(false)
     }
 
-    pub async fn refresh_session_token(
+    async fn refresh_session_token(
         &self,
         self_login_info: Arc<parking_lot::Mutex<(SessionTokenInfo, Instant)>>,
     ) -> Result<()> {
