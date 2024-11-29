@@ -405,18 +405,20 @@ impl APIClient {
         &self,
         query_id: &str,
         next_uri: &str,
-        node_id: &str,
+        node_id: &Option<String>,
     ) -> Result<QueryResponse> {
         info!("query page: {}", next_uri);
         let endpoint = self.endpoint.join(next_uri)?;
         let headers = self.make_headers(Some(query_id))?;
         let mut builder = self.cli.get(endpoint.clone());
-        builder = self.wrap_auth_or_session_token(builder)?;
-        let request = builder
+        builder = self
+            .wrap_auth_or_session_token(builder)?
             .headers(headers.clone())
-            .header(HEADER_STICKY_NODE, node_id)
-            .timeout(self.page_request_timeout)
-            .build()?;
+            .timeout(self.page_request_timeout);
+        if let Some(node_id) = node_id {
+            builder = builder.header(HEADER_STICKY_NODE, node_id)
+        }
+        let request = builder.build()?;
 
         let response = self.query_request_helper(request, false, true).await?;
         let body = response.bytes().await?;
@@ -452,7 +454,9 @@ impl APIClient {
     pub async fn wait_for_query(&self, resp: QueryResponse) -> Result<QueryResponse> {
         info!("wait for query: {}", resp.id);
         let node_id = resp.node_id.clone();
-        self.set_last_node_id(node_id.clone());
+        if let Some(node_id) = self.last_node_id() {
+            self.set_last_node_id(node_id.clone());
+        }
         if let Some(next_uri) = &resp.next_uri {
             let schema = resp.schema;
             let mut data = resp.data;
