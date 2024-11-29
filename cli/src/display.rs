@@ -363,7 +363,7 @@ impl<'a> FormatDisplay<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> ChunkDisplay for FormatDisplay<'a> {
+impl ChunkDisplay for FormatDisplay<'_> {
     async fn display(&mut self) -> Result<ServerStats> {
         match self.settings.output_format {
             OutputFormat::Table => {
