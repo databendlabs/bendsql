@@ -72,7 +72,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
       - name: Install ziglang
         uses: goto-bus-stop/setup-zig@v2
         with:
@@ -118,7 +118,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
       - name: Corepack
         working-directory: bindings/nodejs
         run: corepack enable
