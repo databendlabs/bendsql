@@ -75,7 +75,7 @@ jobs:
         with:
           node-version: "20"
       - name: Install ziglang
-        if: endsWith(matrix.target, '-unknown-linux-gnu') || endsWith(matrix.target, '-unknown-linux-musl')
+        if: contains(matrix.target, '-unknown-linux-')
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.11.0
