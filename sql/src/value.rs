@@ -30,7 +30,6 @@ use crate::{
     schema::{DecimalDataType, DecimalSize},
 };
 
-use arrow_array::IntervalMonthDayNanoArray;
 use geozero::wkb::FromWkb;
 use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
@@ -51,9 +50,9 @@ use {
     arrow_array::{
         Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array,
         Decimal256Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
-        LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, MapArray, StringArray,
-        StringViewArray, StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array,
-        UInt64Array, UInt8Array,
+        IntervalMonthDayNanoArray, LargeBinaryArray, LargeListArray, LargeStringArray, ListArray,
+        MapArray, StringArray, StringViewArray, StructArray, TimestampMicrosecondArray,
+        UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
     arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
     std::sync::Arc,
@@ -1107,11 +1106,11 @@ impl IntervalToStringCast {
         if interval.months != 0 {
             let years = interval.months / 12;
             let months = interval.months - years * 12;
-            Self::format_interval_value(years, buffer, &mut length, "year");
-            Self::format_interval_value(months, buffer, &mut length, "month");
+            Self::format_interval_value(years, buffer, &mut length, " year");
+            Self::format_interval_value(months, buffer, &mut length, " month");
         }
         if interval.days != 0 {
-            Self::format_interval_value(interval.days, buffer, &mut length, "day");
+            Self::format_interval_value(interval.days, buffer, &mut length, " day");
         }
         if interval.micros != 0 {
             if length != 0 {
