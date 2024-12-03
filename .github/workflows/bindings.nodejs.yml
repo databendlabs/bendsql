@@ -39,7 +39,7 @@ jobs:
         run: pnpm install --lockfile-only
       - name: Check format
         working-directory: bindings/nodejs
-        run: pnpm run prettier --check .
+        run: pnpm prettier --check .
       - name: Build
         working-directory: bindings/nodejs
         run: pnpm run build:debug
@@ -138,7 +138,7 @@ jobs:
         working-directory: bindings/nodejs
         run: |
           ls -lRh artifacts
-          pnpm run napi artifacts
+          pnpm napi artifacts
           ls -lRh npm
       - name: Add LICENSE
         run: cp LICENSE ./bindings/nodejs
