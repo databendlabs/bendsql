@@ -15,6 +15,8 @@
 #[macro_use]
 extern crate napi_derive;
 
+use std::collections::HashMap;
+
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use napi::{bindgen_prelude::*, Env};
 use once_cell::sync::Lazy;
@@ -201,6 +203,26 @@ impl RowIterator {
 }
 
 #[napi]
+pub struct NamedRowIterator(databend_driver::RowIterator);
+
+#[napi]
+impl NamedRowIterator {
+    /// Fetch next row.
+    /// Returns `None` if there are no more rows.
+    #[napi]
+    #[allow(clippy::missing_safety_doc)]
+    pub async unsafe fn next(&mut self) -> Option<Result<NamedRow>> {
+        self.0.next().await.map(|row| {
+            row.map(|r| NamedRow {
+                schema: self.0.schema().clone(),
+                row: r,
+            })
+            .map_err(format_napi_error)
+        })
+    }
+}
+
+#[napi]
 pub struct RowIteratorExt(databend_driver::RowStatsIterator);
 
 #[napi]
@@ -264,6 +286,31 @@ impl Row {
     pub fn values(&self) -> Vec<Value> {
         // FIXME: do not clone
         self.0.values().iter().map(|v| Value(v.clone())).collect()
+    }
+}
+
+#[napi]
+#[derive(Clone)]
+pub struct NamedRow {
+    schema: databend_driver::SchemaRef,
+    row: databend_driver::Row,
+}
+
+#[napi]
+impl NamedRow {
+    #[napi]
+    pub fn values(&self) -> HashMap<String, Value> {
+        let mut map = HashMap::new();
+        for (name, value) in self
+            .schema
+            .fields()
+            .iter()
+            .map(|f| f.name.to_string())
+            .zip(self.row.values().iter())
+        {
+            map.insert(name.clone(), Value(value.clone()));
+        }
+        map
     }
 }
 
@@ -380,6 +427,16 @@ impl Connection {
             .query_iter(&sql)
             .await
             .map(RowIterator)
+            .map_err(format_napi_error)
+    }
+
+    /// Execute a SQL query, and return all rows keyed by column name.
+    #[napi]
+    pub async fn query_iter_map(&self, sql: String) -> Result<NamedRowIterator> {
+        self.0
+            .query_iter(&sql)
+            .await
+            .map(NamedRowIterator)
             .map_err(format_napi_error)
     }
 
