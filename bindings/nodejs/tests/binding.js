@@ -85,7 +85,7 @@ Then("Select numbers should iterate all rows", async function () {
     let ret = [];
     let row = await rows.next();
     while (row) {
-      ret.push(row.values());
+      ret.push(row.data());
       row = await rows.next();
     }
     const expected = [{ n: 0 }, { n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }];

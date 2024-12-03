@@ -96,7 +96,7 @@ export declare class Row {
   values(): Array<any>
 }
 export declare class NamedRow {
-  values(): Record<string, any>
+  data(): Record<string, any>
 }
 export declare class ServerStats {
   get totalRows(): bigint

@@ -299,7 +299,7 @@ pub struct NamedRow {
 #[napi]
 impl NamedRow {
     #[napi]
-    pub fn values(&self) -> HashMap<String, Value> {
+    pub fn data(&self) -> HashMap<String, Value> {
         let mut map = HashMap::new();
         for (name, value) in self
             .schema
