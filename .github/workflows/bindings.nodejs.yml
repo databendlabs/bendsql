@@ -88,8 +88,9 @@ jobs:
       - name: build
         working-directory: bindings/nodejs
         shell: bash
+        env:
+          NAPI_TARGET: ${{ matrix.target }}
         run: |
-          export NAPI_TARGET=${{ matrix.target }}
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             yarn build:debug
           else
