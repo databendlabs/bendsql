@@ -36,14 +36,13 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: |
-          yarn install --immutable
+        run: pnpm install --lockfile-only
       - name: Check format
         working-directory: bindings/nodejs
-        run: yarn run prettier --check .
+        run: pnpm run prettier --check .
       - name: Build
         working-directory: bindings/nodejs
-        run: yarn build:debug
+        run: pnpm run build:debug
       - name: Check diff
         run: git diff --exit-code
       - run: make -C tests test-bindings-nodejs
@@ -84,7 +83,7 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: yarn install --immutable
+        run: pnpm install --lockfile-only
       - name: build
         working-directory: bindings/nodejs
         shell: bash
@@ -92,9 +91,9 @@ jobs:
           NAPI_TARGET: ${{ matrix.target }}
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            yarn build:debug
+            pnpm run build:debug
           else
-            yarn build
+            pnpm run build
           fi
       - name: strip for macos
         if: endsWith(matrix.target, '-apple-darwin')
@@ -127,7 +126,7 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: yarn install --immutable
+        run: pnpm install --lockfile-only
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -139,7 +138,7 @@ jobs:
         working-directory: bindings/nodejs
         run: |
           ls -lRh artifacts
-          yarn run napi artifacts
+          pnpm run napi artifacts
           ls -lRh npm
       - name: Add LICENSE
         run: cp LICENSE ./bindings/nodejs

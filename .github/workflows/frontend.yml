@@ -26,10 +26,8 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend/
-        run: |
-          yarn install --immutable
+        run: pnpm install --lockfile-only
 
       - name: Build
         working-directory: frontend/
-        run: |
-          yarn build
+        run: pnpm run build
