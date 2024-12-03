@@ -4,8 +4,8 @@
 
 ```shell
 cd bindings/nodejs
-yarn install
-yarn build
+pnpm install
+pnpm run build
 ```
 
 ## Usage
@@ -28,10 +28,19 @@ await conn.exec(`CREATE TABLE test (
 	t   DateTime
 );`);
 
+// get rows of value array
 const rows = await conn.queryIter("SELECT * FROM test");
 let row = await rows.next();
 while (row) {
   console.log(row.values());
+  row = await rows.next();
+}
+
+// get rows of map
+const rows = await conn.queryIterMap("SELECT * FROM test");
+let row = await rows.next();
+while (row) {
+  console.log(row.data());
   row = await rows.next();
 }
 ```
@@ -89,7 +98,7 @@ console.log(value);
 
 ```shell
 cd bindings/nodejs
-yarn install
-yarn build:debug
-yarn test
+pnpm install
+pnpm run build:debug
+pnpm run test
 ```

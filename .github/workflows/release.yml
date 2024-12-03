@@ -18,12 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -58,7 +52,7 @@ jobs:
         include:
           - { os: macos, target: aarch64-apple-darwin }
           - { os: macos, target: x86_64-apple-darwin }
-          # - { os: windows, target: x86_64-pc-windows-gnu }
+          - { os: windows, target: aarch64-pc-windows-msvc }
           - { os: windows, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}-latest
     steps:
@@ -147,8 +141,8 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          export arch=${{ matrix.arch }}
-          export version=${{ github.ref_name }}
+          arch=${{ matrix.arch }}
+          version=${{ github.ref_name }}
           nfpm package --packager ${{ matrix.packager }} --target dist/pkg/ -f <(envsubst '${arch} ${version}' < nfpm.yaml)
 
       - name: Publish

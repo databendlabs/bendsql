@@ -24,7 +24,7 @@ const { Content, Sider } = Layout;
 function ProfileGraphDashboard() {
   const [selectedNodeId, setSelectedNodeId] = useState<string>(ALL_NODE_ID);
 
-  const profileWrapRefCanvas = useRef<HTMLCanvasElement|null>(null);
+  const profileWrapRefCanvas = useRef<HTMLCanvasElement | null>(null);
 
   const profileWrapRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<IGraph | null>(null);
@@ -58,9 +58,9 @@ function ProfileGraphDashboard() {
       <Layout
         ref={profileRef}
         className="bg-white w-full rounded-lg"
-        >
+      >
         <Content className="p-6 w-full flex">
-        <GraphContent
+          <GraphContent
             isLoading={isLoading}
             plainData={plainData}
             graphSize={graphSize}

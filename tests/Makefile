@@ -26,7 +26,7 @@ test-bindings-python: up
 	cd ../bindings/python && pipenv run behave tests/*
 
 test-bindings-nodejs: up
-	cd ../bindings/nodejs && yarn test
+	cd ../bindings/nodejs && pnpm run test
 
 down:
 	docker compose down

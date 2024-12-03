@@ -66,15 +66,31 @@ Then("Select types should be expected native types", async function () {
 });
 
 Then("Select numbers should iterate all rows", async function () {
-  let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
-  let ret = [];
-  let row = await rows.next();
-  while (row) {
-    ret.push(row.values()[0]);
-    row = await rows.next();
+  // iter
+  {
+    let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
+    let ret = [];
+    let row = await rows.next();
+    while (row) {
+      ret.push(row.values()[0]);
+      row = await rows.next();
+    }
+    const expected = [0, 1, 2, 3, 4];
+    assert.deepEqual(ret, expected);
   }
-  const expected = [0, 1, 2, 3, 4];
-  assert.deepEqual(ret, expected);
+
+  // iter names
+  {
+    let rows = await this.conn.queryIterMap("SELECT number as n FROM numbers(5)");
+    let ret = [];
+    let row = await rows.next();
+    while (row) {
+      ret.push(row.data());
+      row = await rows.next();
+    }
+    const expected = [{ n: 0 }, { n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }];
+    assert.deepEqual(ret, expected);
+  }
 });
 
 When("Create a test table", async function () {

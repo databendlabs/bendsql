@@ -15,9 +15,13 @@
     "triples": {
       "defaults": true,
       "additional": [
+        "x86_64-unknown-linux-gnu",
         "aarch64-unknown-linux-gnu",
         "x86_64-unknown-linux-musl",
         "aarch64-unknown-linux-musl",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+        "x86_64-apple-darwin",
         "aarch64-apple-darwin"
       ]
     }
@@ -45,8 +49,8 @@
     "node": ">= 10"
   },
   "scripts": {
-    "build": "napi build --platform --target \"${NAPI_TARGET:-}\" --release --js generated.js && node ./scripts/header.js",
-    "build:debug": "napi build --platform --target \"${NAPI_TARGET:-}\" --js generated.js && node ./scripts/header.js",
+    "build": "napi build --platform --target=$NAPI_TARGET --release --js generated.js && node ./scripts/header.js",
+    "build:debug": "napi build --platform --target=$NAPI_TARGET --js generated.js && node ./scripts/header.js",
     "docs": "typedoc",
     "format": "prettier --write .",
     "test": "cucumber-js",
@@ -66,5 +70,5 @@
     "registry": "https://registry.npmjs.org/",
     "access": "public"
   },
-  "packageManager": "yarn@3.5.1"
+  "packageManager": "pnpm@9.14.2+sha512.6e2baf77d06b9362294152c851c4f278ede37ab1eba3a55fda317a4a17b209f4dbb973fb250a77abc463a341fcb1f17f17cfa24091c4eb319cda0d9b84278387"
 }

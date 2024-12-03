@@ -30,20 +30,19 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
       - name: Corepack
         working-directory: bindings/nodejs
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: |
-          yarn install --immutable
+        run: pnpm install
       - name: Check format
         working-directory: bindings/nodejs
-        run: yarn run prettier --check .
+        run: pnpm prettier --check .
       - name: Build
         working-directory: bindings/nodejs
-        run: yarn build:debug
+        run: pnpm run build:debug
       - name: Check diff
         run: git diff --exit-code
       - run: make -C tests test-bindings-nodejs
@@ -59,9 +58,11 @@ jobs:
           - { target: aarch64-unknown-linux-gnu, runner: ubuntu-20.04 }
           - { target: aarch64-unknown-linux-musl, runner: ubuntu-latest }
           - { target: x86_64-unknown-linux-musl, runner: ubuntu-latest }
-          - { target: x86_64-pc-windows-msvc, runner: windows-2019 }
-          - { target: x86_64-apple-darwin, runner: macos-13 }
-          - { target: aarch64-apple-darwin, runner: macos-14 }
+          # FIXME: tmp disable for build issue
+          # - { target: x86_64-pc-windows-msvc, runner: windows-latest }
+          # - { target: aarch64-pc-windows-msvc, runner: windows-latest }
+          - { target: x86_64-apple-darwin, runner: macos-latest }
+          - { target: aarch64-apple-darwin, runner: macos-latest }
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust toolchain
@@ -72,8 +73,9 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
       - name: Install ziglang
+        if: contains(matrix.target, '-unknown-linux-')
         uses: goto-bus-stop/setup-zig@v2
         with:
           version: 0.11.0
@@ -82,16 +84,17 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: yarn install --immutable
+        run: pnpm install
       - name: build
         working-directory: bindings/nodejs
         shell: bash
+        env:
+          NAPI_TARGET: ${{ matrix.target }}
         run: |
-          export NAPI_TARGET=${{ matrix.target }}
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            yarn build:debug
+            pnpm run build:debug
           else
-            yarn build
+            pnpm run build
           fi
       - name: strip for macos
         if: endsWith(matrix.target, '-apple-darwin')
@@ -118,13 +121,13 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: "18"
+          node-version: "20"
       - name: Corepack
         working-directory: bindings/nodejs
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: yarn install --immutable
+        run: pnpm install
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -136,7 +139,7 @@ jobs:
         working-directory: bindings/nodejs
         run: |
           ls -lRh artifacts
-          yarn run napi artifacts
+          pnpm napi artifacts
           ls -lRh npm
       - name: Add LICENSE
         run: cp LICENSE ./bindings/nodejs
