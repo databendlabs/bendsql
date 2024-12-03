@@ -141,8 +141,8 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          export arch=${{ matrix.arch }}
-          export version=${{ github.ref_name }}
+          arch=${{ matrix.arch }}
+          version=${{ github.ref_name }}
           nfpm package --packager ${{ matrix.packager }} --target dist/pkg/ -f <(envsubst '${arch} ${version}' < nfpm.yaml)
 
       - name: Publish
