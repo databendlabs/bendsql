@@ -36,7 +36,7 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: pnpm install --lockfile-only
+        run: pnpm install
       - name: Check format
         working-directory: bindings/nodejs
         run: pnpm prettier --check .
@@ -83,7 +83,7 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: pnpm install --lockfile-only
+        run: pnpm install
       - name: build
         working-directory: bindings/nodejs
         shell: bash
@@ -126,7 +126,7 @@ jobs:
         run: corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
-        run: pnpm install --lockfile-only
+        run: pnpm install
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:

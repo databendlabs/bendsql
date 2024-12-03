@@ -26,7 +26,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend/
-        run: pnpm install --lockfile-only
+        run: pnpm install
 
       - name: Build
         working-directory: frontend/
