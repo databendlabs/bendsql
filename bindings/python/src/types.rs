@@ -102,6 +102,14 @@ impl<'py> IntoPyObject<'py> for Value {
             databend_driver::Value::Variant(s) => s.into_bound_py_any(py)?,
             databend_driver::Value::Geometry(s) => s.into_bound_py_any(py)?,
             databend_driver::Value::Geography(s) => s.into_bound_py_any(py)?,
+            databend_driver::Value::Interval(i) => {
+                let interval = databend_driver::Interval {
+                    months: i.0,
+                    days: i.1,
+                    micros: i.2,
+                };
+                interval.to_string().into_py(py)?
+            }
         };
         Ok(val)
     }

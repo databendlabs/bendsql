@@ -92,6 +92,7 @@ pub enum DataType {
     Bitmap,
     Geometry,
     Geography,
+    Interval,
     // Generic(usize),
 }
 
@@ -152,6 +153,7 @@ impl std::fmt::Display for DataType {
             DataType::Bitmap => write!(f, "Bitmap"),
             DataType::Geometry => write!(f, "Geometry"),
             DataType::Geography => write!(f, "Geography"),
+            DataType::Interval => write!(f, "Interval"),
         }
     }
 }
@@ -270,6 +272,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
             "Bitmap" => DataType::Bitmap,
             "Geometry" => DataType::Geometry,
             "Geography" => DataType::Geography,
+            "Interval" => DataType::Interval,
             _ => return Err(Error::Parsing(format!("Unknown type: {:?}", desc))),
         };
         Ok(dt)
