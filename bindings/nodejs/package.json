@@ -6,14 +6,16 @@
   "main": "index.js",
   "types": "index.d.ts",
   "description": "Databend Driver Node.js Binding",
-  "repository": "https://github.com/databendlabs/bendsql.git",
+  "repository": {
+    "url": "git+https://github.com/databendlabs/bendsql.git"
+  },
   "napi": {
     "name": "databend-driver",
     "package": {
       "name": "@databend-driver/lib"
     },
     "triples": {
-      "defaults": true,
+      "defaults": false,
       "additional": [
         "x86_64-unknown-linux-gnu",
         "aarch64-unknown-linux-gnu",
