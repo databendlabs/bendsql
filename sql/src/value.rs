@@ -33,7 +33,7 @@ use crate::{
 use geozero::wkb::FromWkb;
 use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
-use std::fmt::Write;
+use std::fmt::{Display, Formatter, Write};
 
 // Thu 1970-01-01 is R.D. 719163
 const DAYS_FROM_CE: i32 = 719_163;
@@ -50,9 +50,9 @@ use {
     arrow_array::{
         Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array,
         Decimal256Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
-        LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, MapArray, StringArray,
-        StringViewArray, StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array,
-        UInt64Array, UInt8Array,
+        IntervalMonthDayNanoArray, LargeBinaryArray, LargeListArray, LargeStringArray, ListArray,
+        MapArray, StringArray, StringViewArray, StructArray, TimestampMicrosecondArray,
+        UInt16Array, UInt32Array, UInt64Array, UInt8Array,
     },
     arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
     std::sync::Arc,
@@ -95,6 +95,7 @@ pub enum Value {
     Variant(String),
     Geometry(String),
     Geography(String),
+    Interval((i32, i32, i64)),
 }
 
 impl Value {
@@ -123,6 +124,7 @@ impl Value {
             Self::Timestamp(_) => DataType::Timestamp,
 
             Self::Date(_) => DataType::Date,
+            Self::Interval(_) => DataType::Interval,
             Self::Array(vals) => {
                 if vals.is_empty() {
                     DataType::EmptyArray
@@ -228,7 +230,14 @@ impl TryFrom<(&DataType, &str)> for Value {
             DataType::Variant => Ok(Self::Variant(v.to_string())),
             DataType::Geometry => Ok(Self::Geometry(v.to_string())),
             DataType::Geography => Ok(Self::Geography(v.to_string())),
-
+            DataType::Interval => {
+                let interval = Interval::from_string(v)?;
+                Ok(Self::Interval((
+                    interval.months,
+                    interval.days,
+                    interval.nanos,
+                )))
+            }
             DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) => {
                 let mut reader = Cursor::new(v);
                 let decoder = ValueDecoder {};
@@ -257,27 +266,23 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
         (field, array, seq): (&ArrowField, &Arc<dyn ArrowArray>, usize),
     ) -> std::result::Result<Self, Self::Error> {
         if let Some(extend_type) = field.metadata().get(EXTENSION_KEY) {
-            match extend_type.as_str() {
-                ARROW_EXT_TYPE_EMPTY_ARRAY => {
-                    return Ok(Value::EmptyArray);
-                }
-                ARROW_EXT_TYPE_EMPTY_MAP => {
-                    return Ok(Value::EmptyMap);
-                }
+            return match extend_type.as_str() {
+                ARROW_EXT_TYPE_EMPTY_ARRAY => Ok(Value::EmptyArray),
+                ARROW_EXT_TYPE_EMPTY_MAP => Ok(Value::EmptyMap),
                 ARROW_EXT_TYPE_VARIANT => {
                     if field.is_nullable() && array.is_null(seq) {
                         return Ok(Value::Null);
                     }
-                    return match array.as_any().downcast_ref::<LargeBinaryArray>() {
+                    match array.as_any().downcast_ref::<LargeBinaryArray>() {
                         Some(array) => Ok(Value::Variant(jsonb::to_string(array.value(seq)))),
                         None => Err(ConvertError::new("variant", format!("{:?}", array)).into()),
-                    };
+                    }
                 }
                 ARROW_EXT_TYPE_BITMAP => {
                     if field.is_nullable() && array.is_null(seq) {
                         return Ok(Value::Null);
                     }
-                    return match array.as_any().downcast_ref::<LargeBinaryArray>() {
+                    match array.as_any().downcast_ref::<LargeBinaryArray>() {
                         Some(array) => {
                             let rb = roaring::RoaringTreemap::deserialize_from(array.value(seq))
                                 .expect("failed to deserialize bitmap");
@@ -286,43 +291,41 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             Ok(Value::Bitmap(s))
                         }
                         None => Err(ConvertError::new("bitmap", format!("{:?}", array)).into()),
-                    };
+                    }
                 }
                 ARROW_EXT_TYPE_GEOMETRY => {
                     if field.is_nullable() && array.is_null(seq) {
                         return Ok(Value::Null);
                     }
-                    return match array.as_any().downcast_ref::<LargeBinaryArray>() {
+                    match array.as_any().downcast_ref::<LargeBinaryArray>() {
                         Some(array) => {
                             let wkt = parse_geometry(array.value(seq))?;
                             Ok(Value::Geometry(wkt))
                         }
                         None => Err(ConvertError::new("geometry", format!("{:?}", array)).into()),
-                    };
+                    }
                 }
                 ARROW_EXT_TYPE_GEOGRAPHY => {
                     if field.is_nullable() && array.is_null(seq) {
                         return Ok(Value::Null);
                     }
-                    return match array.as_any().downcast_ref::<LargeBinaryArray>() {
+                    match array.as_any().downcast_ref::<LargeBinaryArray>() {
                         Some(array) => {
                             let wkt = parse_geometry(array.value(seq))?;
                             Ok(Value::Geography(wkt))
                         }
                         None => Err(ConvertError::new("geography", format!("{:?}", array)).into()),
-                    };
+                    }
                 }
-                _ => {
-                    return Err(ConvertError::new(
-                        "extension",
-                        format!(
-                            "Unsupported extension datatype for arrow field: {:?}",
-                            field
-                        ),
-                    )
-                    .into());
-                }
-            }
+                _ => Err(ConvertError::new(
+                    "extension",
+                    format!(
+                        "Unsupported extension datatype for arrow field: {:?}",
+                        field
+                    ),
+                )
+                .into()),
+            };
         }
 
         if field.is_nullable() && array.is_null(seq) {
@@ -449,6 +452,19 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                 Some(array) => Ok(Value::Date(array.value(seq))),
                 None => Err(ConvertError::new("date", format!("{:?}", array)).into()),
             },
+            ArrowDataType::Interval(_) => {
+                match array.as_any().downcast_ref::<IntervalMonthDayNanoArray>() {
+                    Some(array) => {
+                        let res = array.value(seq);
+                        Ok(Value::Interval((
+                            res.months,
+                            res.days,
+                            res.nanoseconds / 1000,
+                        )))
+                    }
+                    None => Err(ConvertError::new("interval", format!("{:?}", array)).into()),
+                }
+            }
             ArrowDataType::List(f) => match array.as_any().downcast_ref::<ListArray>() {
                 Some(array) => {
                     let inner_array = unsafe { array.value_unchecked(seq) };
@@ -830,6 +846,18 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
                 write!(f, "'{}'", t)
             }
         }
+        Value::Interval(v) => {
+            let interval = Interval {
+                months: v.0,
+                days: v.1,
+                nanos: v.2,
+            };
+            if raw {
+                write!(f, "{}", interval)
+            } else {
+                write!(f, "'{}'", interval)
+            }
+        }
         Value::Date(i) => {
             let days = i + DAYS_FROM_CE;
             let d = NaiveDate::from_num_days_from_ce_opt(days).unwrap_or_default();
@@ -1009,8 +1037,555 @@ pub fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Default)]
+pub struct Interval {
+    pub months: i32,
+    pub days: i32,
+    pub nanos: i64,
+}
+
+impl Display for Interval {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut buffer = [0u8; 70];
+        let len = IntervalToStringCast::format(*self, &mut buffer);
+        write!(f, "{}", String::from_utf8_lossy(&buffer[..len]))
+    }
+}
+
+struct IntervalToStringCast;
+
+impl IntervalToStringCast {
+    fn format_signed_number(value: i64, buffer: &mut [u8], length: &mut usize) {
+        let s = value.to_string();
+        let bytes = s.as_bytes();
+        buffer[*length..*length + bytes.len()].copy_from_slice(bytes);
+        *length += bytes.len();
+    }
+
+    fn format_two_digits(value: i64, buffer: &mut [u8], length: &mut usize) {
+        let s = format!("{:02}", value.abs());
+        let bytes = s.as_bytes();
+        buffer[*length..*length + bytes.len()].copy_from_slice(bytes);
+        *length += bytes.len();
+    }
+
+    fn format_interval_value(value: i32, buffer: &mut [u8], length: &mut usize, name: &str) {
+        if value == 0 {
+            return;
+        }
+        if *length != 0 {
+            buffer[*length] = b' ';
+            *length += 1;
+        }
+        Self::format_signed_number(value as i64, buffer, length);
+        let name_bytes = name.as_bytes();
+        buffer[*length..*length + name_bytes.len()].copy_from_slice(name_bytes);
+        *length += name_bytes.len();
+        if value != 1 && value != -1 {
+            buffer[*length] = b's';
+            *length += 1;
+        }
+    }
+
+    fn format_nanos(mut nano: i64, buffer: &mut [u8], length: &mut usize) {
+        if nano < 0 {
+            nano = -nano;
+        }
+        let s = format!("{:09}", nano);
+        let bytes = s.as_bytes();
+        buffer[*length..*length + bytes.len()].copy_from_slice(bytes);
+        *length += bytes.len();
+
+        while *length > 0 && buffer[*length - 1] == b'0' {
+            *length -= 1;
+        }
+    }
+
+    pub fn format(interval: Interval, buffer: &mut [u8]) -> usize {
+        let mut length = 0;
+        if interval.months != 0 {
+            let years = interval.months / 12;
+            let months = interval.months - years * 12;
+            Self::format_interval_value(years, buffer, &mut length, " year");
+            Self::format_interval_value(months, buffer, &mut length, " month");
+        }
+        if interval.days != 0 {
+            Self::format_interval_value(interval.days, buffer, &mut length, " day");
+        }
+        if interval.nanos != 0 {
+            if length != 0 {
+                buffer[length] = b' ';
+                length += 1;
+            }
+            let mut nanos = interval.nanos;
+            if nanos < 0 {
+                buffer[length] = b'-';
+                length += 1;
+                nanos = -nanos;
+            }
+            let hour = nanos / NANO_PER_HOUR;
+            nanos -= hour * NANO_PER_HOUR;
+            let min = nanos / NANO_PER_MINUTE;
+            nanos -= min * NANO_PER_MINUTE;
+            let sec = nanos / NANO_PER_SEC;
+            nanos -= sec * NANO_PER_SEC;
+
+            Self::format_signed_number(hour, buffer, &mut length);
+            buffer[length] = b':';
+            length += 1;
+            Self::format_two_digits(min, buffer, &mut length);
+            buffer[length] = b':';
+            length += 1;
+            Self::format_two_digits(sec, buffer, &mut length);
+            if nanos != 0 {
+                buffer[length] = b'.';
+                length += 1;
+                Self::format_nanos(nanos, buffer, &mut length);
+            }
+        } else if length == 0 {
+            buffer[..8].copy_from_slice(b"00:00:00");
+            return 8;
+        }
+        length
+    }
+}
+
+impl Interval {
+    pub fn from_string(str: &str) -> Result<Self> {
+        Self::from_cstring(str.as_bytes())
+    }
+
+    pub fn from_cstring(str: &[u8]) -> Result<Self> {
+        let mut result = Interval::default();
+        let mut pos = 0;
+        let len = str.len();
+        let mut found_any = false;
+
+        if len == 0 {
+            return Err(Error::BadArgument("Empty string".to_string()));
+        }
+        match str[pos] {
+            b'@' => {
+                pos += 1;
+            }
+            b'P' | b'p' => {
+                return Err(Error::BadArgument(
+                    "Posix intervals not supported yet".to_string(),
+                ));
+            }
+            _ => {}
+        }
+
+        while pos < len {
+            match str[pos] {
+                b' ' | b'\t' | b'\n' => {
+                    pos += 1;
+                    continue;
+                }
+                b'0'..=b'9' => {
+                    let (number, fraction, next_pos) = parse_number(&str[pos..])?;
+                    pos += next_pos;
+                    let (specifier, next_pos) = parse_identifier(&str[pos..]);
+
+                    pos += next_pos;
+                    let _ = apply_specifier(&mut result, number, fraction, &specifier);
+                    found_any = true;
+                }
+                b'-' => {
+                    pos += 1;
+                    let (number, fraction, next_pos) = parse_number(&str[pos..])?;
+                    let number = -number;
+                    let fraction = -fraction;
+
+                    pos += next_pos;
+
+                    let (specifier, next_pos) = parse_identifier(&str[pos..]);
+
+                    pos += next_pos;
+                    let _ = apply_specifier(&mut result, number, fraction, &specifier);
+                    found_any = true;
+                }
+                b'a' | b'A' => {
+                    if len - pos < 3
+                        || str[pos + 1] != b'g' && str[pos + 1] != b'G'
+                        || str[pos + 2] != b'o' && str[pos + 2] != b'O'
+                    {
+                        return Err(Error::BadArgument("Invalid 'ago' specifier".to_string()));
+                    }
+                    pos += 3;
+                    while pos < len {
+                        match str[pos] {
+                            b' ' | b'\t' | b'\n' => {
+                                pos += 1;
+                            }
+                            _ => {
+                                return Err(Error::BadArgument(
+                                    "Trailing characters after 'ago'".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                    result.months = -result.months;
+                    result.days = -result.days;
+                    result.nanos = -result.nanos;
+                    return Ok(result);
+                }
+                _ => {
+                    return Err(Error::BadArgument(format!(
+                        "Unexpected character at position {}",
+                        pos
+                    )));
+                }
+            }
+        }
+
+        if !found_any {
+            return Err(Error::BadArgument(
+                "No interval specifiers found".to_string(),
+            ));
+        }
+        Ok(result)
+    }
+}
+
+fn parse_number(bytes: &[u8]) -> Result<(i64, i64, usize)> {
+    let mut number: i64 = 0;
+    let mut fraction: i64 = 0;
+    let mut pos = 0;
+
+    while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+        number = number
+            .checked_mul(10)
+            .ok_or(Error::BadArgument("Number too large".to_string()))?
+            + (bytes[pos] - b'0') as i64;
+        pos += 1;
+    }
+
+    if pos < bytes.len() && bytes[pos] == b'.' {
+        pos += 1;
+        let mut mult: i64 = 100000;
+        while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+            if mult > 0 {
+                fraction += (bytes[pos] - b'0') as i64 * mult;
+            }
+            mult /= 10;
+            pos += 1;
+        }
+    }
+    if pos < bytes.len() && bytes[pos] == b':' {
+        // parse time format HH:MM:SS[.FFFFFF]
+        let time_bytes = &bytes[pos..];
+        let mut time_pos = 0;
+        let mut total_nanos: i64 = number * 60 * 60 * NANO_PER_SEC;
+        let mut colon_count = 0;
+
+        // 1 day 01:23:45
+        while colon_count < 2 && time_bytes.len() > time_pos {
+            let (minute, _, next_pos) = parse_time_part(&time_bytes[time_pos..])?;
+            let minute_nanos = minute * 60 * NANO_PER_SEC;
+            total_nanos += minute_nanos;
+            time_pos += next_pos;
+
+            if time_bytes.len() > time_pos && time_bytes[time_pos] == b':' {
+                time_pos += 1;
+                colon_count += 1;
+            } else {
+                break;
+            }
+        }
+        if time_bytes.len() > time_pos {
+            let (seconds, nanos, next_pos) = parse_time_part_with_nanos(&time_bytes[time_pos..])?;
+            total_nanos += seconds * NANO_PER_SEC + nanos;
+            time_pos += next_pos;
+        }
+        return Ok((total_nanos, 0, pos + time_pos));
+    }
+
+    if pos == 0 {
+        return Err(Error::BadArgument("Expected number".to_string()));
+    }
+
+    Ok((number, fraction, pos))
+}
+
+fn parse_time_part(bytes: &[u8]) -> Result<(i64, i64, usize)> {
+    let mut number: i64 = 0;
+    let mut pos = 0;
+    while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+        number = number
+            .checked_mul(10)
+            .ok_or(Error::BadArgument("Number too large".to_string()))?
+            + (bytes[pos] - b'0') as i64;
+        pos += 1;
+    }
+    Ok((number, 0, pos))
+}
+
+fn parse_time_part_with_nanos(bytes: &[u8]) -> Result<(i64, i64, usize)> {
+    let mut number: i64 = 0;
+    let mut fraction: i64 = 0;
+    let mut pos = 0;
+
+    while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+        number = number
+            .checked_mul(10)
+            .ok_or(Error::BadArgument("Number too large".to_string()))?
+            + (bytes[pos] - b'0') as i64;
+        pos += 1;
+    }
+
+    if pos < bytes.len() && bytes[pos] == b'.' {
+        pos += 1;
+        let mut mult: i64 = 100000000;
+        while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+            if mult > 0 {
+                fraction += (bytes[pos] - b'0') as i64 * mult;
+            }
+            mult /= 10;
+            pos += 1;
+        }
+    }
+
+    Ok((number, fraction, pos))
+}
+
+fn parse_identifier(s: &[u8]) -> (String, usize) {
+    let mut pos = 0;
+    while pos < s.len() && (s[pos] == b' ' || s[pos] == b'\t' || s[pos] == b'\n') {
+        pos += 1;
+    }
+    let start_pos = pos;
+    while pos < s.len() && (s[pos].is_ascii_alphabetic()) {
+        pos += 1;
+    }
+
+    if pos == start_pos {
+        return ("".to_string(), pos);
+    }
+
+    let identifier = String::from_utf8_lossy(&s[start_pos..pos]).to_string();
+    (identifier, pos)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DatePartSpecifier {
+    Millennium,
+    Century,
+    Decade,
+    Year,
+    Quarter,
+    Month,
+    Day,
+    Week,
+    Microseconds,
+    Milliseconds,
+    Second,
+    Minute,
+    Hour,
+}
+
+fn try_get_date_part_specifier(specifier_str: &str) -> Result<DatePartSpecifier> {
+    match specifier_str.to_lowercase().as_str() {
+        "millennium" | "millennia" => Ok(DatePartSpecifier::Millennium),
+        "century" | "centuries" => Ok(DatePartSpecifier::Century),
+        "decade" | "decades" => Ok(DatePartSpecifier::Decade),
+        "year" | "years" | "y" => Ok(DatePartSpecifier::Year),
+        "quarter" | "quarters" => Ok(DatePartSpecifier::Quarter),
+        "month" | "months" | "mon" => Ok(DatePartSpecifier::Month),
+        "day" | "days" | "d" => Ok(DatePartSpecifier::Day),
+        "week" | "weeks" | "w" => Ok(DatePartSpecifier::Week),
+        "microsecond" | "microseconds" | "us" => Ok(DatePartSpecifier::Microseconds),
+        "millisecond" | "milliseconds" | "ms" => Ok(DatePartSpecifier::Milliseconds),
+        "second" | "seconds" | "s" => Ok(DatePartSpecifier::Second),
+        "minute" | "minutes" | "m" => Ok(DatePartSpecifier::Minute),
+        "hour" | "hours" | "h" => Ok(DatePartSpecifier::Hour),
+        _ => Err(Error::BadArgument(format!(
+            "Invalid date part specifier: {}",
+            specifier_str
+        ))),
+    }
+}
+
+const NANO_PER_SEC: i64 = 1_000_000_000;
+const NANO_PER_MSEC: i64 = 1_000_000;
+const NANO_PER_MICROS: i64 = 1_000;
+const NANO_PER_MINUTE: i64 = 60 * NANO_PER_SEC;
+const NANO_PER_HOUR: i64 = 60 * NANO_PER_MINUTE;
+const DAYS_PER_WEEK: i32 = 7;
+const MONTHS_PER_QUARTER: i32 = 3;
+const MONTHS_PER_YEAR: i32 = 12;
+const MONTHS_PER_DECADE: i32 = 120;
+const MONTHS_PER_CENTURY: i32 = 1200;
+const MONTHS_PER_MILLENNIUM: i32 = 12000;
+
+fn apply_specifier(
+    result: &mut Interval,
+    number: i64,
+    fraction: i64,
+    specifier_str: &str,
+) -> Result<()> {
+    if specifier_str.is_empty() {
+        result.nanos = result
+            .nanos
+            .checked_add(number)
+            .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        result.nanos = result
+            .nanos
+            .checked_add(fraction)
+            .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        return Ok(());
+    }
+
+    let specifier = try_get_date_part_specifier(specifier_str)?;
+    match specifier {
+        DatePartSpecifier::Millennium => {
+            result.months = result
+                .months
+                .checked_add(
+                    number
+                        .checked_mul(MONTHS_PER_MILLENNIUM as i64)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?
+                        .try_into()
+                        .map_err(|_| Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Century => {
+            result.months = result
+                .months
+                .checked_add(
+                    number
+                        .checked_mul(MONTHS_PER_CENTURY as i64)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?
+                        .try_into()
+                        .map_err(|_| Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Decade => {
+            result.months = result
+                .months
+                .checked_add(
+                    number
+                        .checked_mul(MONTHS_PER_DECADE as i64)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?
+                        .try_into()
+                        .map_err(|_| Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Year => {
+            result.months = result
+                .months
+                .checked_add(
+                    number
+                        .checked_mul(MONTHS_PER_YEAR as i64)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?
+                        .try_into()
+                        .map_err(|_| Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Quarter => {
+            result.months = result
+                .months
+                .checked_add(
+                    number
+                        .checked_mul(MONTHS_PER_QUARTER as i64)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?
+                        .try_into()
+                        .map_err(|_| Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Month => {
+            result.months = result
+                .months
+                .checked_add(
+                    number
+                        .try_into()
+                        .map_err(|_| Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Day => {
+            result.days = result
+                .days
+                .checked_add(
+                    number
+                        .try_into()
+                        .map_err(|_| Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Week => {
+            result.days = result
+                .days
+                .checked_add(
+                    number
+                        .checked_mul(DAYS_PER_WEEK as i64)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?
+                        .try_into()
+                        .map_err(|_| Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Microseconds => {
+            result.nanos = result
+                .nanos
+                .checked_add(
+                    number
+                        .checked_mul(NANO_PER_MICROS)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Milliseconds => {
+            result.nanos = result
+                .nanos
+                .checked_add(
+                    number
+                        .checked_mul(NANO_PER_MSEC)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Second => {
+            result.nanos = result
+                .nanos
+                .checked_add(
+                    number
+                        .checked_mul(NANO_PER_SEC)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Minute => {
+            result.nanos = result
+                .nanos
+                .checked_add(
+                    number
+                        .checked_mul(NANO_PER_MINUTE)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+        DatePartSpecifier::Hour => {
+            result.nanos = result
+                .nanos
+                .checked_add(
+                    number
+                        .checked_mul(NANO_PER_HOUR)
+                        .ok_or(Error::BadArgument("Overflow".to_string()))?,
+                )
+                .ok_or(Error::BadArgument("Overflow".to_string()))?;
+        }
+    }
+    Ok(())
+}
+
 pub fn parse_geometry(raw_data: &[u8]) -> Result<String> {
-    let mut data = std::io::Cursor::new(raw_data);
+    let mut data = Cursor::new(raw_data);
     let wkt = Ewkt::from_wkb(&mut data, WkbDialect::Ewkb)?;
     Ok(wkt.0)
 }
@@ -1043,6 +1618,7 @@ impl ValueDecoder {
             DataType::Bitmap => self.read_bitmap(reader),
             DataType::Variant => self.read_variant(reader),
             DataType::Geometry => self.read_geometry(reader),
+            DataType::Interval => self.read_interval(reader),
             DataType::Geography => self.read_geography(reader),
             DataType::Array(inner_ty) => self.read_array(inner_ty.as_ref(), reader),
             DataType::Map(inner_ty) => self.read_map(inner_ty.as_ref(), reader),
@@ -1176,6 +1752,14 @@ impl ValueDecoder {
             .and_utc()
             .timestamp_micros();
         Ok(Value::Timestamp(ts))
+    }
+
+    fn read_interval<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut buf = Vec::new();
+        reader.read_quoted_text(&mut buf, b'\'')?;
+        let v = unsafe { std::str::from_utf8_unchecked(&buf) };
+        let res = Interval::from_string(v)?;
+        Ok(Value::Interval((res.months, res.days, res.nanos)))
     }
 
     fn read_bitmap<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
