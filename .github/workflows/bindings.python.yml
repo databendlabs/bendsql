@@ -131,7 +131,6 @@ jobs:
         run: behave tests/*
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: [check, build, integration]
     runs-on: ubuntu-latest
     permissions:
@@ -146,7 +145,12 @@ jobs:
           path: bindings/python/artifacts
           pattern: bindings-python-*
           merge-multiple: true
+      - name: Publish package distributions to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
           skip-existing: true
           packages-dir: bindings/python/artifacts
