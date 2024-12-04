@@ -27,11 +27,129 @@ static VERSION: Lazy<String> = Lazy::new(|| {
     version.to_string()
 });
 
-#[napi]
-pub struct Client(databend_driver::Client);
+#[derive(Clone, Debug, Default)]
+pub struct ValueOptions {
+    variant_as_object: bool,
+}
 
 #[napi]
-pub struct Connection(Box<dyn databend_driver::Connection>);
+pub struct Client {
+    inner: databend_driver::Client,
+    opts: ValueOptions,
+}
+
+#[napi]
+impl Client {
+    /// Create a new databend client with a given DSN.
+    #[napi(constructor)]
+    pub fn new(dsn: String) -> Self {
+        let name = format!("databend-driver-nodejs/{}", VERSION.as_str());
+        let client = databend_driver::Client::new(dsn).with_name(name);
+        Self {
+            inner: client,
+            opts: ValueOptions::default(),
+        }
+    }
+
+    /// Get a connection from the client.
+    #[napi]
+    pub async fn get_conn(&self) -> Result<Connection> {
+        let conn = self.inner.get_conn().await.map_err(format_napi_error)?;
+        Ok(Connection::new(conn, self.opts.clone()))
+    }
+}
+
+#[napi]
+pub struct Connection {
+    inner: Box<dyn databend_driver::Connection>,
+    opts: ValueOptions,
+}
+
+impl Connection {
+    pub fn new(inner: Box<dyn databend_driver::Connection>, opts: ValueOptions) -> Self {
+        Self { inner, opts }
+    }
+}
+
+#[napi]
+impl Connection {
+    /// Get the connection information.
+    #[napi]
+    pub async fn info(&self) -> ConnectionInfo {
+        ConnectionInfo(self.inner.info().await)
+    }
+
+    /// Get the databend version.
+    #[napi]
+    pub async fn version(&self) -> Result<String> {
+        self.inner.version().await.map_err(format_napi_error)
+    }
+
+    /// Execute a SQL query, return the number of affected rows.
+    #[napi]
+    pub async fn exec(&self, sql: String) -> Result<i64> {
+        self.inner.exec(&sql).await.map_err(format_napi_error)
+    }
+
+    /// Execute a SQL query, and only return the first row.
+    #[napi]
+    pub async fn query_row(&self, sql: String) -> Result<Option<Row>> {
+        let ret = self
+            .inner
+            .query_row(&sql)
+            .await
+            .map_err(format_napi_error)?;
+        let row = ret.map(|r| Row::new(r, self.opts.clone()));
+        Ok(row)
+    }
+
+    /// Execute a SQL query and fetch all data into the result
+    #[napi]
+    pub async fn query_all(&self, sql: String) -> Result<Vec<Row>> {
+        Ok(self
+            .inner
+            .query_all(&sql)
+            .await
+            .map_err(format_napi_error)?
+            .into_iter()
+            .map(|r| Row::new(r, self.opts.clone()))
+            .collect())
+    }
+
+    /// Execute a SQL query, and return all rows.
+    #[napi]
+    pub async fn query_iter(&self, sql: String) -> Result<RowIterator> {
+        let iterator = self
+            .inner
+            .query_iter(&sql)
+            .await
+            .map_err(format_napi_error)?;
+        Ok(RowIterator::new(iterator, self.opts.clone()))
+    }
+
+    /// Execute a SQL query, and return all rows with schema and stats.
+    #[napi]
+    pub async fn query_iter_ext(&self, sql: String) -> Result<RowIteratorExt> {
+        let iterator = self
+            .inner
+            .query_iter_ext(&sql)
+            .await
+            .map_err(format_napi_error)?;
+        Ok(RowIteratorExt::new(iterator, self.opts.clone()))
+    }
+
+    /// Load data with stage attachment.
+    /// The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
+    #[napi]
+    pub async fn stream_load(&self, sql: String, data: Vec<Vec<&str>>) -> Result<ServerStats> {
+        let ss = self
+            .inner
+            .stream_load(&sql, data)
+            .await
+            .map_err(format_napi_error)?;
+        Ok(ServerStats(ss))
+    }
+}
 
 #[napi]
 pub struct ConnectionInfo(databend_driver::ConnectionInfo);
@@ -71,22 +189,12 @@ impl ConnectionInfo {
 
 pub struct Value<'v> {
     inner: &'v databend_driver::Value,
-    variant_as_object: bool,
+    opts: &'v ValueOptions,
 }
 
 impl<'v> Value<'v> {
-    pub fn new(inner: &'v databend_driver::Value) -> Self {
-        Self {
-            inner,
-            variant_as_object: false,
-        }
-    }
-
-    pub fn with_variant_opt(inner: &'v databend_driver::Value, variant_as_object: bool) -> Self {
-        Self {
-            inner,
-            variant_as_object,
-        }
+    pub fn new(inner: &'v databend_driver::Value, opts: &'v ValueOptions) -> Self {
+        Self { inner, opts }
     }
 }
 
@@ -127,27 +235,27 @@ impl<'v> ToNapiValue for Value<'v> {
             databend_driver::Value::Array(inner) => {
                 let mut arr = ctx.create_array(inner.len() as u32)?;
                 for (i, v) in inner.into_iter().enumerate() {
-                    arr.set(i as u32, Value::new(v))?;
+                    arr.set(i as u32, Value::new(v, val.opts))?;
                 }
                 Array::to_napi_value(env, arr)
             }
             databend_driver::Value::Map(inner) => {
                 let mut obj = ctx.create_object()?;
                 for (k, v) in inner.into_iter() {
-                    obj.set(k.to_string(), Value::new(v))?;
+                    obj.set(k.to_string(), Value::new(v, val.opts))?;
                 }
                 Object::to_napi_value(env, obj)
             }
             databend_driver::Value::Tuple(inner) => {
                 let mut arr = ctx.create_array(inner.len() as u32)?;
                 for (i, v) in inner.into_iter().enumerate() {
-                    arr.set(i as u32, Value::new(v))?;
+                    arr.set(i as u32, Value::new(v, val.opts))?;
                 }
                 Array::to_napi_value(env, arr)
             }
             databend_driver::Value::Bitmap(s) => String::to_napi_value(env, s.to_string()),
             databend_driver::Value::Variant(s) => {
-                if val.variant_as_object {
+                if val.opts.variant_as_object {
                     let val: serde_json::Value = serde_json::from_str(s)
                         .map_err(|e| Error::from_reason(format!("parse variant error: {}", e)))?;
                     serde_json::Value::to_napi_value(env, val)
@@ -214,7 +322,16 @@ impl Field {
 }
 
 #[napi]
-pub struct RowIterator(databend_driver::RowIterator);
+pub struct RowIterator {
+    inner: databend_driver::RowIterator,
+    opts: ValueOptions,
+}
+
+impl RowIterator {
+    pub fn new(inner: databend_driver::RowIterator, opts: ValueOptions) -> Self {
+        Self { inner, opts }
+    }
+}
 
 #[napi]
 impl RowIterator {
@@ -223,40 +340,29 @@ impl RowIterator {
     #[napi]
     #[allow(clippy::missing_safety_doc)]
     pub async unsafe fn next(&mut self) -> Option<Result<Row>> {
-        self.0
-            .next()
-            .await
-            .map(|row| row.map(Row).map_err(format_napi_error))
+        self.inner.next().await.map(|row| {
+            row.map(|r| Row::new(r, self.opts.clone()))
+                .map_err(format_napi_error)
+        })
     }
     /// Get Schema for rows.
     #[napi]
     pub fn schema(&self) -> Schema {
-        Schema(self.0.schema().clone())
+        Schema(self.inner.schema().clone())
     }
 }
 
 #[napi]
-pub struct NamedRowIterator(databend_driver::RowIterator);
-
-#[napi]
-impl NamedRowIterator {
-    /// Fetch next row.
-    /// Returns `None` if there are no more rows.
-    #[napi]
-    #[allow(clippy::missing_safety_doc)]
-    pub async unsafe fn next(&mut self) -> Option<Result<NamedRow>> {
-        self.0.next().await.map(|row| {
-            row.map(|r| NamedRow {
-                schema: self.0.schema().clone(),
-                row: r,
-            })
-            .map_err(format_napi_error)
-        })
-    }
+pub struct RowIteratorExt {
+    inner: databend_driver::RowStatsIterator,
+    opts: ValueOptions,
 }
 
-#[napi]
-pub struct RowIteratorExt(databend_driver::RowStatsIterator);
+impl RowIteratorExt {
+    pub fn new(inner: databend_driver::RowStatsIterator, opts: ValueOptions) -> Self {
+        Self { inner, opts }
+    }
+}
 
 #[napi]
 impl RowIteratorExt {
@@ -265,12 +371,12 @@ impl RowIteratorExt {
     #[napi]
     #[allow(clippy::missing_safety_doc)]
     pub async unsafe fn next(&mut self) -> Option<Result<RowOrStats>> {
-        match self.0.next().await {
+        match self.inner.next().await {
             None => None,
             Some(r0) => match r0 {
                 Ok(r1) => match r1 {
-                    databend_driver::RowWithStats::Row(row) => Some(Ok(RowOrStats {
-                        row: Some(Row(row)),
+                    databend_driver::RowWithStats::Row(r) => Some(Ok(RowOrStats {
+                        row: Some(Row::new(r, self.opts.clone())),
                         stats: None,
                     })),
                     databend_driver::RowWithStats::Stats(ss) => Some(Ok(RowOrStats {
@@ -285,7 +391,7 @@ impl RowIteratorExt {
 
     #[napi]
     pub fn schema(&self) -> Schema {
-        Schema(self.0.schema().clone())
+        Schema(self.inner.schema().clone())
     }
 }
 
@@ -311,45 +417,44 @@ impl RowOrStats {
 
 #[napi]
 #[derive(Clone)]
-pub struct Row(databend_driver::Row);
+pub struct Row {
+    inner: databend_driver::Row,
+    opts: ValueOptions,
+}
 
-#[napi]
 impl Row {
-    #[napi]
-    pub fn values(&self, variant_as_object: Option<bool>) -> Vec<Value> {
-        let variant_as_object = variant_as_object.unwrap_or(false);
-        self.0
-            .values()
-            .iter()
-            .map(|v| Value::with_variant_opt(v, variant_as_object))
-            .collect()
+    pub fn new(inner: databend_driver::Row, opts: ValueOptions) -> Self {
+        Self { inner, opts }
     }
 }
 
 #[napi]
-#[derive(Clone)]
-pub struct NamedRow {
-    schema: databend_driver::SchemaRef,
-    row: databend_driver::Row,
-}
-
-#[napi]
-impl NamedRow {
+impl Row {
     #[napi]
-    pub fn data(&self, variant_as_object: Option<bool>) -> HashMap<String, Value> {
-        let variant_as_object = variant_as_object.unwrap_or(false);
+    pub fn variant_as_object(&mut self, val: bool) {
+        self.opts.variant_as_object = val;
+    }
+
+    #[napi]
+    pub fn values(&self) -> Vec<Value> {
+        self.inner
+            .values()
+            .iter()
+            .map(|v| Value::new(v, &self.opts))
+            .collect()
+    }
+
+    #[napi]
+    pub fn data(&self) -> HashMap<String, Value> {
         let mut map = HashMap::new();
-        for (name, value) in self
-            .schema
+        let schema = self.inner.schema();
+        for (name, value) in schema
             .fields()
             .iter()
             .map(|f| f.name.to_string())
-            .zip(self.row.values().iter())
+            .zip(self.inner.values().iter())
         {
-            map.insert(
-                name.clone(),
-                Value::with_variant_opt(value, variant_as_object),
-            );
+            map.insert(name.clone(), Value::new(value, &self.opts));
         }
         map
     }
@@ -394,114 +499,6 @@ impl ServerStats {
     #[napi(getter)]
     pub fn running_time_ms(&self) -> f64 {
         self.0.running_time_ms
-    }
-}
-
-#[napi]
-impl Client {
-    /// Create a new databend client with a given DSN.
-    #[napi(constructor)]
-    pub fn new(dsn: String) -> Self {
-        let name = format!("databend-driver-nodejs/{}", VERSION.as_str());
-        let client = databend_driver::Client::new(dsn).with_name(name);
-        Self(client)
-    }
-
-    /// Get a connection from the client.
-    #[napi]
-    pub async fn get_conn(&self) -> Result<Connection> {
-        self.0
-            .get_conn()
-            .await
-            .map(Connection)
-            .map_err(format_napi_error)
-    }
-}
-
-#[napi]
-impl Connection {
-    /// Get the connection information.
-    #[napi]
-    pub async fn info(&self) -> ConnectionInfo {
-        ConnectionInfo(self.0.info().await)
-    }
-
-    /// Get the databend version.
-    #[napi]
-    pub async fn version(&self) -> Result<String> {
-        self.0.version().await.map_err(format_napi_error)
-    }
-
-    /// Execute a SQL query, return the number of affected rows.
-    #[napi]
-    pub async fn exec(&self, sql: String) -> Result<i64> {
-        self.0.exec(&sql).await.map_err(format_napi_error)
-    }
-
-    /// Execute a SQL query, and only return the first row.
-    #[napi]
-    pub async fn query_row(&self, sql: String) -> Result<Option<Row>> {
-        self.0
-            .query_row(&sql)
-            .await
-            .map(|row| row.map(Row))
-            .map_err(format_napi_error)
-    }
-
-    /// Execute a SQL query and fetch all data into the result
-    #[napi]
-    pub async fn query_all(&self, sql: String) -> Result<Vec<Row>> {
-        Ok(self
-            .0
-            .query_all(&sql)
-            .await
-            .map_err(format_napi_error)?
-            .into_iter()
-            .map(Row)
-            .collect())
-    }
-
-    /// Execute a SQL query, and return all rows.
-    #[napi]
-    pub async fn query_iter(&self, sql: String) -> Result<RowIterator> {
-        self.0
-            .query_iter(&sql)
-            .await
-            .map(RowIterator)
-            .map_err(format_napi_error)
-    }
-
-    /// Execute a SQL query, and return all rows keyed by column name.
-    #[napi]
-    pub async fn query_iter_map(&self, sql: String) -> Result<NamedRowIterator> {
-        self.0
-            .query_iter(&sql)
-            .await
-            .map(NamedRowIterator)
-            .map_err(format_napi_error)
-    }
-
-    /// Execute a SQL query, and return all rows with schema and stats.
-    #[napi]
-    pub async fn query_iter_ext(&self, sql: String) -> Result<RowIteratorExt> {
-        let iterator = self
-            .0
-            .query_iter_ext(&sql)
-            .await
-            .map_err(format_napi_error)?;
-        Ok(RowIteratorExt(iterator))
-    }
-
-    /// Load data with stage attachment.
-    /// The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
-    #[napi]
-    pub async fn stream_load(&self, sql: String, data: Vec<Vec<&str>>) -> Result<ServerStats> {
-        let ss = self
-            .0
-            .stream_load(&sql, data)
-            .await
-            .map_err(format_napi_error)?;
-        Ok(ServerStats(ss))
     }
 }
 

@@ -84,7 +84,40 @@ impl From<databend_client::QueryStats> for ServerStats {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Row(Vec<Value>);
+pub struct Row {
+    schema: SchemaRef,
+    values: Vec<Value>,
+}
+
+impl Row {
+    pub fn new(schema: SchemaRef, values: Vec<Value>) -> Self {
+        Self { schema, values }
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    pub fn values(&self) -> &[Value] {
+        &self.values
+    }
+
+    pub fn schema(&self) -> SchemaRef {
+        self.schema.clone()
+    }
+
+    /// without schema, only for internal use
+    pub fn from_vec(values: Vec<Value>) -> Self {
+        Self {
+            schema: SchemaRef::default(),
+            values,
+        }
+    }
+}
 
 impl TryFrom<(SchemaRef, Vec<Option<String>>)> for Row {
     type Error = Error;
@@ -95,25 +128,7 @@ impl TryFrom<(SchemaRef, Vec<Option<String>>)> for Row {
             let val: Option<&str> = data.get(i).and_then(|v| v.as_deref());
             values.push(Value::try_from((&field.data_type, val))?);
         }
-        Ok(Self(values))
-    }
-}
-
-impl Row {
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn values(&self) -> &[Value] {
-        &self.0
-    }
-
-    pub fn from_vec(values: Vec<Value>) -> Self {
-        Self(values)
+        Ok(Self::new(schema, values))
     }
 }
 
@@ -122,52 +137,23 @@ impl IntoIterator for Row {
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.values.into_iter()
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Rows {
-    schema: SchemaRef,
     rows: Vec<Row>,
 }
 
-#[cfg(feature = "flight-sql")]
-impl TryFrom<RecordBatch> for Rows {
-    type Error = Error;
-    fn try_from(batch: RecordBatch) -> Result<Self> {
-        let schema = batch.schema();
-        let mut rows: Vec<Row> = Vec::new();
-        for i in 0..batch.num_rows() {
-            let mut values: Vec<Value> = Vec::new();
-            for j in 0..schema.fields().len() {
-                let v = batch.column(j);
-                let field = schema.field(j);
-                let value = Value::try_from((field, v, i))?;
-                values.push(value);
-            }
-            rows.push(Row(values));
-        }
-        Ok(Self {
-            schema: std::sync::Arc::new(schema.try_into()?),
-            rows,
-        })
-    }
-}
-
-impl IntoIterator for Rows {
-    type Item = Row;
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.rows.into_iter()
-    }
-}
-
 impl Rows {
-    pub fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+    pub fn new(rows: Vec<Row>) -> Self {
+        Self { rows }
     }
+
+    // pub fn schema(&self) -> SchemaRef {
+    //     self.schema.clone()
+    // }
 
     pub fn rows(&self) -> &[Row] {
         &self.rows
@@ -179,6 +165,36 @@ impl Rows {
 
     pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
+    }
+}
+
+#[cfg(feature = "flight-sql")]
+impl TryFrom<RecordBatch> for Rows {
+    type Error = Error;
+    fn try_from(batch: RecordBatch) -> Result<Self> {
+        let batch_schema = batch.schema();
+        let schema = SchemaRef::new(batch_schema.clone().try_into()?);
+        let mut rows: Vec<Row> = Vec::new();
+        for i in 0..batch.num_rows() {
+            let mut values: Vec<Value> = Vec::new();
+            for j in 0..batch_schema.fields().len() {
+                let v = batch.column(j);
+                let field = batch_schema.field(j);
+                let value = Value::try_from((field, v, i))?;
+                values.push(value);
+            }
+            rows.push(Row::new(schema.clone(), values));
+        }
+        Ok(Self::new(rows))
+    }
+}
+
+impl IntoIterator for Rows {
+    type Item = Row;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.rows.into_iter()
     }
 }
 

@@ -37,7 +37,7 @@ while (row) {
 }
 
 // get rows of map
-const rows = await conn.queryIterMap("SELECT * FROM test");
+const rows = await conn.queryIter("SELECT * FROM test");
 let row = await rows.next();
 while (row) {
   console.log(row.data());

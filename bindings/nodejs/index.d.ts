@@ -38,8 +38,6 @@ export class Connection {
   queryAll(sql: string): Promise<Array<Row>>
   /** Execute a SQL query, and return all rows. */
   queryIter(sql: string): Promise<RowIterator>
-  /** Execute a SQL query, and return all rows keyed by column name. */
-  queryIterMap(sql: string): Promise<NamedRowIterator>
   /** Execute a SQL query, and return all rows with schema and stats. */
   queryIterExt(sql: string): Promise<RowIteratorExt>
   /**
@@ -72,13 +70,6 @@ export class RowIterator {
   /** Get Schema for rows. */
   schema(): Schema
 }
-export class NamedRowIterator {
-  /**
-   * Fetch next row.
-   * Returns `None` if there are no more rows.
-   */
-  next(): Promise<Error | NamedRow | null>
-}
 export class RowIteratorExt {
   /**
    * Fetch next row or stats.
@@ -93,10 +84,9 @@ export class RowOrStats {
   get stats(): ServerStats | null
 }
 export class Row {
-  values(variantAsObject?: boolean | undefined | null): Array<any>
-}
-export class NamedRow {
-  data(variantAsObject?: boolean | undefined | null): Record<string, any>
+  variantAsObject(val: boolean): void
+  values(): Array<any>
+  data(): Record<string, any>
 }
 export class ServerStats {
   get totalRows(): bigint
