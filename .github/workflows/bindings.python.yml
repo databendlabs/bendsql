@@ -150,4 +150,5 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+          verify-metadata: false
           packages-dir: bindings/python/artifacts
