@@ -68,15 +68,15 @@ while (row) {
 
 ### Semi-Structured Data Types
 
-| Databend    | Node.js  |
-| ----------- | -------- |
-| `ARRAY`     | `Array`  |
-| `TUPLE`     | `Array`  |
-| `MAP`       | `Object` |
-| `VARIANT`   | `String` |
-| `BITMAP`    | `String` |
-| `GEOMETRY`  | `String` |
-| `GEOGRAPHY` | `String` |
+| Databend    | Node.js           |
+| ----------- | ----------------- |
+| `ARRAY`     | `Array`           |
+| `TUPLE`     | `Array`           |
+| `MAP`       | `Object`          |
+| `VARIANT`   | `String / Object` |
+| `BITMAP`    | `String`          |
+| `GEOMETRY`  | `String`          |
+| `GEOGRAPHY` | `String`          |
 
 Note: `VARIANT` is a json encoded string. Example:
 
