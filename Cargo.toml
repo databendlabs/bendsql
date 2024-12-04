@@ -39,6 +39,3 @@ tonic = { version = "0.12", default-features = false, features = [
     "tls-webpki-roots",
     "prost",
 ] }
-
-[patch.crates-io]
-pyo3-asyncio = { git = "https://github.com/everpcpc/pyo3-asyncio", rev = "42af887" }
