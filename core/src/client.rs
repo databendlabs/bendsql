@@ -649,7 +649,9 @@ impl APIClient {
         let response = self.query_request_helper(request, true, false).await;
         let response = match response {
             Ok(r) => r,
-            Err(Error::Logic(status, _ec)) if status == 404 => {
+            Err(Error::Logic(status, ..)) | Err(Error::Response { status, .. })
+                if status == 404 =>
+            {
                 // old server
                 return Ok(());
             }
