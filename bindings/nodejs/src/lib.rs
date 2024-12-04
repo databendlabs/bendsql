@@ -18,6 +18,7 @@ extern crate napi_derive;
 use std::collections::HashMap;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use napi::tokio::time::Interval;
 use napi::{bindgen_prelude::*, Env};
 use once_cell::sync::Lazy;
 use tokio_stream::StreamExt;
@@ -278,6 +279,14 @@ impl<'v> ToNapiValue for Value<'v> {
             }
             databend_driver::Value::Geometry(s) => String::to_napi_value(env, s.to_string()),
             databend_driver::Value::Geography(s) => String::to_napi_value(env, s.to_string()),
+            databend_driver::Value::Interval(i) => {
+                let interval = databend_driver::Interval {
+                    months: i.0,
+                    days: i.1,
+                    nanos: i.2,
+                };
+                String::to_napi_value(env, interval.to_string())
+            }
         }
     }
 }

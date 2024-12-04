@@ -17,11 +17,11 @@ use std::sync::Arc;
 use chrono::{NaiveDate, NaiveDateTime};
 use once_cell::sync::Lazy;
 use pyo3::exceptions::{PyException, PyStopAsyncIteration, PyStopIteration};
-use pyo3::intern;
-use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple, PyType};
-use pyo3_asyncio::tokio::future_into_py;
+use pyo3::{intern, IntoPyObjectExt};
+use pyo3::{prelude::*, BoundObject};
+use pyo3_async_runtimes::tokio::future_into_py;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
@@ -37,7 +37,7 @@ pub static DECIMAL_CLS: GILOnceCell<Py<PyType>> = GILOnceCell::new();
 fn get_decimal_cls(py: Python<'_>) -> PyResult<&Bound<PyType>> {
     DECIMAL_CLS
         .get_or_try_init(py, || {
-            py.import_bound(intern!(py, "decimal"))?
+            py.import(intern!(py, "decimal"))?
                 .getattr(intern!(py, "Decimal"))?
                 .extract()
         })
@@ -46,90 +46,110 @@ fn get_decimal_cls(py: Python<'_>) -> PyResult<&Bound<PyType>> {
 
 pub struct Value(databend_driver::Value);
 
-impl IntoPy<PyObject> for Value {
-    fn into_py(self, py: Python<'_>) -> PyObject {
-        match self.0 {
-            databend_driver::Value::Null => py.None(),
+impl<'py> IntoPyObject<'py> for Value {
+    type Target = PyAny;
+    type Output = Bound<'py, Self::Target>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        let val: Bound<'_, PyAny> = match self.0 {
+            databend_driver::Value::Null => py.None().into_bound(py),
             databend_driver::Value::EmptyArray => {
-                let list = PyList::empty_bound(py);
-                list.into_py(py)
+                let list = PyList::empty(py);
+                list.into_bound_py_any(py)?
             }
             databend_driver::Value::EmptyMap => {
-                let dict = PyDict::new_bound(py);
-                dict.into_py(py)
+                let dict = PyDict::new(py);
+                dict.into_bound_py_any(py)?
             }
-            databend_driver::Value::Boolean(b) => b.into_py(py),
+            databend_driver::Value::Boolean(b) => b.into_bound_py_any(py)?,
             databend_driver::Value::Binary(b) => {
-                let buf = PyBytes::new_bound(py, &b);
-                buf.into_py(py)
+                let buf = PyBytes::new(py, &b);
+                buf.into_bound_py_any(py)?
             }
-            databend_driver::Value::String(s) => s.into_py(py),
+            databend_driver::Value::String(s) => s.into_bound_py_any(py)?,
             databend_driver::Value::Number(n) => {
                 let v = NumberValue(n);
-                v.into_py(py)
+                v.into_bound_py_any(py)?
             }
             databend_driver::Value::Timestamp(_) => {
-                let t = NaiveDateTime::try_from(self.0).unwrap();
-                t.into_py(py)
+                let t = NaiveDateTime::try_from(self.0).map_err(|e| {
+                    PyException::new_err(format!("failed to convert timestamp: {}", e))
+                })?;
+                t.into_bound_py_any(py)?
             }
             databend_driver::Value::Date(_) => {
-                let d = NaiveDate::try_from(self.0).unwrap();
-                d.into_py(py)
+                let d = NaiveDate::try_from(self.0)
+                    .map_err(|e| PyException::new_err(format!("failed to convert date: {}", e)))?;
+                d.into_bound_py_any(py)?
             }
             databend_driver::Value::Array(inner) => {
-                let list = PyList::new_bound(py, inner.into_iter().map(|v| Value(v).into_py(py)));
-                list.into_py(py)
+                let list = PyList::new(py, inner.into_iter().map(|v| Value(v)))?;
+                list.into_bound_py_any(py)?
             }
             databend_driver::Value::Map(inner) => {
-                let dict = PyDict::new_bound(py);
+                let dict = PyDict::new(py);
                 for (k, v) in inner {
-                    dict.set_item(Value(k).into_py(py), Value(v).into_py(py))
-                        .unwrap();
+                    dict.set_item(Value(k), Value(v)).unwrap();
                 }
-                dict.into_py(py)
+                dict.into_bound_py_any(py)?
             }
             databend_driver::Value::Tuple(inner) => {
-                let tuple = PyTuple::new_bound(py, inner.into_iter().map(|v| Value(v).into_py(py)));
-                tuple.into_py(py)
+                let tuple = PyTuple::new(py, inner.into_iter().map(|v| Value(v)))?;
+                tuple.into_bound_py_any(py)?
             }
-            databend_driver::Value::Bitmap(s) => s.into_py(py),
-            databend_driver::Value::Variant(s) => s.into_py(py),
-            databend_driver::Value::Geometry(s) => s.into_py(py),
-            databend_driver::Value::Geography(s) => s.into_py(py),
-        }
+            databend_driver::Value::Bitmap(s) => s.into_bound_py_any(py)?,
+            databend_driver::Value::Variant(s) => s.into_bound_py_any(py)?,
+            databend_driver::Value::Geometry(s) => s.into_bound_py_any(py)?,
+            databend_driver::Value::Geography(s) => s.into_bound_py_any(py)?,
+            databend_driver::Value::Interval(i) => {
+                let interval = databend_driver::Interval {
+                    months: i.0,
+                    days: i.1,
+                    nanos: i.2,
+                };
+                interval.to_string().into_bound_py_any(py)?
+            }
+        };
+        Ok(val)
     }
 }
 
 pub struct NumberValue(databend_driver::NumberValue);
 
-impl IntoPy<PyObject> for NumberValue {
-    fn into_py(self, py: Python<'_>) -> PyObject {
-        match self.0 {
-            databend_driver::NumberValue::Int8(i) => i.into_py(py),
-            databend_driver::NumberValue::Int16(i) => i.into_py(py),
-            databend_driver::NumberValue::Int32(i) => i.into_py(py),
-            databend_driver::NumberValue::Int64(i) => i.into_py(py),
-            databend_driver::NumberValue::UInt8(i) => i.into_py(py),
-            databend_driver::NumberValue::UInt16(i) => i.into_py(py),
-            databend_driver::NumberValue::UInt32(i) => i.into_py(py),
-            databend_driver::NumberValue::UInt64(i) => i.into_py(py),
-            databend_driver::NumberValue::Float32(i) => i.into_py(py),
-            databend_driver::NumberValue::Float64(i) => i.into_py(py),
+impl<'py> IntoPyObject<'py> for NumberValue {
+    type Target = PyAny;
+    type Output = Bound<'py, Self::Target>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> Result<Self::Output, Self::Error> {
+        let val: Bound<'_, PyAny> = match self.0 {
+            databend_driver::NumberValue::Int8(i) => i.into_bound_py_any(py)?,
+            databend_driver::NumberValue::Int16(i) => i.into_bound_py_any(py)?,
+            databend_driver::NumberValue::Int32(i) => i.into_bound_py_any(py)?,
+            databend_driver::NumberValue::Int64(i) => i.into_bound_py_any(py)?,
+            databend_driver::NumberValue::UInt8(i) => i.into_bound_py_any(py)?,
+            databend_driver::NumberValue::UInt16(i) => i.into_bound_py_any(py)?,
+            databend_driver::NumberValue::UInt32(i) => i.into_bound_py_any(py)?,
+            databend_driver::NumberValue::UInt64(i) => i.into_bound_py_any(py)?,
+            databend_driver::NumberValue::Float32(i) => i.into_bound_py_any(py)?,
+            databend_driver::NumberValue::Float64(i) => i.into_bound_py_any(py)?,
             databend_driver::NumberValue::Decimal128(_, _) => {
                 let dec_cls = get_decimal_cls(py).expect("failed to load decimal.Decimal");
                 let ret = dec_cls
                     .call1((self.0.to_string(),))
                     .expect("failed to call decimal.Decimal(value)");
-                ret.to_object(py)
+                ret.into_bound()
             }
             databend_driver::NumberValue::Decimal256(_, _) => {
                 let dec_cls = get_decimal_cls(py).expect("failed to load decimal.Decimal");
                 let ret = dec_cls
                     .call1((self.0.to_string(),))
                     .expect("failed to call decimal.Decimal(value)");
-                ret.to_object(py)
+                ret.into_bound()
             }
-        }
+        };
+        Ok(val)
     }
 }
 
@@ -145,8 +165,9 @@ impl Row {
 #[pymethods]
 impl Row {
     pub fn values<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyTuple>> {
-        let vals = self.0.values().iter().map(|v| Value(v.clone()).into_py(py));
-        Ok(PyTuple::new_bound(py, vals))
+        let vals = self.0.values().iter().map(|v| Value(v.clone()));
+        let tuple = PyTuple::new(py, vals)?;
+        Ok(tuple)
     }
 }
 
@@ -206,8 +227,9 @@ pub struct Schema(databend_driver::SchemaRef);
 #[pymethods]
 impl Schema {
     pub fn fields<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyList>> {
-        let fields = self.0.fields().iter().map(|f| Field(f.clone()).into_py(py));
-        Ok(PyList::new_bound(py, fields))
+        let fields = self.0.fields().iter().map(|f| Field(f.clone()));
+        let list = PyList::new(py, fields)?;
+        Ok(list)
     }
 }
 
