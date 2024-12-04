@@ -444,8 +444,8 @@ impl Row {
 #[napi]
 impl Row {
     #[napi]
-    pub fn variant_as_object(&mut self, val: bool) {
-        self.opts.variant_as_object = val;
+    pub fn set_opts(&mut self, opts: ValueOptions) {
+        self.opts = opts;
     }
 
     #[napi]

@@ -98,7 +98,7 @@ We also provide a helper function to convert `VARIANT` to `Object`:
 
 ```javascript
 const row = await conn.queryRow("SELECT * FROM example limit 1;");
-row.variantAsObject();
+row.setOpts({ variantAsObject: true });
 console.log(row.data());
 ```
 

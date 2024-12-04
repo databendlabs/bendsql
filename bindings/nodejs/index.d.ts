@@ -87,7 +87,7 @@ export class RowOrStats {
   get stats(): ServerStats | null
 }
 export class Row {
-  variantAsObject(val: boolean): void
+  setOpts(opts: ValueOptions): void
   values(): Array<any>
   data(): Record<string, any>
 }
