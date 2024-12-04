@@ -17,7 +17,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use dyn_clone::DynClone;
 use once_cell::sync::Lazy;
 use tokio::io::AsyncRead;
 use tokio_stream::StreamExt;
@@ -89,7 +88,7 @@ pub struct ConnectionInfo {
 pub type Reader = Box<dyn AsyncRead + Send + Sync + Unpin + 'static>;
 
 #[async_trait]
-pub trait Connection: DynClone + Send + Sync {
+pub trait Connection: Send + Sync {
     async fn info(&self) -> ConnectionInfo;
 
     async fn version(&self) -> Result<String> {
@@ -255,7 +254,6 @@ pub trait Connection: DynClone + Send + Sync {
         ))
     }
 }
-dyn_clone::clone_trait_object!(Connection);
 
 fn put_get_schema() -> Schema {
     Schema::from_vec(vec![

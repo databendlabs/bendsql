@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
+
 use pyo3::prelude::*;
 
 use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
@@ -32,15 +34,15 @@ impl BlockingDatabendClient {
 
     pub fn get_conn(&self, py: Python) -> PyResult<BlockingDatabendConnection> {
         let this = self.0.clone();
-        let ret = wait_for_future(py, async move {
+        let conn = wait_for_future(py, async move {
             this.get_conn().await.map_err(DriverError::new)
         })?;
-        Ok(BlockingDatabendConnection(ret))
+        Ok(BlockingDatabendConnection(Arc::new(conn)))
     }
 }
 
 #[pyclass(module = "databend_driver")]
-pub struct BlockingDatabendConnection(Box<dyn databend_driver::Connection>);
+pub struct BlockingDatabendConnection(Arc<Box<dyn databend_driver::Connection>>);
 
 #[pymethods]
 impl BlockingDatabendConnection {

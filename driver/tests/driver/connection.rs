@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
+
 use databend_driver::Client;
 
 use crate::common::DEFAULT_DSN;
@@ -21,6 +23,8 @@ async fn trait_with_clone() {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
+    let conn = Arc::new(conn);
+
     let row = conn.query_row("select 'hello'").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();

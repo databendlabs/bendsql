@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
+
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 
@@ -34,13 +36,13 @@ impl AsyncDatabendClient {
         let this = self.0.clone();
         future_into_py(py, async move {
             let conn = this.get_conn().await.map_err(DriverError::new)?;
-            Ok(AsyncDatabendConnection(conn))
+            Ok(AsyncDatabendConnection(Arc::new(conn)))
         })
     }
 }
 
 #[pyclass(module = "databend_driver")]
-pub struct AsyncDatabendConnection(Box<dyn databend_driver::Connection>);
+pub struct AsyncDatabendConnection(Arc<Box<dyn databend_driver::Connection>>);
 
 #[pymethods]
 impl AsyncDatabendConnection {
