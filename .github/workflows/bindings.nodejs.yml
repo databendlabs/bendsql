@@ -56,11 +56,10 @@ jobs:
         include:
           - { target: x86_64-unknown-linux-gnu, runner: ubuntu-20.04 }
           - { target: aarch64-unknown-linux-gnu, runner: ubuntu-20.04 }
-          - { target: aarch64-unknown-linux-musl, runner: ubuntu-latest }
           - { target: x86_64-unknown-linux-musl, runner: ubuntu-latest }
-          # FIXME: tmp disable for build issue
-          # - { target: x86_64-pc-windows-msvc, runner: windows-latest }
-          # - { target: aarch64-pc-windows-msvc, runner: windows-latest }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-latest }
+          - { target: x86_64-pc-windows-msvc, runner: windows-latest }
+          - { target: aarch64-pc-windows-msvc, runner: windows-latest }
           - { target: x86_64-apple-darwin, runner: macos-latest }
           - { target: aarch64-apple-darwin, runner: macos-latest }
     steps:
@@ -92,10 +91,11 @@ jobs:
           NAPI_TARGET: ${{ matrix.target }}
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            pnpm run build:debug
+            pnpm napi build --platform --target=$NAPI_TARGET --js generated.js
           else
-            pnpm run build
+            pnpm napi build --platform --target=$NAPI_TARGET --release --js generated.js
           fi
+          pnpm node ./scripts/header.js
       - name: strip for macos
         if: endsWith(matrix.target, '-apple-darwin')
         working-directory: bindings/nodejs
@@ -111,7 +111,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: read
       id-token: write
     environment:
       name: npmjs.com
@@ -145,9 +144,9 @@ jobs:
         run: cp LICENSE ./bindings/nodejs
       - name: Publish
         working-directory: bindings/nodejs
-        run: |
-          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-          npm publish --access public --provenance
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+          npm publish --access public --provenance

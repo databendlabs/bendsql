@@ -12,14 +12,12 @@ description = "Databend Driver Python Binding"
 license = { text = "Apache-2.0" }
 name = "databend-driver"
 readme = "README.md"
-# PyO3 doesn't support python 3.13 yet.
-# ref: https://github.com/apache/opendal/issues/4268
-requires-python = ">=3.7, < 3.13"
+requires-python = ">=3.7, < 3.14"
 
 [project.optional-dependencies]
 docs = ["pdoc"]
 test = ["behave"]
-lint = ["black", "flake8"]
+lint = ["ruff"]
 
 [project.urls]
 Repository = "https://github.com/databendlabs/bendsql"

@@ -30,7 +30,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install dependencies
         working-directory: bindings/python
         run: pip install ruff
@@ -106,7 +106,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        pyver: ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12"]
+        pyver: ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - name: Setup Python
@@ -135,7 +135,6 @@ jobs:
     needs: [check, build, integration]
     runs-on: ubuntu-latest
     permissions:
-      contents: read
       id-token: write
     environment:
       name: pypi.org
@@ -147,7 +146,8 @@ jobs:
           path: bindings/python/artifacts
           pattern: bindings-python-*
           merge-multiple: true
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
           packages-dir: bindings/python/artifacts
