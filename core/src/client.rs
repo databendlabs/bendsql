@@ -785,7 +785,7 @@ impl APIClient {
                         return Ok(response);
                     }
                     let body = response.bytes().await?;
-                    if retry_if_503 || status == StatusCode::SERVICE_UNAVAILABLE {
+                    if retry_if_503 && status == StatusCode::SERVICE_UNAVAILABLE {
                         // waiting for server to start
                         (Error::response_error(status, &body), true)
                     } else {
