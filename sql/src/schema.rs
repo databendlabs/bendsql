@@ -162,7 +162,7 @@ pub struct Field {
     pub data_type: DataType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Schema(Vec<Field>);
 
 pub type SchemaRef = Arc<Schema>;

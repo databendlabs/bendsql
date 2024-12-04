@@ -24,7 +24,11 @@ const dsn = process.env.TEST_DATABEND_DSN
 
 Given("A new Databend Driver Client", async function () {
   this.client = new Client(dsn);
-  this.conn = await this.client.getConn();
+  const conn = await this.client.getConn();
+  if (!conn) {
+    assert.fail("No connection returned");
+  }
+  this.conn = conn;
 });
 
 Then("Select string {string} should be equal to {string}", async function (input, output) {
@@ -63,6 +67,33 @@ Then("Select types should be expected native types", async function () {
     const row = await this.conn.queryRow(`SELECT (10, '20', to_datetime('2024-04-16 12:34:56.789'))`);
     assert.deepEqual(row.values(), [[10, "20", new Date("2024-04-16T12:34:56.789Z")]]);
   }
+
+  // Variant as String
+  {
+    const value =
+      '{"customer_id": 123, "order_id": 1001, "items": [{"name": "Shoes", "price": 59.99}, {"name": "T-shirt", "price": 19.99}]}';
+    const row = await this.conn.queryRow(`SELECT parse_json('${value}')`);
+    assert.deepEqual(
+      row.values()[0],
+      '{"customer_id":123,"items":[{"name":"Shoes","price":59.99},{"name":"T-shirt","price":19.99}],"order_id":1001}',
+    );
+  }
+
+  // Variant as Object
+  {
+    const value =
+      '{"customer_id": 123, "order_id": 1001, "items": [{"name": "Shoes", "price": 59.99}, {"name": "T-shirt", "price": 19.99}]}';
+    const row = await this.conn.queryRow(`SELECT parse_json('${value}')`);
+    row.setOpts({ variantAsObject: true });
+    assert.deepEqual(row.values()[0], {
+      customer_id: 123,
+      order_id: 1001,
+      items: [
+        { name: "Shoes", price: 59.99 },
+        { name: "T-shirt", price: 19.99 },
+      ],
+    });
+  }
 });
 
 Then("Select numbers should iterate all rows", async function () {
@@ -79,9 +110,9 @@ Then("Select numbers should iterate all rows", async function () {
     assert.deepEqual(ret, expected);
   }
 
-  // iter names
+  // iter return with field names
   {
-    let rows = await this.conn.queryIterMap("SELECT number as n FROM numbers(5)");
+    let rows = await this.conn.queryIter("SELECT number as n FROM numbers(5)");
     let ret = [];
     let row = await rows.next();
     while (row) {

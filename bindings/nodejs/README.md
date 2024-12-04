@@ -37,7 +37,7 @@ while (row) {
 }
 
 // get rows of map
-const rows = await conn.queryIterMap("SELECT * FROM test");
+const rows = await conn.queryIter("SELECT * FROM test");
 let row = await rows.next();
 while (row) {
   console.log(row.data());
@@ -68,15 +68,15 @@ while (row) {
 
 ### Semi-Structured Data Types
 
-| Databend    | Node.js  |
-| ----------- | -------- |
-| `ARRAY`     | `Array`  |
-| `TUPLE`     | `Array`  |
-| `MAP`       | `Object` |
-| `VARIANT`   | `String` |
-| `BITMAP`    | `String` |
-| `GEOMETRY`  | `String` |
-| `GEOGRAPHY` | `String` |
+| Databend    | Node.js           |
+| ----------- | ----------------- |
+| `ARRAY`     | `Array`           |
+| `TUPLE`     | `Array`           |
+| `MAP`       | `Object`          |
+| `VARIANT`   | `String / Object` |
+| `BITMAP`    | `String`          |
+| `GEOMETRY`  | `String`          |
+| `GEOGRAPHY` | `String`          |
 
 Note: `VARIANT` is a json encoded string. Example:
 
@@ -92,6 +92,14 @@ const row = await conn.queryRow("SELECT * FROM example limit 1;");
 const data = row.values()[0];
 const value = JSON.parse(data);
 console.log(value);
+```
+
+We also provide a helper function to convert `VARIANT` to `Object`:
+
+```javascript
+const row = await conn.queryRow("SELECT * FROM example limit 1;");
+row.setOpts({ variantAsObject: true });
+console.log(row.data());
 ```
 
 ## Development
