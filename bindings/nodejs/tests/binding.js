@@ -63,6 +63,29 @@ Then("Select types should be expected native types", async function () {
     const row = await this.conn.queryRow(`SELECT (10, '20', to_datetime('2024-04-16 12:34:56.789'))`);
     assert.deepEqual(row.values(), [[10, "20", new Date("2024-04-16T12:34:56.789Z")]]);
   }
+
+  // Variant as String
+  {
+    const value =
+      '{"customer_id": 123, "order_id": 1001, "items": [{"name": "Shoes", "price": 59.99}, {"name": "T-shirt", "price": 19.99}]}';
+    const row = await this.conn.queryRow(`SELECT parse_json('${value}')`);
+    assert.deepEqual(row.values(), value);
+  }
+
+  // Variant as Object
+  {
+    const value =
+      '{"customer_id": 123, "order_id": 1001, "items": [{"name": "Shoes", "price": 59.99}, {"name": "T-shirt", "price": 19.99}]}';
+    const row = await this.conn.queryRow(`SELECT parse_json('${value}')`);
+    assert.deepEqual(row.values(variantAsObject: true), {
+      customer_id: 123,
+      order_id: 1001,
+      items: [
+        { name: "Shoes", price: 59.99 },
+        { name: "T-shirt", price: 19.99 },
+      ],
+    });
+  }
 });
 
 Then("Select numbers should iterate all rows", async function () {
