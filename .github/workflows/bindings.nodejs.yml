@@ -141,7 +141,7 @@ jobs:
       - name: Add LICENSE
         run: cp LICENSE ./bindings/nodejs
       - name: Publish dry-run
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'pull_request'
         working-directory: bindings/nodejs
         env:
           GITHUB_TOKEN: ${{ github.token }}
