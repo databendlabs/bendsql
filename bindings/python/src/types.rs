@@ -106,9 +106,9 @@ impl<'py> IntoPyObject<'py> for Value {
                 let interval = databend_driver::Interval {
                     months: i.0,
                     days: i.1,
-                    micros: i.2,
+                    nanos: i.2,
                 };
-                interval.to_string().into_py(py)?
+                interval.to_string().into_bound_py_any(py)?
             }
         };
         Ok(val)

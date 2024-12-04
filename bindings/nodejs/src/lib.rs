@@ -283,7 +283,7 @@ impl<'v> ToNapiValue for Value<'v> {
                 let interval = databend_driver::Interval {
                     months: i.0,
                     days: i.1,
-                    micros: i.2,
+                    nanos: i.2,
                 };
                 String::to_napi_value(env, interval.to_string())
             }
