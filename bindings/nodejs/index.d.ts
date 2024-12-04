@@ -93,10 +93,10 @@ export class RowOrStats {
   get stats(): ServerStats | null
 }
 export class Row {
-  values(): Array<any>
+  values(variantAsObject?: boolean | undefined | null): Array<any>
 }
 export class NamedRow {
-  data(): Record<string, any>
+  data(variantAsObject?: boolean | undefined | null): Record<string, any>
 }
 export class ServerStats {
   get totalRows(): bigint
