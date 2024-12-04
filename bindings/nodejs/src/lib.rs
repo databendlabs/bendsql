@@ -27,9 +27,22 @@ static VERSION: Lazy<String> = Lazy::new(|| {
     version.to_string()
 });
 
+#[napi]
 #[derive(Clone, Debug, Default)]
 pub struct ValueOptions {
-    variant_as_object: bool,
+    pub variant_as_object: bool,
+}
+
+#[napi]
+impl FromNapiValue for ValueOptions {
+    unsafe fn from_napi_value(env: sys::napi_env, val: sys::napi_value) -> Result<Self> {
+        let mut opts = ValueOptions::default();
+        let obj = Object::from_napi_value(env, val)?;
+        if let Some(val) = obj.get("variantAsObject")? {
+            opts.variant_as_object = val;
+        }
+        Ok(opts)
+    }
 }
 
 #[napi]
@@ -42,12 +55,12 @@ pub struct Client {
 impl Client {
     /// Create a new databend client with a given DSN.
     #[napi(constructor)]
-    pub fn new(dsn: String) -> Self {
+    pub fn new(dsn: String, opts: Option<ValueOptions>) -> Self {
         let name = format!("databend-driver-nodejs/{}", VERSION.as_str());
         let client = databend_driver::Client::new(dsn).with_name(name);
         Self {
             inner: client,
-            opts: ValueOptions::default(),
+            opts: opts.unwrap_or_default(),
         }
     }
 
