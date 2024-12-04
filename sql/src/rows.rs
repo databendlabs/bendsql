@@ -110,12 +110,8 @@ impl Row {
         self.schema.clone()
     }
 
-    /// without schema, only for internal use
-    pub fn from_vec(values: Vec<Value>) -> Self {
-        Self {
-            schema: SchemaRef::default(),
-            values,
-        }
+    pub fn from_vec(schema: SchemaRef, values: Vec<Value>) -> Self {
+        Self { schema, values }
     }
 }
 

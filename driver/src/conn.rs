@@ -150,6 +150,7 @@ pub trait Connection: DynClone + Send + Sync {
         validate_local_scheme(local_dsn.scheme())?;
         let mut results = Vec::new();
         let stage_location = StageLocation::try_from(stage)?;
+        let schema = Arc::new(put_get_schema());
         for entry in glob::glob(local_dsn.path())? {
             let entry = entry?;
             let filename = entry
@@ -183,15 +184,17 @@ pub trait Connection: DynClone + Send + Sync {
                 running_time_ms: 0.0,
             };
             results.push(Ok(RowWithStats::Stats(ss)));
-            results.push(Ok(RowWithStats::Row(Row::from_vec(vec![
-                Value::String(fname),
-                Value::String(status),
-                Value::Number(NumberValue::UInt64(size)),
-            ]))));
+            results.push(Ok(RowWithStats::Row(Row::from_vec(
+                schema.clone(),
+                vec![
+                    Value::String(fname),
+                    Value::String(status),
+                    Value::Number(NumberValue::UInt64(size)),
+                ],
+            ))));
         }
-        let schema = put_get_schema();
         Ok(RowStatsIterator::new(
-            Arc::new(schema),
+            schema,
             Box::pin(tokio_stream::iter(results)),
         ))
     }
@@ -208,6 +211,7 @@ pub trait Connection: DynClone + Send + Sync {
         let list_sql = format!("LIST {}", location);
         let mut response = self.query_iter(&list_sql).await?;
         let mut results = Vec::new();
+        let schema = Arc::new(put_get_schema());
         while let Some(row) = response.next().await {
             let (mut name, _, _, _, _): (String, u64, Option<String>, String, Option<String>) =
                 row?.try_into().map_err(Error::Parsing)?;
@@ -236,15 +240,17 @@ pub trait Connection: DynClone + Send + Sync {
                 running_time_ms: 0.0,
             };
             results.push(Ok(RowWithStats::Stats(ss)));
-            results.push(Ok(RowWithStats::Row(Row::from_vec(vec![
-                Value::String(local_file.to_string_lossy().to_string()),
-                Value::String(status),
-                Value::Number(NumberValue::UInt64(size)),
-            ]))));
+            results.push(Ok(RowWithStats::Row(Row::from_vec(
+                schema.clone(),
+                vec![
+                    Value::String(local_file.to_string_lossy().to_string()),
+                    Value::String(status),
+                    Value::Number(NumberValue::UInt64(size)),
+                ],
+            ))));
         }
-        let schema = put_get_schema();
         Ok(RowStatsIterator::new(
-            Arc::new(schema),
+            schema,
             Box::pin(tokio_stream::iter(results)),
         ))
     }
