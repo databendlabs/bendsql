@@ -111,6 +111,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
+      contents: write
       id-token: write
     environment:
       name: npmjs.com
