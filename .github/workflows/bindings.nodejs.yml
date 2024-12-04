@@ -106,7 +106,6 @@ jobs:
           path: bindings/nodejs/*.node
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -141,7 +140,17 @@ jobs:
           ls -lRh npm
       - name: Add LICENSE
         run: cp LICENSE ./bindings/nodejs
+      - name: Publish dry-run
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: bindings/nodejs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+          npm publish --access public --provenance --dry-run
       - name: Publish
+        if: startsWith(github.ref, 'refs/tags/v')
         working-directory: bindings/nodejs
         env:
           GITHUB_TOKEN: ${{ github.token }}
