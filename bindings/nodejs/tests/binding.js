@@ -73,7 +73,10 @@ Then("Select types should be expected native types", async function () {
     const value =
       '{"customer_id": 123, "order_id": 1001, "items": [{"name": "Shoes", "price": 59.99}, {"name": "T-shirt", "price": 19.99}]}';
     const row = await this.conn.queryRow(`SELECT parse_json('${value}')`);
-    assert.deepEqual(row.values()[0], value);
+    assert.deepEqual(
+      row.values()[0],
+      '{"customer_id":123,"items":[{"name":"Shoes","price":59.99},{"name":"T-shirt","price":19.99}],"order_id":1001}',
+    );
   }
 
   // Variant as Object
