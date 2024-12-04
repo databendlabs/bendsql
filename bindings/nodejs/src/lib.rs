@@ -69,12 +69,31 @@ impl ConnectionInfo {
     }
 }
 
-pub struct Value(databend_driver::Value);
+pub struct Value {
+    inner: databend_driver::Value,
+    variant_as_object: bool,
+}
+
+impl Value {
+    pub fn new(inner: databend_driver::Value) -> Self {
+        Self {
+            inner,
+            variant_as_object: false,
+        }
+    }
+
+    pub fn with_variant_opt(inner: databend_driver::Value, variant_as_object: bool) -> Self {
+        Self {
+            inner,
+            variant_as_object,
+        }
+    }
+}
 
 impl ToNapiValue for Value {
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
         let ctx = Env::from(env);
-        match val.0 {
+        match val.inner {
             databend_driver::Value::Null => Null::to_napi_value(env, Null),
             databend_driver::Value::EmptyArray => {
                 let arr = ctx.create_array(0)?;
@@ -89,11 +108,11 @@ impl ToNapiValue for Value {
             databend_driver::Value::String(s) => String::to_napi_value(env, s),
             databend_driver::Value::Number(n) => NumberValue::to_napi_value(env, NumberValue(n)),
             databend_driver::Value::Timestamp(_) => {
-                let v = NaiveDateTime::try_from(val.0).map_err(format_napi_error)?;
+                let v = NaiveDateTime::try_from(val.inner).map_err(format_napi_error)?;
                 NaiveDateTime::to_napi_value(env, v)
             }
             databend_driver::Value::Date(_) => {
-                let v = NaiveDate::try_from(val.0).map_err(format_napi_error)?;
+                let v = NaiveDate::try_from(val.inner).map_err(format_napi_error)?;
                 NaiveDateTime::to_napi_value(
                     env,
                     NaiveDateTime::new(v, NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
@@ -102,26 +121,34 @@ impl ToNapiValue for Value {
             databend_driver::Value::Array(inner) => {
                 let mut arr = ctx.create_array(inner.len() as u32)?;
                 for (i, v) in inner.into_iter().enumerate() {
-                    arr.set(i as u32, Value(v))?;
+                    arr.set(i as u32, Value::new(v))?;
                 }
                 Array::to_napi_value(env, arr)
             }
             databend_driver::Value::Map(inner) => {
                 let mut obj = ctx.create_object()?;
                 for (k, v) in inner.into_iter() {
-                    obj.set(k.to_string(), Value(v))?;
+                    obj.set(k.to_string(), Value::new(v))?;
                 }
                 Object::to_napi_value(env, obj)
             }
             databend_driver::Value::Tuple(inner) => {
                 let mut arr = ctx.create_array(inner.len() as u32)?;
                 for (i, v) in inner.into_iter().enumerate() {
-                    arr.set(i as u32, Value(v))?;
+                    arr.set(i as u32, Value::new(v))?;
                 }
                 Array::to_napi_value(env, arr)
             }
             databend_driver::Value::Bitmap(s) => String::to_napi_value(env, s),
-            databend_driver::Value::Variant(s) => String::to_napi_value(env, s),
+            databend_driver::Value::Variant(s) => {
+                if val.variant_as_object {
+                    let val: serde_json::Value = serde_json::from_str(&s)
+                        .map_err(|e| Error::from_reason(format!("parse variant error: {}", e)))?;
+                    serde_json::Value::to_napi_value(env, val)
+                } else {
+                    String::to_napi_value(env, s)
+                }
+            }
             databend_driver::Value::Geometry(s) => String::to_napi_value(env, s),
             databend_driver::Value::Geography(s) => String::to_napi_value(env, s),
         }
@@ -283,9 +310,14 @@ pub struct Row(databend_driver::Row);
 #[napi]
 impl Row {
     #[napi]
-    pub fn values(&self) -> Vec<Value> {
+    pub fn values(&self, variant_as_object: Option<bool>) -> Vec<Value> {
+        let variant_as_object = variant_as_object.unwrap_or(false);
         // FIXME: do not clone
-        self.0.values().iter().map(|v| Value(v.clone())).collect()
+        self.0
+            .values()
+            .iter()
+            .map(|v| Value::with_variant_opt(v.clone(), variant_as_object))
+            .collect()
     }
 }
 
@@ -299,7 +331,8 @@ pub struct NamedRow {
 #[napi]
 impl NamedRow {
     #[napi]
-    pub fn data(&self) -> HashMap<String, Value> {
+    pub fn data(&self, variant_as_object: Option<bool>) -> HashMap<String, Value> {
+        let variant_as_object = variant_as_object.unwrap_or(false);
         let mut map = HashMap::new();
         for (name, value) in self
             .schema
@@ -308,7 +341,10 @@ impl NamedRow {
             .map(|f| f.name.to_string())
             .zip(self.row.values().iter())
         {
-            map.insert(name.clone(), Value(value.clone()));
+            map.insert(
+                name.clone(),
+                Value::with_variant_opt(value.clone(), variant_as_object),
+            );
         }
         map
     }
