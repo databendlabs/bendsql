@@ -139,6 +139,11 @@ jobs:
           curl -sSfLo /tmp/nfpm.tar.gz https://github.com/goreleaser/nfpm/releases/download/v2.28.0/nfpm_2.28.0_Linux_x86_64.tar.gz
           tar -xzf /tmp/nfpm.tar.gz -C /tmp
           sudo mv /tmp/nfpm /usr/local/bin/nfpm
+      - name: Setup yq
+        shell: bash
+        run: |
+          curl -sSfLo /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          chmod +x /usr/local/bin/yq
       - name: Download
         shell: bash
         env:
@@ -150,9 +155,9 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          arch=${{ matrix.arch }}
-          version=${{ github.ref_name }}
-          nfpm package --packager ${{ matrix.packager }} --target dist/pkg/ -f <(envsubst '${arch} ${version}' < nfpm.yaml)
+          yq -i '.arch = "${{ matrix.arch }}"' nfpm.yaml
+          yq -i '.version = "${{ github.ref_name }}"' nfpm.yaml
+          nfpm package --packager ${{ matrix.packager }} --target dist/pkg/
       - name: Publish
         shell: bash
         env:
