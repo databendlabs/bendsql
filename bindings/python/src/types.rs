@@ -21,7 +21,7 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::GILOnceCell;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple, PyType};
-use pyo3_asyncio::tokio::future_into_py;
+use pyo3_async_runtimes::tokio::future_into_py;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 

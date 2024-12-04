@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use pyo3::prelude::*;
-use pyo3_asyncio::tokio::future_into_py;
+use pyo3_async_runtimes::tokio::future_into_py;
 
 use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
 

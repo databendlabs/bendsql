@@ -39,6 +39,4 @@ highlight = "all"
 
 [sources]
 unknown-git = "deny"
-allow-git = [
-    "https://github.com/everpcpc/pyo3-asyncio.git",
-]
+allow-git = []
