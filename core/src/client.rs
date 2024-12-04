@@ -849,11 +849,7 @@ impl APIClient {
                 ),
             };
             if !retry {
-                return Err(err.with_context(&format!(
-                    "fail to {} {} after 3 reties",
-                    request.method(),
-                    request.url()
-                )));
+                return Err(err.with_context(&format!("{} {}", request.method(), request.url())));
             }
             match &err {
                 Error::AuthFailure(_) => {
@@ -861,7 +857,7 @@ impl APIClient {
                         retries = 0;
                     } else if retries == 2 {
                         return Err(err.with_context(&format!(
-                            "fail to {} {} after 3 reties",
+                            "{} {} after 3 reties",
                             request.method(),
                             request.url()
                         )));
@@ -870,7 +866,7 @@ impl APIClient {
                 _ => {
                     if retries == 2 {
                         return Err(err.with_context(&format!(
-                            "fail to {} {} after 3 reties",
+                            "{} {} after 3 reties",
                             request.method(),
                             request.url()
                         )));
