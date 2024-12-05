@@ -649,7 +649,9 @@ impl APIClient {
         let response = self.query_request_helper(request, true, false).await;
         let response = match response {
             Ok(r) => r,
-            Err(Error::Logic(status, _ec)) if status == 404 => {
+            Err(Error::Logic(status, ..)) | Err(Error::Response { status, .. })
+                if status == 404 =>
+            {
                 // old server
                 return Ok(());
             }
@@ -783,7 +785,7 @@ impl APIClient {
                         return Ok(response);
                     }
                     let body = response.bytes().await?;
-                    if retry_if_503 || status == StatusCode::SERVICE_UNAVAILABLE {
+                    if retry_if_503 && status == StatusCode::SERVICE_UNAVAILABLE {
                         // waiting for server to start
                         (Error::response_error(status, &body), true)
                     } else {
@@ -847,11 +849,7 @@ impl APIClient {
                 ),
             };
             if !retry {
-                return Err(err.with_context(&format!(
-                    "fail to {} {} after 3 reties",
-                    request.method(),
-                    request.url()
-                )));
+                return Err(err.with_context(&format!("{} {}", request.method(), request.url())));
             }
             match &err {
                 Error::AuthFailure(_) => {
@@ -859,7 +857,7 @@ impl APIClient {
                         retries = 0;
                     } else if retries == 2 {
                         return Err(err.with_context(&format!(
-                            "fail to {} {} after 3 reties",
+                            "{} {} after 3 reties",
                             request.method(),
                             request.url()
                         )));
@@ -868,7 +866,7 @@ impl APIClient {
                 _ => {
                     if retries == 2 {
                         return Err(err.with_context(&format!(
-                            "fail to {} {} after 3 reties",
+                            "{} {} after 3 reties",
                             request.method(),
                             request.url()
                         )));
