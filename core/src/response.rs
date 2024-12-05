@@ -32,6 +32,21 @@ pub struct Progresses {
     pub total_scan: Option<ProgressValues>,
 }
 
+impl Progresses {
+    pub fn has_progress(&self) -> bool {
+        self.scan_progress.bytes > 0
+            || self.scan_progress.rows > 0
+            || self.write_progress.bytes > 0
+            || self.write_progress.rows > 0
+            || self.result_progress.bytes > 0
+            || self.result_progress.rows > 0
+            || self
+                .total_scan
+                .as_ref()
+                .map_or(false, |v| v.bytes > 0 || v.rows > 0)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ProgressValues {
     pub rows: usize,

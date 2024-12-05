@@ -473,22 +473,6 @@ impl Session {
                 let _ = self.conn.exec(query).await?;
                 Ok(None)
             }
-            QueryKind::Update => {
-                let affected = self.conn.exec(query).await?;
-                if is_repl {
-                    if affected > 0 {
-                        eprintln!(
-                            "{} rows affected in ({:.3} sec)",
-                            affected,
-                            start.elapsed().as_secs_f64()
-                        );
-                    } else {
-                        eprintln!("processed in ({:.3} sec)", start.elapsed().as_secs_f64());
-                    }
-                    eprintln!();
-                }
-                Ok(Some(ServerStats::default()))
-            }
             other => {
                 let replace_newline = !if self.settings.replace_newline {
                     false
