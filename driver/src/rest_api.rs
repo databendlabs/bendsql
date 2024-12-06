@@ -204,7 +204,8 @@ impl<'o> RestAPIConnection {
     }
 
     async fn wait_for_schema(&self, resp: QueryResponse) -> Result<QueryResponse> {
-        if !resp.data.is_empty() || !resp.schema.is_empty() {
+        if !resp.data.is_empty() || !resp.schema.is_empty() || resp.stats.progresses.has_progress()
+        {
             return Ok(resp);
         }
         let node_id = resp.node_id.clone();
@@ -218,7 +219,11 @@ impl<'o> RestAPIConnection {
                 .client
                 .query_page(&result.id, &next_uri, &node_id)
                 .await?;
-            if !result.data.is_empty() || !result.schema.is_empty() {
+
+            if !result.data.is_empty()
+                || !result.schema.is_empty()
+                || result.stats.progresses.has_progress()
+            {
                 break;
             }
         }
