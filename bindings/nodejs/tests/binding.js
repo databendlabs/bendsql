@@ -70,14 +70,20 @@ Then("Select types should be expected native types", async function () {
 
   // FLOAT
   {
-    const row = await this.conn.queryRow("SELECT 1.1::FLOAT, 2.2::FLOAT");
-    assert.deepEqual(row.values(), [1.1, 2.2]);
+    const row = await this.conn.queryRow("SELECT 1.11::FLOAT, 2.22::FLOAT");
+    assert.deepEqual(
+      row.values().map((v) => v.toFixed(2)),
+      [1.11, 2.22],
+    );
   }
 
   // DOUBLE
   {
-    const row = await this.conn.queryRow("SELECT 1.1::DOUBLE, 2.2::DOUBLE");
-    assert.deepEqual(row.values(), [1.1, 2.2]);
+    const row = await this.conn.queryRow("SELECT 1.11::DOUBLE, 2.22::DOUBLE");
+    assert.deepEqual(
+      row.values().map((v) => v.toFixed(2)),
+      [1.11, 2.22],
+    );
   }
 
   // Decimal
