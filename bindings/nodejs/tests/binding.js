@@ -38,10 +38,45 @@ Then("Select string {string} should be equal to {string}", async function (input
 });
 
 Then("Select types should be expected native types", async function () {
-  // Binary
+  // BOOLEAN
   {
-    const row = await this.conn.queryRow("select to_binary('xyz')");
-    assert.deepEqual(row.values(), [Buffer.from("xyz")]);
+    const row = await this.conn.queryRow("SELECT true, false");
+    assert.deepEqual(row.values(), [true, false]);
+  }
+
+  // TINYINT
+  {
+    const row = await this.conn.queryRow("SELECT 1::TINYINT, 2::TINYINT");
+    assert.deepEqual(row.values(), [1, 2]);
+
+  // SMALLINT
+  {
+    const row = await this.conn.queryRow("SELECT 1::SMALLINT, 2::SMALLINT");
+    assert.deepEqual(row.values(), [1, 2]);
+  }
+
+  // INT
+  {
+    const row = await this.conn.queryRow("SELECT 1::INT, 2::INT");
+    assert.deepEqual(row.values(), [1, 2]);
+  }
+
+  // BIGINT
+  {
+    const row = await this.conn.queryRow("SELECT 1::BIGINT, 2::BIGINT");
+    assert.deepEqual(row.values(), [1, 2]);
+  }
+
+  // FLOAT
+  {
+    const row = await this.conn.queryRow("SELECT 1.1::FLOAT, 2.2::FLOAT");
+    assert.deepEqual(row.values(), [1.1, 2.2]);
+  }
+
+  // DOUBLE
+  {
+    const row = await this.conn.queryRow("SELECT 1.1::DOUBLE, 2.2::DOUBLE");
+    assert.deepEqual(row.values(), [1.1, 2.2]);
   }
 
   // Decimal
@@ -50,22 +85,46 @@ Then("Select types should be expected native types", async function () {
     assert.deepEqual(row.values(), ["15.7563", "5.0"]);
   }
 
-  // Array
+  // DATE
+  {
+    const row = await this.conn.queryRow("SELECT to_date('2020-01-01'), to_date('2020-01-02')");
+    assert.deepEqual(row.values(), [new Date("2020-01-01"), new Date("2020-01-02")]);
+  }
+
+  // TIMESTAMP
+  {
+    const row = await this.conn.queryRow("SELECT to_datetime('2020-01-01 12:34:56.789'), to_datetime('2020-01-02 12:34:56.789')");
+    assert.deepEqual(row.values(), [new Date("2020-01-01T12:34:56.789Z"), new Date("2020-01-02T12:34:56.789Z")]);
+  }
+
+  // VARCHAR
+  {
+    const row = await this.conn.queryRow("SELECT 'xyz', 'abc'");
+    assert.deepEqual(row.values(), ["xyz", "abc"]);
+  }
+
+  // BINARY
+  {
+    const row = await this.conn.queryRow("select to_binary('xyz')");
+    assert.deepEqual(row.values(), [Buffer.from("xyz")]);
+  }
+
+  // ARRAY
   {
     const row = await this.conn.queryRow(`SELECT [10::Decimal(15,2), 1.1+2.3]`);
     assert.deepEqual(row.values(), [["10.00", "3.40"]]);
   }
 
-  // Map
-  {
-    const row = await this.conn.queryRow(`SELECT {'xx':to_date('2020-01-01')}`);
-    assert.deepEqual(row.values(), [{ xx: new Date("2020-01-01") }]);
-  }
-
-  // Tuple
+  // TUPLE
   {
     const row = await this.conn.queryRow(`SELECT (10, '20', to_datetime('2024-04-16 12:34:56.789'))`);
     assert.deepEqual(row.values(), [[10, "20", new Date("2024-04-16T12:34:56.789Z")]]);
+  }
+
+  // MAP
+  {
+    const row = await this.conn.queryRow(`SELECT {'xx':to_date('2020-01-01')}`);
+    assert.deepEqual(row.values(), [{ xx: new Date("2020-01-01") }]);
   }
 
   // Variant as String
