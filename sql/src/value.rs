@@ -45,14 +45,15 @@ const FALSE_VALUE: &str = "0";
 use {
     crate::schema::{
         ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
-        ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_VARIANT, EXTENSION_KEY,
+        ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
+        ARROW_EXT_TYPE_VARIANT, EXTENSION_KEY,
     },
     arrow_array::{
         Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array,
         Decimal256Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
-        IntervalMonthDayNanoArray, LargeBinaryArray, LargeListArray, LargeStringArray, ListArray,
-        MapArray, StringArray, StringViewArray, StructArray, TimestampMicrosecondArray,
-        UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+        LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, MapArray, StringArray,
+        StringViewArray, StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array,
+        UInt64Array, UInt8Array,
     },
     arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
     std::sync::Arc,
@@ -95,7 +96,7 @@ pub enum Value {
     Variant(String),
     Geometry(String),
     Geography(String),
-    Interval((i32, i32, i64)),
+    Interval(String),
 }
 
 impl Value {
@@ -230,14 +231,7 @@ impl TryFrom<(&DataType, &str)> for Value {
             DataType::Variant => Ok(Self::Variant(v.to_string())),
             DataType::Geometry => Ok(Self::Geometry(v.to_string())),
             DataType::Geography => Ok(Self::Geography(v.to_string())),
-            DataType::Interval => {
-                let interval = Interval::from_string(v)?;
-                Ok(Self::Interval((
-                    interval.months,
-                    interval.days,
-                    interval.nanos,
-                )))
-            }
+            DataType::Interval => Ok(Self::Interval(v.to_string())),
             DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) => {
                 let mut reader = Cursor::new(v);
                 let decoder = ValueDecoder {};
@@ -276,6 +270,25 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                     match array.as_any().downcast_ref::<LargeBinaryArray>() {
                         Some(array) => Ok(Value::Variant(jsonb::to_string(array.value(seq)))),
                         None => Err(ConvertError::new("variant", format!("{:?}", array)).into()),
+                    }
+                }
+                ARROW_EXT_TYPE_INTERVAL => {
+                    if field.is_nullable() && array.is_null(seq) {
+                        return Ok(Value::Null);
+                    }
+                    match array.as_any().downcast_ref::<Decimal128Array>() {
+                        Some(array) => {
+                            let res = months_days_micros(array.value(seq));
+                            Ok(Value::Interval(
+                                Interval {
+                                    months: res.months(),
+                                    days: res.days(),
+                                    micros: res.microseconds(),
+                                }
+                                .to_string(),
+                            ))
+                        }
+                        None => Err(ConvertError::new("Interval", format!("{:?}", array)).into()),
                     }
                 }
                 ARROW_EXT_TYPE_BITMAP => {
@@ -452,19 +465,6 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                 Some(array) => Ok(Value::Date(array.value(seq))),
                 None => Err(ConvertError::new("date", format!("{:?}", array)).into()),
             },
-            ArrowDataType::Interval(_) => {
-                match array.as_any().downcast_ref::<IntervalMonthDayNanoArray>() {
-                    Some(array) => {
-                        let res = array.value(seq);
-                        Ok(Value::Interval((
-                            res.months,
-                            res.days,
-                            res.nanoseconds / 1000,
-                        )))
-                    }
-                    None => Err(ConvertError::new("interval", format!("{:?}", array)).into()),
-                }
-            }
             ArrowDataType::List(f) => match array.as_any().downcast_ref::<ListArray>() {
                 Some(array) => {
                     let inner_array = unsafe { array.value_unchecked(seq) };
@@ -535,6 +535,7 @@ impl TryFrom<Value> for String {
             Value::Number(NumberValue::Decimal256(v, s)) => Ok(display_decimal_256(v, s.scale)),
             Value::Geometry(s) => Ok(s),
             Value::Geography(s) => Ok(s),
+            Value::Interval(s) => Ok(s),
             Value::Variant(s) => Ok(s),
             _ => Err(ConvertError::new("string", format!("{:?}", val)).into()),
         }
@@ -827,6 +828,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
         Value::String(s)
         | Value::Bitmap(s)
         | Value::Variant(s)
+        | Value::Interval(s)
         | Value::Geometry(s)
         | Value::Geography(s) => {
             if raw {
@@ -844,18 +846,6 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
                 write!(f, "{}", t)
             } else {
                 write!(f, "'{}'", t)
-            }
-        }
-        Value::Interval(v) => {
-            let interval = Interval {
-                months: v.0,
-                days: v.1,
-                nanos: v.2,
-            };
-            if raw {
-                write!(f, "{}", interval)
-            } else {
-                write!(f, "'{}'", interval)
             }
         }
         Value::Date(i) => {
@@ -1041,7 +1031,7 @@ pub fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
 pub struct Interval {
     pub months: i32,
     pub days: i32,
-    pub nanos: i64,
+    pub micros: i64,
 }
 
 impl Display for Interval {
@@ -1087,11 +1077,11 @@ impl IntervalToStringCast {
         }
     }
 
-    fn format_nanos(mut nano: i64, buffer: &mut [u8], length: &mut usize) {
-        if nano < 0 {
-            nano = -nano;
+    fn format_micros(mut micros: i64, buffer: &mut [u8], length: &mut usize) {
+        if micros < 0 {
+            micros = -micros;
         }
-        let s = format!("{:09}", nano);
+        let s = format!("{:06}", micros);
         let bytes = s.as_bytes();
         buffer[*length..*length + bytes.len()].copy_from_slice(bytes);
         *length += bytes.len();
@@ -1112,23 +1102,23 @@ impl IntervalToStringCast {
         if interval.days != 0 {
             Self::format_interval_value(interval.days, buffer, &mut length, " day");
         }
-        if interval.nanos != 0 {
+        if interval.micros != 0 {
             if length != 0 {
                 buffer[length] = b' ';
                 length += 1;
             }
-            let mut nanos = interval.nanos;
-            if nanos < 0 {
+            let mut micros = interval.micros;
+            if micros < 0 {
                 buffer[length] = b'-';
                 length += 1;
-                nanos = -nanos;
+                micros = -micros;
             }
-            let hour = nanos / NANO_PER_HOUR;
-            nanos -= hour * NANO_PER_HOUR;
-            let min = nanos / NANO_PER_MINUTE;
-            nanos -= min * NANO_PER_MINUTE;
-            let sec = nanos / NANO_PER_SEC;
-            nanos -= sec * NANO_PER_SEC;
+            let hour = micros / MINROS_PER_HOUR;
+            micros -= hour * MINROS_PER_HOUR;
+            let min = micros / MICROS_PER_MINUTE;
+            micros -= min * MICROS_PER_MINUTE;
+            let sec = micros / MICROS_PER_SEC;
+            micros -= sec * MICROS_PER_SEC;
 
             Self::format_signed_number(hour, buffer, &mut length);
             buffer[length] = b':';
@@ -1137,10 +1127,10 @@ impl IntervalToStringCast {
             buffer[length] = b':';
             length += 1;
             Self::format_two_digits(sec, buffer, &mut length);
-            if nanos != 0 {
+            if micros != 0 {
                 buffer[length] = b'.';
                 length += 1;
-                Self::format_nanos(nanos, buffer, &mut length);
+                Self::format_micros(micros, buffer, &mut length);
             }
         } else if length == 0 {
             buffer[..8].copy_from_slice(b"00:00:00");
@@ -1227,7 +1217,7 @@ impl Interval {
                     }
                     result.months = -result.months;
                     result.days = -result.days;
-                    result.nanos = -result.nanos;
+                    result.micros = -result.micros;
                     return Ok(result);
                 }
                 _ => {
@@ -1276,14 +1266,13 @@ fn parse_number(bytes: &[u8]) -> Result<(i64, i64, usize)> {
         // parse time format HH:MM:SS[.FFFFFF]
         let time_bytes = &bytes[pos..];
         let mut time_pos = 0;
-        let mut total_nanos: i64 = number * 60 * 60 * NANO_PER_SEC;
+        let mut total_micros: i64 = number * 60 * 60 * MICROS_PER_SEC;
         let mut colon_count = 0;
 
-        // 1 day 01:23:45
         while colon_count < 2 && time_bytes.len() > time_pos {
             let (minute, _, next_pos) = parse_time_part(&time_bytes[time_pos..])?;
-            let minute_nanos = minute * 60 * NANO_PER_SEC;
-            total_nanos += minute_nanos;
+            let minute_micros = minute * 60 * MICROS_PER_SEC;
+            total_micros += minute_micros;
             time_pos += next_pos;
 
             if time_bytes.len() > time_pos && time_bytes[time_pos] == b':' {
@@ -1295,10 +1284,10 @@ fn parse_number(bytes: &[u8]) -> Result<(i64, i64, usize)> {
         }
         if time_bytes.len() > time_pos {
             let (seconds, nanos, next_pos) = parse_time_part_with_nanos(&time_bytes[time_pos..])?;
-            total_nanos += seconds * NANO_PER_SEC + nanos;
+            total_micros += seconds * MICROS_PER_SEC + nanos;
             time_pos += next_pos;
         }
-        return Ok((total_nanos, 0, pos + time_pos));
+        return Ok((total_micros, 0, pos + time_pos));
     }
 
     if pos == 0 {
@@ -1406,11 +1395,10 @@ fn try_get_date_part_specifier(specifier_str: &str) -> Result<DatePartSpecifier>
     }
 }
 
-const NANO_PER_SEC: i64 = 1_000_000_000;
-const NANO_PER_MSEC: i64 = 1_000_000;
-const NANO_PER_MICROS: i64 = 1_000;
-const NANO_PER_MINUTE: i64 = 60 * NANO_PER_SEC;
-const NANO_PER_HOUR: i64 = 60 * NANO_PER_MINUTE;
+const MICROS_PER_SEC: i64 = 1_000_000;
+const MICROS_PER_MSEC: i64 = 1_000;
+const MICROS_PER_MINUTE: i64 = 60 * MICROS_PER_SEC;
+const MINROS_PER_HOUR: i64 = 60 * MICROS_PER_MINUTE;
 const DAYS_PER_WEEK: i32 = 7;
 const MONTHS_PER_QUARTER: i32 = 3;
 const MONTHS_PER_YEAR: i32 = 12;
@@ -1425,12 +1413,12 @@ fn apply_specifier(
     specifier_str: &str,
 ) -> Result<()> {
     if specifier_str.is_empty() {
-        result.nanos = result
-            .nanos
+        result.micros = result
+            .micros
             .checked_add(number)
             .ok_or(Error::BadArgument("Overflow".to_string()))?;
-        result.nanos = result
-            .nanos
+        result.micros = result
+            .micros
             .checked_add(fraction)
             .ok_or(Error::BadArgument("Overflow".to_string()))?;
         return Ok(());
@@ -1531,51 +1519,47 @@ fn apply_specifier(
                 .ok_or(Error::BadArgument("Overflow".to_string()))?;
         }
         DatePartSpecifier::Microseconds => {
-            result.nanos = result
-                .nanos
-                .checked_add(
-                    number
-                        .checked_mul(NANO_PER_MICROS)
-                        .ok_or(Error::BadArgument("Overflow".to_string()))?,
-                )
+            result.micros = result
+                .micros
+                .checked_add(number)
                 .ok_or(Error::BadArgument("Overflow".to_string()))?;
         }
         DatePartSpecifier::Milliseconds => {
-            result.nanos = result
-                .nanos
+            result.micros = result
+                .micros
                 .checked_add(
                     number
-                        .checked_mul(NANO_PER_MSEC)
+                        .checked_mul(MICROS_PER_MSEC)
                         .ok_or(Error::BadArgument("Overflow".to_string()))?,
                 )
                 .ok_or(Error::BadArgument("Overflow".to_string()))?;
         }
         DatePartSpecifier::Second => {
-            result.nanos = result
-                .nanos
+            result.micros = result
+                .micros
                 .checked_add(
                     number
-                        .checked_mul(NANO_PER_SEC)
+                        .checked_mul(MICROS_PER_SEC)
                         .ok_or(Error::BadArgument("Overflow".to_string()))?,
                 )
                 .ok_or(Error::BadArgument("Overflow".to_string()))?;
         }
         DatePartSpecifier::Minute => {
-            result.nanos = result
-                .nanos
+            result.micros = result
+                .micros
                 .checked_add(
                     number
-                        .checked_mul(NANO_PER_MINUTE)
+                        .checked_mul(MICROS_PER_MINUTE)
                         .ok_or(Error::BadArgument("Overflow".to_string()))?,
                 )
                 .ok_or(Error::BadArgument("Overflow".to_string()))?;
         }
         DatePartSpecifier::Hour => {
-            result.nanos = result
-                .nanos
+            result.micros = result
+                .micros
                 .checked_add(
                     number
-                        .checked_mul(NANO_PER_HOUR)
+                        .checked_mul(MINROS_PER_HOUR)
                         .ok_or(Error::BadArgument("Overflow".to_string()))?,
                 )
                 .ok_or(Error::BadArgument("Overflow".to_string()))?;
@@ -1757,9 +1741,7 @@ impl ValueDecoder {
     fn read_interval<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
-        let v = unsafe { std::str::from_utf8_unchecked(&buf) };
-        let res = Interval::from_string(v)?;
-        Ok(Value::Interval((res.months, res.days, res.nanos)))
+        Ok(Value::Interval(unsafe { String::from_utf8_unchecked(buf) }))
     }
 
     fn read_bitmap<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -1876,5 +1858,38 @@ impl ValueDecoder {
         }
         reader.must_ignore_byte(b')')?;
         Ok(Value::Tuple(vals))
+    }
+}
+
+/// The in-memory representation of the MonthDayNano variant of the "Interval" logical type.
+#[derive(Debug, Copy, Clone, Default, PartialEq, PartialOrd, Ord, Eq, Hash)]
+#[allow(non_camel_case_types)]
+#[repr(C)]
+pub struct months_days_micros(pub i128);
+
+impl months_days_micros {
+    /// A new [`months_days_micros`].
+    pub fn new(months: i32, days: i32, microseconds: i64) -> Self {
+        let months_bits = (months as i128) << 96;
+        let days_bits = (days as i128) << 64;
+        let micros_bits = microseconds as i128;
+
+        Self(months_bits | days_bits | micros_bits)
+    }
+
+    #[inline]
+    pub fn months(&self) -> i32 {
+        // Decoding logic
+        ((self.0 >> 96) & 0xFFFFFFFF) as i32
+    }
+
+    #[inline]
+    pub fn days(&self) -> i32 {
+        ((self.0 >> 64) & 0xFFFFFFFF) as i32
+    }
+
+    #[inline]
+    pub fn microseconds(&self) -> i64 {
+        (self.0 & 0xFFFFFFFFFFFFFFFF) as i64
     }
 }
