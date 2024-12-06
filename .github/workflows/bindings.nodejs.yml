@@ -11,6 +11,7 @@ on:
       - main
     paths:
       - "sql/**"
+      - "driver/**"
       - "bindings/nodejs/**"
       - ".github/workflows/bindings.nodejs.yml"
 

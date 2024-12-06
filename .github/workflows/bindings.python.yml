@@ -11,6 +11,7 @@ on:
       - main
     paths:
       - "sql/**"
+      - "driver/**"
       - "bindings/python/**"
       - ".github/workflows/bindings.python.yml"
 
