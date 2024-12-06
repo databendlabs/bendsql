@@ -1,6 +1,6 @@
 {
   "name": "databend-driver",
-  "author": "Databend Authors <opensource@databendlabs.com>",
+  "author": "Databend Authors <opensource@databend.com>",
   "version": "0.24.2",
   "license": "Apache-2.0",
   "main": "index.js",
