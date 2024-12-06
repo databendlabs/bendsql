@@ -64,8 +64,8 @@ Then("Select types should be expected native types", async function () {
 
   // BIGINT
   {
-    const row = await this.conn.queryRow("SELECT 1::BIGINT, 2::BIGINT");
-    assert.deepEqual(row.values(), [1, 2]);
+    const row = await this.conn.queryRow("SELECT 14294967295::BIGINT, 1::BIGINT");
+    assert.deepEqual(row.values(), [14294967295n, 1n]);
   }
 
   // FLOAT
