@@ -18,7 +18,6 @@ extern crate napi_derive;
 use std::collections::HashMap;
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
-use napi::tokio::time::Interval;
 use napi::{bindgen_prelude::*, Env};
 use once_cell::sync::Lazy;
 use tokio_stream::StreamExt;
