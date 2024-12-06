@@ -57,7 +57,7 @@ while (row) {
 | `TINYINT`   | `Number`  |
 | `SMALLINT`  | `Number`  |
 | `INT`       | `Number`  |
-| `BIGINT`    | `Number`  |
+| `BIGINT`    | `BigInt`  |
 | `FLOAT`     | `Number`  |
 | `DOUBLE`    | `Number`  |
 | `DECIMAL`   | `String`  |
