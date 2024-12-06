@@ -10,7 +10,9 @@ on:
     branches:
       - main
     paths:
+      - "core/**"
       - "sql/**"
+      - "driver/**"
       - "bindings/python/**"
       - ".github/workflows/bindings.python.yml"
 
@@ -147,8 +149,7 @@ jobs:
           pattern: bindings-python-*
           merge-multiple: true
       - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@unstable/v1
         with:
           skip-existing: true
-          verify-metadata: false
           packages-dir: bindings/python/artifacts

@@ -10,7 +10,9 @@ on:
     branches:
       - main
     paths:
+      - "core/**"
       - "sql/**"
+      - "driver/**"
       - "bindings/nodejs/**"
       - ".github/workflows/bindings.nodejs.yml"
 
@@ -30,7 +32,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Corepack
         working-directory: bindings/nodejs
         run: corepack enable
@@ -72,7 +74,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Install ziglang
         if: contains(matrix.target, '-unknown-linux-')
         uses: goto-bus-stop/setup-zig@v2
@@ -121,7 +123,7 @@ jobs:
       - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Corepack
         working-directory: bindings/nodejs
         run: corepack enable
