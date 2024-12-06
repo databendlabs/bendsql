@@ -48,6 +48,7 @@ Then("Select types should be expected native types", async function () {
   {
     const row = await this.conn.queryRow("SELECT 1::TINYINT, 2::TINYINT");
     assert.deepEqual(row.values(), [1, 2]);
+  }
 
   // SMALLINT
   {
@@ -93,7 +94,9 @@ Then("Select types should be expected native types", async function () {
 
   // TIMESTAMP
   {
-    const row = await this.conn.queryRow("SELECT to_datetime('2020-01-01 12:34:56.789'), to_datetime('2020-01-02 12:34:56.789')");
+    const row = await this.conn.queryRow(
+      "SELECT to_datetime('2020-01-01 12:34:56.789'), to_datetime('2020-01-02 12:34:56.789')",
+    );
     assert.deepEqual(row.values(), [new Date("2020-01-01T12:34:56.789Z"), new Date("2020-01-02T12:34:56.789Z")]);
   }
 
