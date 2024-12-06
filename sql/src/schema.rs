@@ -32,6 +32,8 @@ pub(crate) const ARROW_EXT_TYPE_BITMAP: &str = "Bitmap";
 pub(crate) const ARROW_EXT_TYPE_GEOMETRY: &str = "Geometry";
 #[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_GEOGRAPHY: &str = "Geography";
+#[cfg(feature = "flight-sql")]
+pub(crate) const ARROW_EXT_TYPE_INTERVAL: &str = "Interval";
 
 use databend_client::SchemaField as APISchemaField;
 
