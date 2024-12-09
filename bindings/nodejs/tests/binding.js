@@ -17,9 +17,10 @@
 import { Transform } from "node:stream";
 import { finished, pipeline } from "node:stream/promises";
 
-const assert = require("assert");
-const { Client } = require("../index.js");
-const { Given, When, Then } = require("@cucumber/cucumber");
+import * as assert from "assert";
+import { Given, When, Then } from "@cucumber/cucumber";
+
+import { Client } from "../index.js";
 
 const dsn = process.env.TEST_DATABEND_DSN
   ? process.env.TEST_DATABEND_DSN
@@ -214,7 +215,7 @@ Then("Select numbers should iterate all rows", async function () {
       writableObjectMode: true,
       readableObjectMode: true,
       transform(data, _, callback) {
-        ret(data.values()[0]);
+        ret.push(data.values()[0]);
         callback();
       },
     });
