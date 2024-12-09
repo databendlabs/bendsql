@@ -211,15 +211,14 @@ Then("Select numbers should iterate all rows", async function () {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
     const ret = [];
     const stream = rows.stream();
-    const firstColumnValue = new Transform({
-      writableObjectMode: true,
-      readableObjectMode: true,
+    const transformer = new Transform({
+      objectMode: true,
       transform(data, _, callback) {
         ret.push(data.values()[0]);
         callback();
       },
     });
-    pipeline(stream, firstColumnValue);
+    await pipeline(stream, transformer);
     await finished(stream);
     const expected = [0, 1, 2, 3, 4];
     assert.deepEqual(ret, expected);

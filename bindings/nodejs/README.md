@@ -43,6 +43,27 @@ while (row) {
   console.log(row.data());
   row = await rows.next();
 }
+
+// iter rows
+const rows = await conn.queryIter("SELECT * FROM test");
+for await (const row of rows) {
+  console.log(row.values());
+}
+
+// pipe rows
+import { Transform } from "node:stream";
+import { finished, pipeline } from "node:stream/promises";
+
+const rows = await conn.queryIter("SELECT * FROM test");
+const stream = rows.stream();
+const transformer = new Transform({
+  objectMode: true,
+  transform(row, _, callback) {
+    console.log(row.values());
+  },
+});
+await pipeline(stream, transformer);
+await finished(stream);
 ```
 
 ## Type Mapping
