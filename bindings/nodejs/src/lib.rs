@@ -356,6 +356,12 @@ impl RowIterator {
 
 #[napi]
 impl RowIterator {
+    /// Get Schema for rows.
+    #[napi]
+    pub fn schema(&self) -> Schema {
+        Schema(self.inner.schema().clone())
+    }
+
     /// Fetch next row.
     /// Returns `None` if there are no more rows.
     #[napi]
@@ -366,10 +372,11 @@ impl RowIterator {
                 .map_err(format_napi_error)
         })
     }
-    /// Get Schema for rows.
+
     #[napi]
-    pub fn schema(&self) -> Schema {
-        Schema(self.inner.schema().clone())
+    #[allow(clippy::missing_safety_doc)]
+    pub async unsafe fn read(&mut self) -> Option<Result<Row>> {
+        self.next().await
     }
 }
 

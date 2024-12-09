@@ -65,13 +65,14 @@ export class Field {
   get dataType(): string
 }
 export class RowIterator {
+  /** Get Schema for rows. */
+  schema(): Schema
   /**
    * Fetch next row.
    * Returns `None` if there are no more rows.
    */
   next(): Promise<Error | Row | null>
-  /** Get Schema for rows. */
-  schema(): Schema
+  read(): Promise<Error | Row | null>
 }
 export class RowIteratorExt {
   /**

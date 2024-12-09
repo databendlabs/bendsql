@@ -190,6 +190,28 @@ Then("Select numbers should iterate all rows", async function () {
     const expected = [{ n: 0 }, { n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }];
     assert.deepEqual(ret, expected);
   }
+
+  // iter with pipeline
+  {
+    let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
+    let ret = [];
+    rows.pipe((row) => {
+      ret.push(row.values()[0]);
+    });
+    const expected = [0, 1, 2, 3, 4];
+    assert.deepEqual(ret, expected);
+  }
+
+  // iter with ReadableStream
+  {
+    let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
+    let ret = [];
+    for await (const row of rows) {
+      ret.push(row.values()[0]);
+    }
+    const expected = [0, 1, 2, 3, 4];
+    assert.deepEqual(ret, expected);
+  }
 });
 
 When("Create a test table", async function () {
