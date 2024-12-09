@@ -57,7 +57,8 @@ import { finished, pipeline } from "node:stream/promises";
 const rows = await conn.queryIter("SELECT * FROM test");
 const stream = rows.stream();
 const transformer = new Transform({
-  objectMode: true,
+  readableObjectMode: true,
+  writableObjectMode: true,
   transform(row, _, callback) {
     console.log(row.values());
   },
