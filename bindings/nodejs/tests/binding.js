@@ -17,6 +17,7 @@
 const assert = require("assert");
 const { Client } = require("../index.js");
 const { Given, When, Then } = require("@cucumber/cucumber");
+const { Readable } = require("node:stream");
 
 const dsn = process.env.TEST_DATABEND_DSN
   ? process.env.TEST_DATABEND_DSN
@@ -205,8 +206,9 @@ Then("Select numbers should iterate all rows", async function () {
   // iter with pipeline
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
+    const stream = Readable.from(rows);
     let ret = [];
-    rows.pipe((row) => {
+    stream.pipe((row) => {
       ret.push(row.values()[0]);
     });
     const expected = [0, 1, 2, 3, 4];
