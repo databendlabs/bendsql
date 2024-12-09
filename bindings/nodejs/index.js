@@ -22,7 +22,7 @@ const { Client, RowIterator } = require("./generated.js");
 
 class RowsStream extends Readable {
   constructor(reader, options) {
-    super(options);
+    super({ objectMode: true, ...options });
     this.reader = reader;
   }
 
