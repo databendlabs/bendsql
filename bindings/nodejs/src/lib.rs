@@ -372,12 +372,6 @@ impl RowIterator {
                 .map_err(format_napi_error)
         })
     }
-
-    #[napi]
-    #[allow(clippy::missing_safety_doc)]
-    pub async unsafe fn read(&mut self) -> Option<Result<Row>> {
-        self.next().await
-    }
 }
 
 #[napi]

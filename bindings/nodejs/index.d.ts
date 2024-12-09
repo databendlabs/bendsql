@@ -72,7 +72,6 @@ export declare class RowIterator {
    * Returns `None` if there are no more rows.
    */
   next(): Promise<Error | Row | null>
-  read(): Promise<Error | Row | null>
 }
 export declare class RowIteratorExt {
   /**
