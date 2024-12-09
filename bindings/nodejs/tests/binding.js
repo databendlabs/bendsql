@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+const { Transform } = require("node:stream");
+
 const assert = require("assert");
 const { Client } = require("../index.js");
 const { Given, When, Then } = require("@cucumber/cucumber");
@@ -205,14 +207,13 @@ Then("Select numbers should iterate all rows", async function () {
   // iter with pipeline
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
-    let ret = [];
-    rows.stream().pipe({
-      on: (event, data) => {
-        if (event === "data") {
-          ret.push(data.values()[0]);
-        }
+    const firstColumnValue = new Transform({
+      transform(data, encoding, callback) {
+        this.push(data.values()[0]);
+        callback();
       },
     });
+    const ret = rows.stream().pipe(firstColumnValue);
     const expected = [0, 1, 2, 3, 4];
     assert.deepEqual(ret, expected);
   }
