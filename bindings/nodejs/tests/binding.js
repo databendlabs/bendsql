@@ -204,10 +204,11 @@ Then("Select numbers should iterate all rows", async function () {
     assert.deepEqual(ret, expected);
   }
 
-  // iter with pipeline
+  // pipe rows to stream
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
     const firstColumnValue = new Transform({
+      writableObjectMode: true,
       readableObjectMode: true,
       transform(data, _, callback) {
         this.push(data.values()[0]);
