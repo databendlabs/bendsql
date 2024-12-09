@@ -60,7 +60,7 @@ const transformer = new Transform({
   readableObjectMode: true,
   writableObjectMode: true,
   transform(row, _, callback) {
-    console.log(row.values());
+    console.log(row.data());
   },
 });
 await pipeline(stream, transformer);
