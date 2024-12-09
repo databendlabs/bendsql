@@ -374,7 +374,7 @@ impl RowIterator {
     }
 
     #[napi]
-    pub async unsafe fn read(&mut self) -> Option<Result<Row>> {
+    pub async unsafe fn _read(&mut self) -> Option<Result<Row>> {
         self.next().await
     }
 }
