@@ -17,7 +17,6 @@
 const assert = require("assert");
 const { Client } = require("../index.js");
 const { Given, When, Then } = require("@cucumber/cucumber");
-const { ReadableStream } = require("node:stream");
 
 const dsn = process.env.TEST_DATABEND_DSN
   ? process.env.TEST_DATABEND_DSN
