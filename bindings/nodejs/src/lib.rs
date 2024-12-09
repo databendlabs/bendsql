@@ -388,6 +388,11 @@ impl RowIteratorExt {
 
 #[napi]
 impl RowIteratorExt {
+    #[napi]
+    pub fn schema(&self) -> Schema {
+        Schema(self.inner.schema().clone())
+    }
+
     /// Fetch next row or stats.
     /// Returns `None` if there are no more rows.
     #[napi]
@@ -409,11 +414,6 @@ impl RowIteratorExt {
                 Err(e) => Some(Err(format_napi_error(e))),
             },
         }
-    }
-
-    #[napi]
-    pub fn schema(&self) -> Schema {
-        Schema(self.inner.schema().clone())
     }
 }
 

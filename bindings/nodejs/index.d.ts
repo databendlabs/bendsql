@@ -74,12 +74,12 @@ export declare class RowIterator {
   next(): Promise<Error | Row | null>
 }
 export declare class RowIteratorExt {
+  schema(): Schema
   /**
    * Fetch next row or stats.
    * Returns `None` if there are no more rows.
    */
   next(): Promise<Error | RowOrStats | null>
-  schema(): Schema
 }
 /** Must contain either row or stats. */
 export declare class RowOrStats {
