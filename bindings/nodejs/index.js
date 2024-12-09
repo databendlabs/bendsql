@@ -36,7 +36,7 @@ class ReadStream extends Readable {
   }
 }
 
-const { Client } = require("./generated.js");
+const { Client, RowIterator } = require("./generated.js");
 
 RowIterator.prototype.createReadStream = function (options) {
   return new ReadStream(this, options);
