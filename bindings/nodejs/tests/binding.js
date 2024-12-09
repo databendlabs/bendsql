@@ -215,7 +215,13 @@ Then("Select numbers should iterate all rows", async function () {
         callback();
       },
     });
-    const ret = rows.stream().pipe(firstColumnValue);
+    const ret = [];
+    rows
+      .stream()
+      .pipe(firstColumnValue)
+      .on("data", function (data) {
+        ret.push(data);
+      });
     const expected = [0, 1, 2, 3, 4];
     assert.deepEqual(ret, expected);
   }
