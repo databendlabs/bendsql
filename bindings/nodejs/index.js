@@ -38,15 +38,15 @@ class RowsStream extends Readable {
   }
 }
 
-RowIterator.prototype[Symbol.asyncIterator] = async function* () {
-  while (true) {
-    const item = await this.next();
-    if (item === null) {
-      break;
-    }
-    yield item;
-  }
-};
+// RowIterator.prototype[Symbol.asyncIterator] = async function* () {
+//   while (true) {
+//     const item = await this.next();
+//     if (item === null) {
+//       break;
+//     }
+//     yield item;
+//   }
+// };
 
 RowIterator.prototype.stream = function () {
   return new RowsStream(this);
