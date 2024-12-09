@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-import { Transform } from "node:stream";
-import { finished, pipeline } from "node:stream/promises";
+const { Transform } = require("node:stream");
+const { finished, pipeline } = require("node:stream/promises");
 
-import * as assert from "assert";
-import { Given, When, Then } from "@cucumber/cucumber";
+const assert = require("assert");
+const { Given, When, Then } = require("@cucumber/cucumber");
 
-import { Client } from "../index.js";
+const { Client } = require("../index.js");
 
 const dsn = process.env.TEST_DATABEND_DSN
   ? process.env.TEST_DATABEND_DSN
