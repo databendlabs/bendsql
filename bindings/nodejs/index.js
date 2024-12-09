@@ -16,9 +16,9 @@
 
 /// <reference types="node" />
 
-const { Readable } = require("node:stream");
+import { Readable } from "node:stream";
 
-const { Client, RowIterator } = require("./generated.js");
+import { Client, RowIterator } from "./generated.js";
 
 class RowsStream extends Readable {
   constructor(reader, options) {

@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-const { Transform } = require("node:stream");
+import { Transform } from "node:stream";
+import { finished, pipeline } from "node:stream/promises";
 
 const assert = require("assert");
 const { Client } = require("../index.js");
@@ -207,21 +208,18 @@ Then("Select numbers should iterate all rows", async function () {
   // pipe transform rows as stream
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
+    const ret = [];
+    const stream = rows.stream();
     const firstColumnValue = new Transform({
       writableObjectMode: true,
       readableObjectMode: true,
       transform(data, _, callback) {
-        this.push(data.values()[0]);
+        ret(data.values()[0]);
         callback();
       },
     });
-    const ret = [];
-    await rows
-      .stream()
-      .pipe(firstColumnValue)
-      .on("data", function (data) {
-        ret.push(data);
-      });
+    pipeline(stream, firstColumnValue);
+    await finished(stream);
     const expected = [0, 1, 2, 3, 4];
     assert.deepEqual(ret, expected);
   }
