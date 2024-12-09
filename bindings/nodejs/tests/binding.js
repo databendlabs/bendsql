@@ -216,7 +216,7 @@ Then("Select numbers should iterate all rows", async function () {
       },
     });
     const ret = [];
-    rows
+    await rows
       .stream()
       .pipe(firstColumnValue)
       .on("data", function (data) {
