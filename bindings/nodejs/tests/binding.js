@@ -182,19 +182,6 @@ Then("Select numbers should iterate all rows", async function () {
     assert.deepEqual(ret, expected);
   }
 
-  // iter return with field names
-  {
-    let rows = await this.conn.queryIter("SELECT number as n FROM numbers(5)");
-    let ret = [];
-    let row = await rows.next();
-    while (row) {
-      ret.push(row.data());
-      row = await rows.next();
-    }
-    const expected = [{ n: 0 }, { n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }];
-    assert.deepEqual(ret, expected);
-  }
-
   // iter as async iterator
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
@@ -203,6 +190,17 @@ Then("Select numbers should iterate all rows", async function () {
       ret.push(row.values()[0]);
     }
     const expected = [0, 1, 2, 3, 4];
+    assert.deepEqual(ret, expected);
+  }
+
+  // async iter return with field names
+  {
+    let rows = await this.conn.queryIter("SELECT number as n FROM numbers(5)");
+    let ret = [];
+    for await (const row of rows) {
+      ret.push(row.data());
+    }
+    const expected = [{ n: 0 }, { n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }];
     assert.deepEqual(ret, expected);
   }
 
@@ -246,10 +244,8 @@ Then("Insert and Select should be equal", async function () {
     (-3, 3, 3.0, '3', '2', '2016-04-04', '2016-04-04 11:30:00')`);
   const rows = await this.conn.queryIter("SELECT * FROM test");
   const ret = [];
-  let row = await rows.next();
-  while (row) {
+  for await (const row of rows) {
     ret.push(row.values());
-    row = await rows.next();
   }
   const expected = [
     [-1, 1, 1.0, "1", "1", new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
@@ -271,10 +267,8 @@ Then("Stream load and Select should be equal", async function () {
 
   const rows = await this.conn.queryIter("SELECT * FROM test");
   const ret = [];
-  let row = await rows.next();
-  while (row) {
+  for await (const row of rows) {
     ret.push(row.values());
-    row = await rows.next();
   }
   const expected = [
     [-1, 1, 1.0, "1", "1", new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
