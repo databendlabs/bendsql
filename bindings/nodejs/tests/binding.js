@@ -206,8 +206,12 @@ Then("Select numbers should iterate all rows", async function () {
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
     let ret = [];
-    rows.stream().pipe((row) => {
-      ret.push(row.values()[0]);
+    rows.stream().pipe({
+      on: (event, data) => {
+        if (event === "data") {
+          ret.push(data.values()[0]);
+        }
+      },
     });
     const expected = [0, 1, 2, 3, 4];
     assert.deepEqual(ret, expected);
