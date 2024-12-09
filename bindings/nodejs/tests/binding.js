@@ -191,17 +191,6 @@ Then("Select numbers should iterate all rows", async function () {
     assert.deepEqual(ret, expected);
   }
 
-  // iter with pipeline
-  {
-    let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
-    let ret = [];
-    rows.pipe((row) => {
-      ret.push(row.values()[0]);
-    });
-    const expected = [0, 1, 2, 3, 4];
-    assert.deepEqual(ret, expected);
-  }
-
   // iter with ReadableStream
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
@@ -209,6 +198,17 @@ Then("Select numbers should iterate all rows", async function () {
     for await (const row of rows) {
       ret.push(row.values()[0]);
     }
+    const expected = [0, 1, 2, 3, 4];
+    assert.deepEqual(ret, expected);
+  }
+
+  // iter with pipeline
+  {
+    let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
+    let ret = [];
+    rows.pipe((row) => {
+      ret.push(row.values()[0]);
+    });
     const expected = [0, 1, 2, 3, 4];
     assert.deepEqual(ret, expected);
   }
