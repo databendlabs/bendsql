@@ -16,6 +16,30 @@
 
 /// <reference types="node" />
 
+const { Writable, Readable } = require("node:stream");
+
+class ReadStream extends Readable {
+  constructor(reader, options) {
+    super(options);
+    this.reader = reader;
+  }
+
+  _read() {
+    this.reader
+      .next()
+      .then((item) => {
+        this.push(item);
+      })
+      .catch((e) => {
+        this.emit("error", e);
+      });
+  }
+}
+
 const { Client } = require("./generated.js");
+
+RowIterator.prototype.createReadStream = function (options) {
+  return new ReadStream(this, options);
+};
 
 module.exports.Client = Client;

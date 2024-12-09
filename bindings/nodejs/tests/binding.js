@@ -191,7 +191,7 @@ Then("Select numbers should iterate all rows", async function () {
     assert.deepEqual(ret, expected);
   }
 
-  // iter as ReadableStream
+  // iter as async iterator
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
     let ret = [];
