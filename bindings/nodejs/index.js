@@ -20,7 +20,7 @@ const { Readable } = require("node:stream");
 
 const { Client, RowIterator } = require("./generated.js");
 
-class ReadStream extends Readable {
+class RowsStream extends Readable {
   constructor(reader, options) {
     super(options);
     this.reader = reader;
@@ -49,7 +49,7 @@ RowIterator.prototype[Symbol.asyncIterator] = async function* () {
 };
 
 RowIterator.prototype.stream = function () {
-  return new ReadStream(this);
+  return new RowsStream(this);
 };
 
 module.exports.Client = Client;
