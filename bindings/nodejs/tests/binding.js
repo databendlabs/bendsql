@@ -208,6 +208,7 @@ Then("Select numbers should iterate all rows", async function () {
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
     const firstColumnValue = new Transform({
+      readableObjectMode: true,
       transform(data, encoding, callback) {
         this.push(data.values()[0]);
         callback();
