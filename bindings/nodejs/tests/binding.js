@@ -212,8 +212,8 @@ Then("Select numbers should iterate all rows", async function () {
     const transformer = new Transform({
       readableObjectMode: true,
       writableObjectMode: true,
-      transform(data, _, callback) {
-        ret.push(data.values()[0]);
+      transform(row, _, callback) {
+        ret.push(row.values()[0]);
         callback();
       },
     });
