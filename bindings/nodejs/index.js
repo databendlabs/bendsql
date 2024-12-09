@@ -18,6 +18,24 @@
 
 const { Client, RowIterator } = require("./generated.js");
 
+class ReadStream extends Readable {
+  constructor(reader, options) {
+    super(options);
+    this.reader = reader;
+  }
+
+  _read() {
+    this.reader
+      .next()
+      .then((item) => {
+        this.push(item);
+      })
+      .catch((e) => {
+        this.emit("error", e);
+      });
+  }
+}
+
 RowIterator.prototype[Symbol.asyncIterator] = async function* () {
   while (true) {
     const item = await this.next();
@@ -26,6 +44,10 @@ RowIterator.prototype[Symbol.asyncIterator] = async function* () {
     }
     yield item;
   }
+};
+
+RowIterator.prototype.stream = function () {
+  return new ReadStream(this);
 };
 
 module.exports.Client = Client;

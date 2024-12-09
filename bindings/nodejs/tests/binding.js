@@ -207,7 +207,7 @@ Then("Select numbers should iterate all rows", async function () {
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
     let ret = [];
-    rows.pipe((row) => {
+    rows.stream().pipe((row) => {
       ret.push(row.values()[0]);
     });
     const expected = [0, 1, 2, 3, 4];
