@@ -18,7 +18,7 @@
 
 const { Client, RowIterator } = require("./generated.js");
 
-RowIterator[Symbol.asyncIterator] = async function* () {
+RowIterator.prototype[Symbol.asyncIterator] = async function* () {
   while (true) {
     const item = await this.next();
     if (item === null) {
