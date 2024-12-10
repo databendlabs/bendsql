@@ -24,7 +24,9 @@ runs:
         targets: ${{ inputs.target }}
 
     - name: Setup sccache
-      uses: mozilla-actions/sccache-action@v0.0.4
+      uses: mozilla-actions/sccache-action@main
+      with:
+        disable_annotations: true
 
     - name: Cache Cargo for Github Runner
       if: inputs.runner == 'github'
