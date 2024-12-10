@@ -356,6 +356,12 @@ impl RowIterator {
 
 #[napi]
 impl RowIterator {
+    /// Get Schema for rows.
+    #[napi]
+    pub fn schema(&self) -> Schema {
+        Schema(self.inner.schema().clone())
+    }
+
     /// Fetch next row.
     /// Returns `None` if there are no more rows.
     #[napi]
@@ -365,11 +371,6 @@ impl RowIterator {
             row.map(|r| Row::new(r, self.opts.clone()))
                 .map_err(format_napi_error)
         })
-    }
-    /// Get Schema for rows.
-    #[napi]
-    pub fn schema(&self) -> Schema {
-        Schema(self.inner.schema().clone())
     }
 }
 
@@ -387,6 +388,11 @@ impl RowIteratorExt {
 
 #[napi]
 impl RowIteratorExt {
+    #[napi]
+    pub fn schema(&self) -> Schema {
+        Schema(self.inner.schema().clone())
+    }
+
     /// Fetch next row or stats.
     /// Returns `None` if there are no more rows.
     #[napi]
@@ -408,11 +414,6 @@ impl RowIteratorExt {
                 Err(e) => Some(Err(format_napi_error(e))),
             },
         }
-    }
-
-    #[napi]
-    pub fn schema(&self) -> Schema {
-        Schema(self.inner.schema().clone())
     }
 }
 

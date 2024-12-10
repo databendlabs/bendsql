@@ -40,15 +40,15 @@
     "LICENSE"
   ],
   "devDependencies": {
-    "@cucumber/cucumber": "^9.6.0",
-    "@napi-rs/cli": "^2.16.3",
-    "@types/node": "^18.14.5",
-    "prettier": "^3.0.3",
-    "typedoc": "^0.25.1",
-    "typescript": "^5.2.2"
+    "@cucumber/cucumber": "^11.1.0",
+    "@napi-rs/cli": "^2.18.4",
+    "@types/node": "^22.10.1",
+    "prettier": "^3.4.2",
+    "typedoc": "^0.27.4",
+    "typescript": "^5.7.2"
   },
   "engines": {
-    "node": ">= 10"
+    "node": ">= 16"
   },
   "scripts": {
     "build": "napi build --platform --target=$NAPI_TARGET --release --js generated.js && node ./scripts/header.js",
@@ -72,5 +72,5 @@
     "registry": "https://registry.npmjs.org/",
     "access": "public"
   },
-  "packageManager": "pnpm@9.14.2+sha512.6e2baf77d06b9362294152c851c4f278ede37ab1eba3a55fda317a4a17b209f4dbb973fb250a77abc463a341fcb1f17f17cfa24091c4eb319cda0d9b84278387"
+  "packageManager": "pnpm@9.15.0+sha512.76e2379760a4328ec4415815bcd6628dee727af3779aaa4c914e3944156c4299921a89f976381ee107d41f12cfa4b66681ca9c718f0668fa0831ed4c6d8ba56c"
 }

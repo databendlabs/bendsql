@@ -16,6 +16,40 @@
 
 /// <reference types="node" />
 
-const { Client } = require("./generated.js");
+const { Readable } = require("node:stream");
+
+const { Client, RowIterator } = require("./generated.js");
+
+class RowsStream extends Readable {
+  constructor(reader, options) {
+    super({ objectMode: true, ...options });
+    this.reader = reader;
+  }
+
+  _read() {
+    this.reader
+      .next()
+      .then((item) => {
+        this.push(item);
+      })
+      .catch((e) => {
+        this.emit("error", e);
+      });
+  }
+}
+
+RowIterator.prototype[Symbol.asyncIterator] = async function* () {
+  while (true) {
+    const item = await this.next();
+    if (item === null) {
+      break;
+    }
+    yield item;
+  }
+};
+
+RowIterator.prototype.stream = function () {
+  return new RowsStream(this);
+};
 
 module.exports.Client = Client;
