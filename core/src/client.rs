@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -32,7 +32,7 @@ use crate::{
     response::QueryResponse,
     session::SessionState,
 };
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use percent_encoding::percent_decode_str;
 use reqwest::cookie::CookieStore;
@@ -77,6 +77,8 @@ pub struct APIClient {
     disable_login: bool,
     disable_session_token: bool,
     session_token_info: Option<Arc<parking_lot::Mutex<(SessionTokenInfo, Instant)>>>,
+
+    closed: Arc<AtomicBool>,
 
     server_version: Option<String>,
 
@@ -674,7 +676,7 @@ impl APIClient {
         Ok(())
     }
 
-    fn build_log_out_request(&mut self) -> Result<Request> {
+    fn build_log_out_request(&self) -> Result<Request> {
         let endpoint = self.endpoint.join("/v1/session/logout")?;
 
         let session_state = self.session_state();
@@ -693,8 +695,12 @@ impl APIClient {
     }
 
     fn need_logout(&self) -> bool {
-        self.session_token_info.is_some()
-            || self.session_state.lock().need_keep_alive.unwrap_or(false)
+        (self.session_token_info.is_some()
+            || self.session_state.lock().need_keep_alive.unwrap_or(false))
+            && !self
+                .closed
+                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+                .unwrap()
     }
 
     async fn refresh_session_token(
@@ -884,20 +890,26 @@ impl APIClient {
             sleep(jitter(Duration::from_secs(10))).await;
         }
     }
-}
 
-impl Drop for APIClient {
-    fn drop(&mut self) {
+    pub async fn close(&self) {
         if self.need_logout() {
             let cli = self.cli.clone();
             let req = self
                 .build_log_out_request()
                 .expect("failed to build logout request");
-            tokio::spawn(async move {
-                if let Err(err) = cli.execute(req).await {
-                    error!("logout request failed: {}", err);
-                };
-            });
+            if let Err(err) = cli.execute(req).await {
+                error!("logout request failed: {}", err);
+            } else {
+                debug!("logout success");
+            };
+        }
+    }
+}
+
+impl Drop for APIClient {
+    fn drop(&mut self) {
+        if self.need_logout() {
+            warn!("APIClient::close() was not called");
         }
     }
 }
@@ -939,6 +951,7 @@ impl Default for APIClient {
             disable_session_token: true,
             disable_login: false,
             session_token_info: None,
+            closed: Arc::new(Default::default()),
             server_version: None,
         }
     }
