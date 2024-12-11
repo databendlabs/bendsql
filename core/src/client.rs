@@ -652,7 +652,7 @@ impl APIClient {
             Err(Error::Logic(status, ..)) | Err(Error::Response { status, .. })
                 if status == 404 =>
             {
-                // old server
+                info!("login return 404, skip login on the old version server");
                 return Ok(());
             }
             Err(e) => return Err(e),
@@ -664,9 +664,11 @@ impl APIClient {
             LoginResponseResult::Ok(info) => {
                 self.server_version = Some(info.version.clone());
                 if let Some(tokens) = info.tokens {
+                    info!("login success with session token");
                     self.session_token_info =
                         Some(Arc::new(parking_lot::Mutex::new((tokens, Instant::now()))))
                 }
+                info!("login success without session token");
             }
         }
         Ok(())
