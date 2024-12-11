@@ -354,6 +354,7 @@ impl APIClient {
     }
 
     pub async fn start_query(&self, sql: &str) -> Result<QueryResponse> {
+        info!("start query: {}", sql);
         self.start_query_inner(sql, None).await
     }
 
@@ -483,7 +484,6 @@ impl APIClient {
     }
 
     pub async fn query(&self, sql: &str) -> Result<QueryResponse> {
-        info!("query: {}", sql);
         let resp = self.start_query(sql).await?;
         self.wait_for_query(resp).await
     }
