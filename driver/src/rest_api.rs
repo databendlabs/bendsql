@@ -54,6 +54,11 @@ impl Connection for RestAPIConnection {
         }
     }
 
+    async fn close(&self) -> Result<()> {
+        self.client.close().await;
+        Ok(())
+    }
+
     async fn exec(&self, sql: &str) -> Result<i64> {
         info!("exec: {}", sql);
         let mut resp = self.client.start_query(sql).await?;

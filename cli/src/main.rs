@@ -367,6 +367,14 @@ pub async fn main() -> Result<()> {
     }
     settings.time = args.time;
 
+    let log_dir = format!(
+        "{}/.bendsql",
+        std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
+    );
+
+    let _guards = trace::init_logging(&log_dir, &args.log_level).await?;
+    info!("-> bendsql version: {}", VERSION.as_str());
+
     let mut session = match session::Session::try_new(dsn, settings, is_repl).await {
         Ok(session) => session,
         Err(err) => {
@@ -389,14 +397,6 @@ pub async fn main() -> Result<()> {
             return Err(err);
         }
     };
-
-    let log_dir = format!(
-        "{}/.bendsql",
-        std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
-    );
-
-    let _guards = trace::init_logging(&log_dir, &args.log_level).await?;
-    info!("-> bendsql version: {}", VERSION.as_str());
 
     if args.check {
         session.check().await?;

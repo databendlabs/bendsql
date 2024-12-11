@@ -12,11 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
-use std::io::BufRead;
-use std::path::Path;
-use std::sync::Arc;
-
 use anyhow::anyhow;
 use anyhow::Result;
 use async_recursion::async_recursion;
@@ -31,6 +26,10 @@ use rustyline::config::Builder;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::{CompletionType, Editor};
+use std::collections::BTreeMap;
+use std::io::BufRead;
+use std::path::Path;
+use std::sync::Arc;
 use tokio::fs::{remove_file, File};
 use tokio::io::AsyncWriteExt;
 use tokio::task::JoinHandle;
@@ -352,6 +351,9 @@ impl Session {
                 },
             }
         }
+        if let Err(e) = self.conn.close().await {
+            println!("got error when closing session: {}", e);
+        }
         println!("Bye~");
         let _ = rl.save_history(&get_history_path());
     }
@@ -394,6 +396,7 @@ impl Session {
                 println!("{:.3}", server_time_ms / 1000.0);
             }
         }
+        self.conn.close().await.ok();
         Ok(())
     }
 
