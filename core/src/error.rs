@@ -71,6 +71,15 @@ impl Error {
     pub fn with_context(self, ctx: &str) -> Self {
         Error::WithContext(Box::new(self), ctx.to_string())
     }
+
+    pub fn status_code(&self) -> Option<StatusCode> {
+        match self {
+            Error::Logic(status, ..) => Some(*status),
+            Error::Response { status, .. } => Some(*status),
+            Error::WithContext(err, _) => err.status_code(),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for Error {
