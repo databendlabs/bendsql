@@ -277,15 +277,8 @@ impl<'v> ToNapiValue for Value<'v> {
                 }
             }
             databend_driver::Value::Geometry(s) => String::to_napi_value(env, s.to_string()),
+            databend_driver::Value::Interval(s) => String::to_napi_value(env, s.to_string()),
             databend_driver::Value::Geography(s) => String::to_napi_value(env, s.to_string()),
-            databend_driver::Value::Interval(i) => {
-                let interval = databend_driver::Interval {
-                    months: i.0,
-                    days: i.1,
-                    nanos: i.2,
-                };
-                String::to_napi_value(env, interval.to_string())
-            }
         }
     }
 }
