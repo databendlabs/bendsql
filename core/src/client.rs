@@ -651,9 +651,7 @@ impl APIClient {
         let response = self.query_request_helper(request, true, false).await;
         let response = match response {
             Ok(r) => r,
-            Err(Error::Logic(status, ..)) | Err(Error::Response { status, .. })
-                if status == 404 =>
-            {
+            Err(e) if e.status_code() == Some(StatusCode::NOT_FOUND) => {
                 info!("login return 404, skip login on the old version server");
                 return Ok(());
             }
@@ -846,7 +844,7 @@ impl APIClient {
                                     status,
                                     msg: String::from_utf8_lossy(&body).to_string(),
                                 },
-                                true,
+                                false,
                             ),
                         }
                     }
