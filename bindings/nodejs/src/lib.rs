@@ -473,6 +473,11 @@ impl Row {
         }
         map
     }
+
+    #[napi(ts_return_type = "import('stream').Readable")]
+    pub fn stream(&self) -> () {
+        unimplemented!()
+    }
 }
 
 #[napi]
