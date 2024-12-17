@@ -90,6 +90,9 @@ pub type Reader = Box<dyn AsyncRead + Send + Sync + Unpin + 'static>;
 #[async_trait]
 pub trait Connection: Send + Sync {
     async fn info(&self) -> ConnectionInfo;
+    async fn close(&self) -> Result<()> {
+        Ok(())
+    }
 
     async fn version(&self) -> Result<String> {
         let row = self.query_row("SELECT version()").await?;
