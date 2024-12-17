@@ -130,6 +130,7 @@ jobs:
         shell: bash
         working-directory: bindings/nodejs
         run: |
+          ls -lh
           ls -lRh *.node
           pnpm napi artifacts
           ls -lRh npm
