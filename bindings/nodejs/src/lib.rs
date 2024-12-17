@@ -366,7 +366,8 @@ impl RowIterator {
         })
     }
 
-    /// Return a readable stream for the query result.
+    /// Return a Readable Stream for the query result.
+    /// Should be used with `ObjectMode` set to `true`.
     #[napi(ts_return_type = "import('stream').Readable")]
     pub fn stream(&self) -> () {
         unimplemented!()
