@@ -366,6 +366,7 @@ impl RowIterator {
         })
     }
 
+    /// Return a readable stream for the query result.
     #[napi(ts_return_type = "import('stream').Readable")]
     pub fn stream(&self) -> () {
         unimplemented!()
