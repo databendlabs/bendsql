@@ -370,7 +370,7 @@ impl RowIterator {
     /// Should be used with `ObjectMode` set to `true`.
     #[napi(ts_return_type = "import('stream').Readable")]
     pub fn stream(&self) -> () {
-        unimplemented!()
+        unreachable!()
     }
 }
 
