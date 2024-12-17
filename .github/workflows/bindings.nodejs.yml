@@ -130,7 +130,8 @@ jobs:
         shell: bash
         working-directory: bindings/nodejs
         run: |
-          ls -lRh
+          ls -lRh npm
+          ls -lRh databend-driver-*
           pnpm napi artifacts
           ls -lRh npm
       - run: make -C tests test-bindings-nodejs
