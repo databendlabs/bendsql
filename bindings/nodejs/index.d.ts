@@ -72,6 +72,7 @@ export declare class RowIterator {
    * Returns `None` if there are no more rows.
    */
   next(): Promise<Error | Row | null>
+  stream(): import('stream').Readable
 }
 export declare class RowIteratorExt {
   schema(): Schema
@@ -90,7 +91,6 @@ export declare class Row {
   setOpts(opts: ValueOptions): void
   values(): Array<any>
   data(): Record<string, any>
-  stream(): import('stream').Readable
 }
 export declare class ServerStats {
   get totalRows(): bigint

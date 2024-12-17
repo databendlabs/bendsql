@@ -365,6 +365,11 @@ impl RowIterator {
                 .map_err(format_napi_error)
         })
     }
+
+    #[napi(ts_return_type = "import('stream').Readable")]
+    pub fn stream(&self) -> () {
+        unimplemented!()
+    }
 }
 
 #[napi]
@@ -472,11 +477,6 @@ impl Row {
             map.insert(name.clone(), Value::new(value, &self.opts));
         }
         map
-    }
-
-    #[napi(ts_return_type = "import('stream').Readable")]
-    pub fn stream(&self) -> () {
-        unimplemented!()
     }
 }
 
