@@ -365,6 +365,13 @@ impl RowIterator {
                 .map_err(format_napi_error)
         })
     }
+
+    /// Return a Readable Stream for the query result.
+    /// Should be used with `ObjectMode` set to `true`.
+    #[napi(ts_return_type = "import('stream').Readable")]
+    pub fn stream(&self) -> () {
+        unreachable!()
+    }
 }
 
 #[napi]

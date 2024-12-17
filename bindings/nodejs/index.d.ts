@@ -72,6 +72,11 @@ export declare class RowIterator {
    * Returns `None` if there are no more rows.
    */
   next(): Promise<Error | Row | null>
+  /**
+   * Return a Readable Stream for the query result.
+   * Should be used with `ObjectMode` set to `true`.
+   */
+  stream(): import('stream').Readable
 }
 export declare class RowIteratorExt {
   schema(): Schema
