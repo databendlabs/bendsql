@@ -126,13 +126,6 @@ jobs:
         with:
           name: bindings-nodejs-x86_64-unknown-linux-gnu
           path: bindings/nodejs
-      - name: Move artifacts
-        shell: bash
-        working-directory: bindings/nodejs
-        run: |
-          ls -lRh *.node
-          pnpm napi artifacts
-          ls -lRh npm
       - run: make -C tests test-bindings-nodejs
 
   publish:
