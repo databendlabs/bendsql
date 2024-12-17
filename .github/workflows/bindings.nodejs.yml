@@ -126,6 +126,13 @@ jobs:
         with:
           path: bindings/nodejs
           pattern: bindings-nodejs-x86_64-unknown-linux-gnu
+      - name: Move artifacts
+        shell: bash
+        working-directory: bindings/nodejs
+        run: |
+          ls -lRh
+          pnpm napi artifacts
+          ls -lRh npm
       - run: make -C tests test-bindings-nodejs
 
   publish:
