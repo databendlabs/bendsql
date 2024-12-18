@@ -241,6 +241,10 @@ impl APIClient {
         self.port
     }
 
+    pub fn scheme(&self) -> &str {
+        self.scheme.as_str()
+    }
+
     async fn build_client(&mut self, name: Option<String>) -> Result<()> {
         let ua = match name {
             Some(n) => n,
