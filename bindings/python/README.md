@@ -238,7 +238,8 @@ make up
 
 ```shell
 cd bindings/python
-pipenv install --dev
-pipenv run maturin develop
-pipenv run behave tests/*
+uv sync
+source .venv/bin/activate
+maturin develop --uv
+behave tests/*
 ```
