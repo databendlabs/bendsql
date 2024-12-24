@@ -279,7 +279,7 @@ Then("Stream load and Select should be equal", async function () {
 });
 
 Then("Load file and Select should be equal", async function () {
-  const progress = await this.conn.loadFile("test", "tests/data/test.csv");
+  const progress = await this.conn.loadFile("test", "tests/data/test.csv", { format: "CSV" });
   assert.equal(progress.writeRows, 3);
   assert.equal(progress.writeBytes, 187);
 
