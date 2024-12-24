@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
@@ -114,6 +116,35 @@ impl AsyncDatabendConnection {
                 .collect();
             let ss = this
                 .stream_load(&sql, data)
+                .await
+                .map_err(DriverError::new)?;
+            Ok(ServerStats::new(ss))
+        })
+    }
+
+    #[pyo3(signature = (sql, fp, format_options, copy_options=None))]
+    pub fn load_file<'p>(
+        &'p self,
+        py: Python<'p>,
+        sql: String,
+        fp: String,
+        format_options: BTreeMap<String, String>,
+        copy_options: Option<BTreeMap<String, String>>,
+    ) -> PyResult<Bound<'p, PyAny>> {
+        let this = self.0.clone();
+        future_into_py(py, async move {
+            let format_options: BTreeMap<&str, &str> = format_options
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            let copy_options = match copy_options {
+                None => None,
+                Some(ref opts) => {
+                    Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
+                }
+            };
+            let ss = this
+                .load_file(&sql, Path::new(&fp), format_options, copy_options)
                 .await
                 .map_err(DriverError::new)?;
             Ok(ServerStats::new(ss))
