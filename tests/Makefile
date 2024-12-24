@@ -23,7 +23,7 @@ test-bendsql: up
 	cd .. && ./cli/test.sh flight
 
 test-bindings-python: up
-	cd ../bindings/python && pipenv run behave tests/*
+	cd ../bindings/python && behave tests/*
 
 test-bindings-nodejs: up
 	cd ../bindings/nodejs && pnpm run test

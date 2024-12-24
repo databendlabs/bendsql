@@ -14,11 +14,6 @@ name = "databend-driver"
 readme = "README.md"
 requires-python = ">=3.7, < 3.14"
 
-[project.optional-dependencies]
-docs = ["pdoc"]
-test = ["behave"]
-lint = ["ruff"]
-
 [project.urls]
 Repository = "https://github.com/databendlabs/bendsql"
 
@@ -26,3 +21,10 @@ Repository = "https://github.com/databendlabs/bendsql"
 features = ["pyo3/extension-module"]
 module-name = "databend_driver._databend_driver"
 python-source = "package"
+
+[dependency-groups]
+dev = [
+    "behave>=1.2.6",
+    "maturin>=1.7.8",
+    "ruff>=0.8.4",
+]
