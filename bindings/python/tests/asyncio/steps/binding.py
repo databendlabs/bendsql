@@ -152,15 +152,8 @@ async def _(context):
 
 @then("Load file and Select should be equal")
 async def _(context):
-    with open("/tmp/test.csv", "w") as f:
-        f.write(
-            """-1,1,1.0,1,1,2011-03-06,2011-03-06 06:20:00
--2,2,2.0,2,2,2012-05-31,2012-05-31 11:20:00
--3,3,3.0,3,2,2016-04-04,2016-04-04 11:30:00
-"""
-        )
     progress = await context.conn.load_file(
-        "INSERT INTO test VALUES", "/tmp/test.csv", {"format": "CSV"}
+        "INSERT INTO test VALUES", "tests/data/test.csv", {"format": "CSV"}
     )
     assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
     assert progress.write_bytes == 187, f"progress.write_bytes: {progress.write_bytes}"
