@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
@@ -106,6 +108,36 @@ impl BlockingDatabendConnection {
                 .map(|v| v.iter().map(|s| s.as_ref()).collect())
                 .collect();
             this.stream_load(&sql, data).await.map_err(DriverError::new)
+        })?;
+        Ok(ServerStats::new(ret))
+    }
+
+    #[pyo3(signature = (sql, fp, format_options=None, copy_options=None))]
+    pub fn load_file<'p>(
+        &'p self,
+        py: Python<'p>,
+        sql: String,
+        fp: String,
+        format_options: Option<BTreeMap<String, String>>,
+        copy_options: Option<BTreeMap<String, String>>,
+    ) -> PyResult<ServerStats> {
+        let this = self.0.clone();
+        let ret = wait_for_future(py, async move {
+            let format_options = match format_options {
+                None => None,
+                Some(ref opts) => {
+                    Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
+                }
+            };
+            let copy_options = match copy_options {
+                None => None,
+                Some(ref opts) => {
+                    Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
+                }
+            };
+            this.load_file(&sql, Path::new(&fp), format_options, copy_options)
+                .await
+                .map_err(DriverError::new)
         })?;
         Ok(ServerStats::new(ret))
     }

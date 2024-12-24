@@ -139,7 +139,7 @@ pub trait Connection: Send + Sync {
         &self,
         sql: &str,
         fp: &Path,
-        format_options: BTreeMap<&str, &str>,
+        format_options: Option<BTreeMap<&str, &str>>,
         copy_options: Option<BTreeMap<&str, &str>>,
     ) -> Result<ServerStats>;
     async fn stream_load(&self, sql: &str, data: Vec<Vec<&str>>) -> Result<ServerStats>;

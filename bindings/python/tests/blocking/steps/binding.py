@@ -140,3 +140,23 @@ def _(context):
         (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
     assert ret == expected, f"ret: {ret}"
+
+
+@then("Load file and Select should be equal")
+def _(context):
+    progress = context.conn.load_file(
+        "INSERT INTO test VALUES", "tests/data/test.csv", {"type": "CSV"}
+    )
+    assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
+    assert progress.write_bytes == 187, f"progress.write_bytes: {progress.write_bytes}"
+
+    rows = context.conn.query_iter("SELECT * FROM test")
+    ret = []
+    for row in rows:
+        ret.append(row.values())
+    expected = [
+        (-1, 1, 1.0, "1", "1", date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
+        (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
+        (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+    ]
+    assert ret == expected, f"ret: {ret}"

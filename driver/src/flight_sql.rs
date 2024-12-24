@@ -127,7 +127,7 @@ impl Connection for FlightSQLConnection {
         &self,
         _sql: &str,
         _fp: &Path,
-        _format_options: BTreeMap<&str, &str>,
+        _format_options: Option<BTreeMap<&str, &str>>,
         _copy_options: Option<BTreeMap<&str, &str>>,
     ) -> Result<ServerStats> {
         Err(Error::Protocol(
