@@ -15,7 +15,10 @@
 #[macro_use]
 extern crate napi_derive;
 
-use std::collections::HashMap;
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+};
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use napi::{bindgen_prelude::*, Env};
@@ -158,6 +161,32 @@ impl Connection {
         let ss = self
             .inner
             .stream_load(&sql, data)
+            .await
+            .map_err(format_napi_error)?;
+        Ok(ServerStats(ss))
+    }
+
+    /// Load file with stage attachment.
+    /// The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
+    #[napi]
+    pub async fn load_file(
+        &self,
+        sql: String,
+        file: String,
+        format_options: BTreeMap<String, String>,
+        copy_options: Option<BTreeMap<String, String>>,
+    ) -> Result<ServerStats> {
+        let format_options = format_options
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let copy_options = match copy_options {
+            None => None,
+            Some(ref opts) => Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()),
+        };
+        let ss = self
+            .inner
+            .load_file(&sql, Path::new(&file), format_options, copy_options)
             .await
             .map_err(format_napi_error)?;
         Ok(ServerStats(ss))

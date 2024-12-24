@@ -123,7 +123,7 @@ impl BlockingDatabendConnection {
     ) -> PyResult<ServerStats> {
         let this = self.0.clone();
         let ret = wait_for_future(py, async move {
-            let format_options: BTreeMap<&str, &str> = format_options
+            let format_options = format_options
                 .iter()
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect();

@@ -48,6 +48,11 @@ export declare class Connection {
    * The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
    */
   streamLoad(sql: string, data: Array<Array<string>>): Promise<ServerStats>
+  /**
+   * Load file with stage attachment.
+   * The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
+   */
+  loadFile(sql: string, file: string, formatOptions: Record<string, string>, copyOptions?: Record<string, string> | undefined | null): Promise<ServerStats>
 }
 export declare class ConnectionInfo {
   get handler(): string
