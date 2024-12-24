@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{collections::BTreeMap, path::Path, vec};
+use std::{path::Path, vec};
 
 use chrono::{NaiveDateTime, Utc};
 use databend_driver::Client;
@@ -78,7 +78,7 @@ async fn prepare_data_with_file(table: &str, file_type: &str, client: &Client) {
     let fp = format!("tests/driver/data/books.{}", file_type);
     let sql = format!("INSERT INTO `{}` VALUES", table);
     let stats = conn
-        .load_file(&sql, Path::new(&fp), BTreeMap::new(), None)
+        .load_file(&sql, Path::new(&fp), None, None)
         .await
         .unwrap();
     assert_eq!(stats.write_rows, 3);

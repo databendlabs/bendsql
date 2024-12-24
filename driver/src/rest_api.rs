@@ -162,7 +162,7 @@ impl Connection for RestAPIConnection {
         &self,
         sql: &str,
         fp: &Path,
-        mut format_options: BTreeMap<&str, &str>,
+        format_options: Option<BTreeMap<&str, &str>>,
         copy_options: Option<BTreeMap<&str, &str>>,
     ) -> Result<ServerStats> {
         info!(
@@ -173,6 +173,7 @@ impl Connection for RestAPIConnection {
         let metadata = file.metadata().await?;
         let data = Box::new(file);
         let size = metadata.len();
+        let mut format_options = format_options.unwrap_or_else(Self::default_file_format_options);
         if !format_options.contains_key("type") {
             let file_type = fp
                 .extension()

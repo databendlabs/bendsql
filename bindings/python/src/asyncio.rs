@@ -128,15 +128,17 @@ impl AsyncDatabendConnection {
         py: Python<'p>,
         sql: String,
         fp: String,
-        format_options: BTreeMap<String, String>,
+        format_options: Option<BTreeMap<String, String>>,
         copy_options: Option<BTreeMap<String, String>>,
     ) -> PyResult<Bound<'p, PyAny>> {
         let this = self.0.clone();
         future_into_py(py, async move {
-            let format_options = format_options
-                .iter()
-                .map(|(k, v)| (k.as_str(), v.as_str()))
-                .collect();
+            let format_options = match format_options {
+                None => None,
+                Some(ref opts) => {
+                    Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
+                }
+            };
             let copy_options = match copy_options {
                 None => None,
                 Some(ref opts) => {
