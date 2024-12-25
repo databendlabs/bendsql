@@ -16,7 +16,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
+use pyo3::types::PyList;
+use tokio::sync::Mutex;
+use tokio_stream::StreamExt;
 
 use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
 use crate::utils::wait_for_future;
@@ -40,6 +44,17 @@ impl BlockingDatabendClient {
             this.get_conn().await.map_err(DriverError::new)
         })?;
         Ok(BlockingDatabendConnection(Arc::new(conn)))
+    }
+
+    pub fn cursor(&self, py: Python) -> PyResult<BlockingDatabendCursor> {
+        let this = self.0.clone();
+        let conn = wait_for_future(py, async move {
+            this.get_conn().await.map_err(DriverError::new)
+        })?;
+        Ok(BlockingDatabendCursor {
+            conn: Arc::new(conn),
+            rows: None,
+        })
     }
 }
 
@@ -140,5 +155,112 @@ impl BlockingDatabendConnection {
                 .map_err(DriverError::new)
         })?;
         Ok(ServerStats::new(ret))
+    }
+}
+
+/// BlockingDatabendCursor is an object that follows PEP 249
+/// https://peps.python.org/pep-0249/#cursor-objects
+#[pyclass(module = "databend_driver")]
+pub struct BlockingDatabendCursor {
+    conn: Arc<Box<dyn databend_driver::Connection>>,
+    rows: Option<Arc<Mutex<databend_driver::RowIterator>>>,
+}
+
+#[pymethods]
+impl BlockingDatabendCursor {
+    pub fn close(&mut self, py: Python) -> PyResult<()> {
+        self.rows = None;
+        wait_for_future(py, async move {
+            self.conn.close().await.map_err(DriverError::new)
+        })?;
+        Ok(())
+    }
+
+    #[pyo3(signature = (operation, parameters=None))]
+    pub fn execute<'p>(
+        &'p mut self,
+        py: Python<'p>,
+        operation: String,
+        parameters: Option<Vec<Bound<'p, PyAny>>>,
+    ) -> PyResult<PyObject> {
+        let conn = self.conn.clone();
+        if let Some(parameters) = parameters {
+            if let Some(first) = parameters.first() {
+                if let Ok(_) = first.downcast::<PyList>() {
+                    let data = parameters
+                        .iter()
+                        .map(|item| {
+                            if let Ok(l) = item.downcast::<PyList>() {
+                                Ok(l.iter()
+                                    .map(|v| {
+                                        if let Ok(v) = v.extract::<String>() {
+                                            Ok(v)
+                                        } else {
+                                            Err(PyException::new_err("Invalid parameter type"))
+                                        }
+                                    })
+                                    .collect::<Result<Vec<_>, _>>()?)
+                            } else {
+                                Err(PyException::new_err("Invalid parameter type"))
+                            }
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
+                    for row in data {
+                        wtr.write_record(row)
+                            .map_err(|e| PyException::new_err(e.to_string()))?;
+                    }
+                    let bytes = wtr
+                        .into_inner()
+                        .map_err(|e| PyException::new_err(e.to_string()))?;
+                    let size = bytes.len() as u64;
+                    let reader = Box::new(std::io::Cursor::new(bytes));
+                    let stats = wait_for_future(py, async move {
+                        conn.load_data(&operation, reader, size, None, None)
+                            .await
+                            .map_err(DriverError::new)
+                    })?;
+                    let result = stats.write_rows.into_pyobject(py)?;
+                    return Ok(result.into());
+                } else {
+                    return Err(PyException::new_err("Invalid parameter type"));
+                }
+            }
+        }
+        let rows = wait_for_future(py, async move {
+            conn.query_iter(&operation).await.map_err(DriverError::new)
+        })?;
+        self.rows = Some(Arc::new(Mutex::new(rows)));
+        Ok(py.None())
+    }
+
+    pub fn fetchone(&mut self, py: Python) -> PyResult<Option<Row>> {
+        let rows = self.rows.as_ref().unwrap();
+        match wait_for_future(py, async move { rows.lock().await.next().await }) {
+            Some(row) => Ok(Some(Row::new(row.map_err(DriverError::new)?))),
+            None => Ok(None),
+        }
+    }
+
+    pub fn fetchall(&mut self, py: Python) -> PyResult<Vec<Row>> {
+        match self.rows.take() {
+            Some(rows) => {
+                let result = wait_for_future(py, async move {
+                    let mut rows = rows.lock().await;
+                    let mut result = Vec::new();
+                    while let Some(row) = rows.next().await {
+                        result.push(row);
+                    }
+                    result
+                });
+                let rows = result
+                    .into_iter()
+                    .map(|res| res.map(Row::new))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(DriverError::new)?;
+                Ok(rows)
+            }
+            None => Ok(vec![]),
+        }
     }
 }
