@@ -289,14 +289,19 @@ impl Stream for RestAPIRows {
         if let Some(ss) = self.stats.take() {
             return Poll::Ready(Some(Ok(RowWithStats::Stats(ss))));
         }
-        if let Some(row) = self.data.pop_front() {
-            let row = Row::try_from((self.schema.clone(), row))?;
-            return Poll::Ready(Some(Ok(RowWithStats::Row(row))));
+        // skip to fetch next page if there is only one row left
+        // therefore we could finalize the query as soon as possible
+        if self.data.len() > 1 {
+            if let Some(row) = self.data.pop_front() {
+                let row = Row::try_from((self.schema.clone(), row))?;
+                return Poll::Ready(Some(Ok(RowWithStats::Row(row))));
+            }
         }
         match self.next_page {
             Some(ref mut next_page) => match Pin::new(next_page).poll(cx) {
                 Poll::Ready(Ok(resp)) => {
-                    self.data = resp.data.into();
+                    let mut new_data = resp.data.into();
+                    self.data.append(&mut new_data);
                     if self.schema.fields().is_empty() {
                         self.schema = Arc::new(resp.schema.try_into()?);
                     }
@@ -325,7 +330,13 @@ impl Stream for RestAPIRows {
                     }));
                     self.poll_next(cx)
                 }
-                None => Poll::Ready(None),
+                None => match self.data.pop_front() {
+                    Some(row) => {
+                        let row = Row::try_from((self.schema.clone(), row))?;
+                        Poll::Ready(Some(Ok(RowWithStats::Row(row))))
+                    }
+                    None => Poll::Ready(None),
+                },
             },
         }
     }
