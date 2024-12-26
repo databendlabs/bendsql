@@ -305,15 +305,10 @@ impl Stream for RestAPIRows {
                     }
                     self.next_uri = resp.next_uri;
                     self.next_page = None;
+                    let mut new_data = resp.data.into();
+                    self.data.append(&mut new_data);
                     let stats = ServerStats::from(resp.stats);
-                    if resp.data.is_empty() {
-                        Poll::Ready(Some(Ok(RowWithStats::Stats(stats))))
-                    } else {
-                        self.stats = Some(stats);
-                        let mut new_data = resp.data.into();
-                        self.data.append(&mut new_data);
-                        self.poll_next(cx)
-                    }
+                    Poll::Ready(Some(Ok(RowWithStats::Stats(stats))))
                 }
                 Poll::Ready(Err(e)) => {
                     self.next_page = None;
