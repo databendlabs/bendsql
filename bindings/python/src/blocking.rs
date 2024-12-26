@@ -241,6 +241,8 @@ impl BlockingDatabendCursor {
                 }
             }
         }
+        // fetch first row after execute
+        // then we could finish the query directly if there's no result
         let (first, rows) = wait_for_future(py, async move {
             let mut rows = conn.query_iter(&operation).await?;
             let first = rows.next().await.transpose()?;
@@ -270,9 +272,10 @@ impl BlockingDatabendCursor {
     }
 
     pub fn fetchall(&mut self, py: Python) -> PyResult<Vec<Row>> {
+        let mut result = self.buffer.drain(..).collect::<Vec<_>>();
         match self.rows.take() {
             Some(rows) => {
-                let result = wait_for_future(py, async move {
+                let fetched = wait_for_future(py, async move {
                     let mut rows = rows.lock().await;
                     let mut result = Vec::new();
                     while let Some(row) = rows.next().await {
@@ -280,12 +283,10 @@ impl BlockingDatabendCursor {
                     }
                     result
                 });
-                let rows = result
-                    .into_iter()
-                    .map(|res| res.map(Row::new))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(DriverError::new)?;
-                Ok(rows)
+                for row in fetched {
+                    result.push(Row::new(row.map_err(DriverError::new)?));
+                }
+                Ok(result)
             }
             None => Ok(vec![]),
         }
