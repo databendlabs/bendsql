@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime};
 use once_cell::sync::Lazy;
-use pyo3::exceptions::{PyException, PyStopAsyncIteration, PyStopIteration};
+use pyo3::exceptions::{PyAttributeError, PyException, PyStopAsyncIteration, PyStopIteration};
 use pyo3::sync::GILOnceCell;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple, PyType};
 use pyo3::{intern, IntoPyObjectExt};
@@ -163,13 +163,51 @@ impl Row {
         Ok(tuple)
     }
 
-    pub fn data<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyDict>> {
+    pub fn __len__(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn __iter__<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyList>> {
+        let vals = self.0.values().iter().map(|v| Value(v.clone()));
+        let list = PyList::new(py, vals)?;
+        Ok(list.into_bound())
+    }
+
+    pub fn __dict__<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyDict>> {
         let dict = PyDict::new(py);
         let schema = self.0.schema();
         for (field, value) in schema.fields().iter().zip(self.0.values()) {
             dict.set_item(&field.name, Value(value.clone()))?;
         }
         Ok(dict.into_bound())
+    }
+
+    fn get_by_index(&self, idx: usize) -> PyResult<Value> {
+        Ok(Value(self.0.values()[idx].clone()))
+    }
+
+    fn get_by_field(&self, field: &str) -> PyResult<Value> {
+        let schema = self.0.schema();
+        let idx = schema
+            .fields()
+            .iter()
+            .position(|f| f.name == field)
+            .ok_or_else(|| {
+                PyException::new_err(format!("field '{}' not found in schema", field))
+            })?;
+        Ok(Value(self.0.values()[idx].clone()))
+    }
+
+    pub fn __getitem__<'p>(&'p self, key: Bound<'p, PyAny>) -> PyResult<Value> {
+        if let Ok(idx) = key.extract::<usize>() {
+            self.get_by_index(idx)
+        } else if let Ok(field) = key.extract::<String>() {
+            self.get_by_field(&field)
+        } else {
+            Err(PyAttributeError::new_err(
+                "key must be an integer or a string",
+            ))
+        }
     }
 }
 
