@@ -26,7 +26,7 @@ import databend_driver
 async def _(context):
     dsn = os.getenv(
         "TEST_DATABEND_DSN",
-        "databend+http://root:root@localhost:8000/?sslmode=disable",
+        "databend://root:root@localhost:8000/?sslmode=disable",
     )
     client = databend_driver.AsyncDatabendClient(dsn)
     context.conn = await client.get_conn()
