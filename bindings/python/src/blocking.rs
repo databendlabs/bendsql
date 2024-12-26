@@ -290,7 +290,7 @@ fn format_csv<'p>(parameters: Vec<Bound<'p, PyAny>>) -> PyResult<Vec<u8>> {
                         Ok(v.to_string())
                     } else {
                         Err(PyAttributeError::new_err(format!(
-                            "Invalid parameter type for: {:?}, expected str, bool, i64 or f64",
+                            "Invalid parameter type for: {:?}, expected str, bool, int or float",
                             v
                         )))
                     }
