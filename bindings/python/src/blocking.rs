@@ -199,11 +199,12 @@ impl BlockingDatabendCursor {
         operation: String,
         parameters: Option<Bound<'p, PyAny>>,
     ) -> PyResult<PyObject> {
-        self.reset();
-        let conn = self.conn.clone();
         if let Some(param) = parameters {
             return self.executemany(py, operation, [param].to_vec());
         }
+
+        self.reset();
+        let conn = self.conn.clone();
         // fetch first row after execute
         // then we could finish the query directly if there's no result
         let (first, rows) = wait_for_future(py, async move {
