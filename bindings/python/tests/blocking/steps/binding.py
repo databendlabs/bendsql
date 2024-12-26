@@ -151,8 +151,8 @@ def _(context):
     context.cursor.execute("TRUNCATE TABLE test")
 
     context.cursor.execute("SELECT * FROM test")
-    ret = context.cursor.fetchall()
-    assert ret == [], f"ret: {ret}"
+    ret = context.cursor.fetchone()
+    assert ret is None, f"ret: {ret}"
 
     context.cursor.execute("INSERT INTO test VALUES", values)
     ret = context.cursor.fetchall()
