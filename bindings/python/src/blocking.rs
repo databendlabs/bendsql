@@ -51,10 +51,7 @@ impl BlockingDatabendClient {
         let conn = wait_for_future(py, async move {
             this.get_conn().await.map_err(DriverError::new)
         })?;
-        Ok(BlockingDatabendCursor {
-            conn: Arc::new(conn),
-            rows: None,
-        })
+        Ok(BlockingDatabendCursor::new(conn))
     }
 }
 
@@ -164,12 +161,28 @@ impl BlockingDatabendConnection {
 pub struct BlockingDatabendCursor {
     conn: Arc<Box<dyn databend_driver::Connection>>,
     rows: Option<Arc<Mutex<databend_driver::RowIterator>>>,
+    buffer: Vec<Row>,
+}
+
+impl BlockingDatabendCursor {
+    fn new(conn: Box<dyn databend_driver::Connection>) -> Self {
+        Self {
+            conn: Arc::new(conn),
+            rows: None,
+            buffer: Vec::new(),
+        }
+    }
 }
 
 #[pymethods]
 impl BlockingDatabendCursor {
-    pub fn close(&mut self, py: Python) -> PyResult<()> {
+    fn reset(&mut self) {
         self.rows = None;
+        self.buffer.clear();
+    }
+
+    pub fn close(&mut self, py: Python) -> PyResult<()> {
+        self.reset();
         wait_for_future(py, async move {
             self.conn.close().await.map_err(DriverError::new)
         })?;
@@ -183,6 +196,7 @@ impl BlockingDatabendCursor {
         operation: String,
         parameters: Option<Vec<Bound<'p, PyAny>>>,
     ) -> PyResult<PyObject> {
+        self.reset();
         let conn = self.conn.clone();
         if let Some(parameters) = parameters {
             if let Some(first) = parameters.first() {
@@ -227,17 +241,30 @@ impl BlockingDatabendCursor {
                 }
             }
         }
-        let rows = wait_for_future(py, async move {
-            conn.query_iter(&operation).await.map_err(DriverError::new)
-        })?;
+        let (first, rows) = wait_for_future(py, async move {
+            let mut rows = conn.query_iter(&operation).await?;
+            let first = rows.next().await.transpose()?;
+            Ok::<_, databend_driver::Error>((first, rows))
+        })
+        .map_err(DriverError::new)?;
+        if let Some(first) = first {
+            self.buffer.push(Row::new(first));
+        }
         self.rows = Some(Arc::new(Mutex::new(rows)));
         Ok(py.None())
     }
 
     pub fn fetchone(&mut self, py: Python) -> PyResult<Option<Row>> {
-        let rows = self.rows.as_ref().unwrap();
-        match wait_for_future(py, async move { rows.lock().await.next().await }) {
-            Some(row) => Ok(Some(Row::new(row.map_err(DriverError::new)?))),
+        if let Some(row) = self.buffer.pop() {
+            return Ok(Some(row));
+        }
+        match self.rows {
+            Some(ref rows) => {
+                match wait_for_future(py, async move { rows.lock().await.next().await }) {
+                    Some(row) => Ok(Some(Row::new(row.map_err(DriverError::new)?))),
+                    None => Ok(None),
+                }
+            }
             None => Ok(None),
         }
     }
