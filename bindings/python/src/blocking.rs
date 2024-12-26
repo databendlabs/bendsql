@@ -187,6 +187,7 @@ fn format_csv<'p>(parameters: Vec<Bound<'p, PyAny>>) -> PyResult<Vec<u8>> {
                 let ret = data
                     .map(|v| match v {
                         Ok(v) => {
+                            // TODO: support more primitive types
                             if let Ok(v) = v.extract::<String>() {
                                 Ok(v)
                             } else {
