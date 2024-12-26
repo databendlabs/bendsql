@@ -300,15 +300,19 @@ impl Stream for RestAPIRows {
         match self.next_page {
             Some(ref mut next_page) => match Pin::new(next_page).poll(cx) {
                 Poll::Ready(Ok(resp)) => {
-                    let mut new_data = resp.data.into();
-                    self.data.append(&mut new_data);
                     if self.schema.fields().is_empty() {
                         self.schema = Arc::new(resp.schema.try_into()?);
                     }
                     self.next_uri = resp.next_uri;
                     self.next_page = None;
                     self.stats = Some(ServerStats::from(resp.stats));
-                    self.poll_next(cx)
+                    if resp.data.is_empty() {
+                        Poll::Pending
+                    } else {
+                        let mut new_data = resp.data.into();
+                        self.data.append(&mut new_data);
+                        self.poll_next(cx)
+                    }
                 }
                 Poll::Ready(Err(e)) => {
                     self.next_page = None;
