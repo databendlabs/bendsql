@@ -191,7 +191,7 @@ fn format_csv<'p>(parameters: Vec<Bound<'p, PyAny>>) -> PyResult<Vec<u8>> {
                                 Ok(v)
                             } else {
                                 Err(PyAttributeError::new_err(format!(
-                                    "Invalid parameter type: {:?}, expected str",
+                                    "Invalid parameter type for: {:?}, expected str",
                                     v
                                 )))
                             }
