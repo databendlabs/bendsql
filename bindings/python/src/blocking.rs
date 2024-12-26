@@ -202,22 +202,7 @@ impl BlockingDatabendCursor {
         self.reset();
         let conn = self.conn.clone();
         if let Some(param) = parameters {
-            if param.downcast::<PyList>().is_ok() || param.downcast::<PyTuple>().is_ok() {
-                let bytes = format_csv([param].to_vec())?;
-                let size = bytes.len() as u64;
-                let reader = Box::new(std::io::Cursor::new(bytes));
-                let stats = wait_for_future(py, async move {
-                    conn.load_data(&operation, reader, size, None, None)
-                        .await
-                        .map_err(DriverError::new)
-                })?;
-                let result = stats.write_rows.into_pyobject(py)?;
-                return Ok(result.into());
-            } else {
-                return Err(PyAttributeError::new_err(
-                    "Invalid parameter type, expected list or tuple",
-                ));
-            }
+            return self.executemany(py, operation, [param].to_vec());
         }
         // fetch first row after execute
         // then we could finish the query directly if there's no result
