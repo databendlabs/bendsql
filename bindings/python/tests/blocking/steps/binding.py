@@ -154,7 +154,7 @@ def _(context):
     ret = context.cursor.fetchone()
     assert ret is None, f"ret: {ret}"
 
-    context.cursor.execute("INSERT INTO test VALUES", values)
+    context.cursor.executemany("INSERT INTO test VALUES", values)
     ret = context.cursor.fetchall()
     assert ret == expected, f"ret: {ret}"
 

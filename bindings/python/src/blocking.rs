@@ -197,28 +197,26 @@ impl BlockingDatabendCursor {
         &'p mut self,
         py: Python<'p>,
         operation: String,
-        parameters: Option<Vec<Bound<'p, PyAny>>>,
+        parameters: Option<Bound<'p, PyAny>>,
     ) -> PyResult<PyObject> {
         self.reset();
         let conn = self.conn.clone();
-        if let Some(parameters) = parameters {
-            if let Some(first) = parameters.first() {
-                if first.downcast::<PyList>().is_ok() || first.downcast::<PyTuple>().is_ok() {
-                    let bytes = format_csv(parameters)?;
-                    let size = bytes.len() as u64;
-                    let reader = Box::new(std::io::Cursor::new(bytes));
-                    let stats = wait_for_future(py, async move {
-                        conn.load_data(&operation, reader, size, None, None)
-                            .await
-                            .map_err(DriverError::new)
-                    })?;
-                    let result = stats.write_rows.into_pyobject(py)?;
-                    return Ok(result.into());
-                } else {
-                    return Err(PyAttributeError::new_err(
-                        "Invalid parameter type, expected list or tuple",
-                    ));
-                }
+        if let Some(param) = parameters {
+            if param.downcast::<PyList>().is_ok() || param.downcast::<PyTuple>().is_ok() {
+                let bytes = format_csv([param].to_vec())?;
+                let size = bytes.len() as u64;
+                let reader = Box::new(std::io::Cursor::new(bytes));
+                let stats = wait_for_future(py, async move {
+                    conn.load_data(&operation, reader, size, None, None)
+                        .await
+                        .map_err(DriverError::new)
+                })?;
+                let result = stats.write_rows.into_pyobject(py)?;
+                return Ok(result.into());
+            } else {
+                return Err(PyAttributeError::new_err(
+                    "Invalid parameter type, expected list or tuple",
+                ));
             }
         }
         // fetch first row after execute
@@ -233,6 +231,35 @@ impl BlockingDatabendCursor {
             self.buffer.push(Row::new(first));
         }
         self.rows = Some(Arc::new(Mutex::new(rows)));
+        Ok(py.None())
+    }
+
+    pub fn executemany<'p>(
+        &'p mut self,
+        py: Python<'p>,
+        operation: String,
+        parameters: Vec<Bound<'p, PyAny>>,
+    ) -> PyResult<PyObject> {
+        self.reset();
+        let conn = self.conn.clone();
+        if let Some(param) = parameters.first() {
+            if param.downcast::<PyList>().is_ok() || param.downcast::<PyTuple>().is_ok() {
+                let bytes = format_csv(parameters)?;
+                let size = bytes.len() as u64;
+                let reader = Box::new(std::io::Cursor::new(bytes));
+                let stats = wait_for_future(py, async move {
+                    conn.load_data(&operation, reader, size, None, None)
+                        .await
+                        .map_err(DriverError::new)
+                })?;
+                let result = stats.write_rows.into_pyobject(py)?;
+                return Ok(result.into());
+            } else {
+                return Err(PyAttributeError::new_err(
+                    "Invalid parameter type, expected list or tuple",
+                ));
+            }
+        }
         Ok(py.None())
     }
 
