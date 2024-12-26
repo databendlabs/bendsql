@@ -290,7 +290,7 @@ impl Stream for RestAPIRows {
             return Poll::Ready(Some(Ok(RowWithStats::Stats(ss))));
         }
         // skip to fetch next page if there is only one row left
-        // therefore we could finalize the query as soon as possible
+        // therefore we could garantee the /final called before the last row
         if self.data.len() > 1 {
             if let Some(row) = self.data.pop_front() {
                 let row = Row::try_from((self.schema.clone(), row))?;
