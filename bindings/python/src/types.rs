@@ -162,6 +162,15 @@ impl Row {
         let tuple = PyTuple::new(py, vals)?;
         Ok(tuple)
     }
+
+    pub fn data<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyDict>> {
+        let dict = PyDict::new(py);
+        let schema = self.0.schema();
+        for (field, value) in schema.fields().iter().zip(self.0.values()) {
+            dict.set_item(&field.name, Value(value.clone()))?;
+        }
+        Ok(dict.into_bound())
+    }
 }
 
 #[pyclass(module = "databend_driver")]
