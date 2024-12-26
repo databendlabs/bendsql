@@ -28,6 +28,7 @@ def _(context):
     )
     client = databend_driver.BlockingDatabendClient(dsn)
     context.conn = client.get_conn()
+    context.cursor = client.cursor()
 
 
 @when("Create a test table")
@@ -118,6 +119,11 @@ def _(context):
     ]
     assert ret == expected, f"ret: {ret}"
 
+    # fetchall with cursor
+    context.cursor.execute("SELECT * FROM test")
+    ret = context.cursor.fetchall()
+    assert ret == expected, f"ret: {ret}"
+
 
 @then("Stream load and Select should be equal")
 def _(context):
@@ -139,6 +145,21 @@ def _(context):
         (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
         (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
+    assert ret == expected, f"ret: {ret}"
+
+    # insert with cursor
+    context.cursor.execute("TRUNCATE TABLE test")
+
+    context.cursor.execute("SELECT * FROM test")
+    ret = context.cursor.fetchall()
+    assert ret == [], f"ret: {ret}"
+
+    context.cursor.execute("INSERT INTO test VALUES", values)
+    ret = context.cursor.fetchall()
+    assert ret == expected, f"ret: {ret}"
+
+    context.cursor.execute("SELECT * FROM test")
+    ret = context.cursor.fetchall()
     assert ret == expected, f"ret: {ret}"
 
 
