@@ -200,6 +200,7 @@ class BlockingDatabendCursor:
 ```python
 class Row:
     def values(self) -> tuple: ...
+    def data(self) -> dict: ...
 ```
 
 ### RowIterator
