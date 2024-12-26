@@ -306,23 +306,8 @@ fn format_csv<'p>(parameters: Vec<Bound<'p, PyAny>>) -> PyResult<Vec<u8>> {
         let iter = row.try_iter()?;
         let data = iter
             .map(|v| match v {
-                Ok(v) => {
-                    if let Ok(v) = v.extract::<String>() {
-                        Ok(v)
-                    } else if let Ok(v) = v.extract::<bool>() {
-                        Ok(v.to_string())
-                    } else if let Ok(v) = v.extract::<i64>() {
-                        Ok(v.to_string())
-                    } else if let Ok(v) = v.extract::<f64>() {
-                        Ok(v.to_string())
-                    } else {
-                        Err(PyAttributeError::new_err(format!(
-                            "Invalid parameter type for: {:?}, expected str, bool, int or float",
-                            v
-                        )))
-                    }
-                }
-                Err(e) => return Err(e),
+                Ok(v) => to_csv_field(v),
+                Err(e) => Err(e.into()),
             })
             .collect::<Result<Vec<_>, _>>()?;
         wtr.write_record(data)
@@ -334,4 +319,26 @@ fn format_csv<'p>(parameters: Vec<Bound<'p, PyAny>>) -> PyResult<Vec<u8>> {
         .map_err(|e| PyException::new_err(e.to_string()))
         .unwrap();
     Ok(bytes)
+}
+
+fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
+    match v.downcast::<PyAny>() {
+        Ok(v) => {
+            if let Ok(v) = v.extract::<String>() {
+                Ok(v)
+            } else if let Ok(v) = v.extract::<bool>() {
+                Ok(v.to_string())
+            } else if let Ok(v) = v.extract::<i64>() {
+                Ok(v.to_string())
+            } else if let Ok(v) = v.extract::<f64>() {
+                Ok(v.to_string())
+            } else {
+                Err(PyAttributeError::new_err(format!(
+                    "Invalid parameter type for: {:?}, expected str, bool, int or float",
+                    v
+                )))
+            }
+        }
+        Err(e) => Err(e.into()),
+    }
 }
