@@ -175,52 +175,15 @@ impl BlockingDatabendCursor {
     }
 }
 
-fn format_csv<'p>(parameters: Vec<Bound<'p, PyAny>>) -> PyResult<Vec<u8>> {
-    let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
-    for row in parameters {
-        let data = match row.try_iter() {
-            Err(e) => Err(PyAttributeError::new_err(format!(
-                "Parameter not iterable: {:?}",
-                e
-            ))),
-            Ok(data) => {
-                let ret = data
-                    .map(|v| match v {
-                        Ok(v) => {
-                            // TODO: support more primitive types
-                            if let Ok(v) = v.extract::<String>() {
-                                Ok(v)
-                            } else {
-                                Err(PyAttributeError::new_err(format!(
-                                    "Invalid parameter type for: {:?}, expected str",
-                                    v
-                                )))
-                            }
-                        }
-                        Err(e) => return Err(e),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(ret)
-            }
-        }?;
-        wtr.write_record(data)
-            .map_err(|e| PyException::new_err(e.to_string()))
-            .unwrap();
-    }
-    let bytes = wtr
-        .into_inner()
-        .map_err(|e| PyException::new_err(e.to_string()))
-        .unwrap();
-    Ok(bytes)
-}
-
-#[pymethods]
 impl BlockingDatabendCursor {
     fn reset(&mut self) {
         self.rows = None;
         self.buffer.clear();
     }
+}
 
+#[pymethods]
+impl BlockingDatabendCursor {
     pub fn close(&mut self, py: Python) -> PyResult<()> {
         self.reset();
         wait_for_future(py, async move {
@@ -308,4 +271,43 @@ impl BlockingDatabendCursor {
             None => Ok(vec![]),
         }
     }
+}
+
+fn format_csv<'p>(parameters: Vec<Bound<'p, PyAny>>) -> PyResult<Vec<u8>> {
+    let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
+    for row in parameters {
+        let data = match row.try_iter() {
+            Err(e) => Err(PyAttributeError::new_err(format!(
+                "Parameter not iterable: {:?}",
+                e
+            ))),
+            Ok(data) => {
+                let ret = data
+                    .map(|v| match v {
+                        Ok(v) => {
+                            // TODO: support more primitive types
+                            if let Ok(v) = v.extract::<String>() {
+                                Ok(v)
+                            } else {
+                                Err(PyAttributeError::new_err(format!(
+                                    "Invalid parameter type for: {:?}, expected str",
+                                    v
+                                )))
+                            }
+                        }
+                        Err(e) => return Err(e),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(ret)
+            }
+        }?;
+        wtr.write_record(data)
+            .map_err(|e| PyException::new_err(e.to_string()))
+            .unwrap();
+    }
+    let bytes = wtr
+        .into_inner()
+        .map_err(|e| PyException::new_err(e.to_string()))
+        .unwrap();
+    Ok(bytes)
 }
