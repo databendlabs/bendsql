@@ -161,6 +161,7 @@ impl BlockingDatabendConnection {
 pub struct BlockingDatabendCursor {
     conn: Arc<Box<dyn databend_driver::Connection>>,
     rows: Option<Arc<Mutex<databend_driver::RowIterator>>>,
+    // buffer is used to store only the first row after execute
     buffer: Vec<Row>,
 }
 
