@@ -30,7 +30,7 @@ cursor.execute(
     )
     """
 )
-cursor.execute("INSERT INTO test VALUES", ('1', '1', '1.0', 'hello', 'world', '2021-01-01', '2021-01-01 00:00:00'))
+cursor.execute("INSERT INTO test VALUES", (1, 1, 1.0, 'hello', 'world', '2021-01-01', '2021-01-01 00:00:00'))
 cursor.execute("SELECT * FROM test")
 rows = cursor.fetchall()
 for row in rows:
