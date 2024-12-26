@@ -16,9 +16,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use pyo3::exceptions::PyException;
+use pyo3::exceptions::{PyAttributeError, PyException};
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyList, PyTuple};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
@@ -175,6 +175,44 @@ impl BlockingDatabendCursor {
     }
 }
 
+fn format_csv<'p>(parameters: Vec<Bound<'p, PyAny>>) -> PyResult<Vec<u8>> {
+    let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
+    for row in parameters {
+        let data = match row.try_iter() {
+            Err(e) => Err(PyAttributeError::new_err(format!(
+                "Parameter not iterable: {:?}",
+                e
+            ))),
+            Ok(data) => {
+                let ret = data
+                    .map(|v| match v {
+                        Ok(v) => {
+                            if let Ok(v) = v.extract::<String>() {
+                                Ok(v)
+                            } else {
+                                Err(PyAttributeError::new_err(format!(
+                                    "Invalid parameter type: {:?}, expected str",
+                                    v
+                                )))
+                            }
+                        }
+                        Err(e) => return Err(e),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(ret)
+            }
+        }?;
+        wtr.write_record(data)
+            .map_err(|e| PyException::new_err(e.to_string()))
+            .unwrap();
+    }
+    let bytes = wtr
+        .into_inner()
+        .map_err(|e| PyException::new_err(e.to_string()))
+        .unwrap();
+    Ok(bytes)
+}
+
 #[pymethods]
 impl BlockingDatabendCursor {
     fn reset(&mut self) {
@@ -201,33 +239,8 @@ impl BlockingDatabendCursor {
         let conn = self.conn.clone();
         if let Some(parameters) = parameters {
             if let Some(first) = parameters.first() {
-                if let Ok(_) = first.downcast::<PyList>() {
-                    let data = parameters
-                        .iter()
-                        .map(|item| {
-                            if let Ok(l) = item.downcast::<PyList>() {
-                                Ok(l.iter()
-                                    .map(|v| {
-                                        if let Ok(v) = v.extract::<String>() {
-                                            Ok(v)
-                                        } else {
-                                            Err(PyException::new_err("Invalid parameter type"))
-                                        }
-                                    })
-                                    .collect::<Result<Vec<_>, _>>()?)
-                            } else {
-                                Err(PyException::new_err("Invalid parameter type"))
-                            }
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
-                    for row in data {
-                        wtr.write_record(row)
-                            .map_err(|e| PyException::new_err(e.to_string()))?;
-                    }
-                    let bytes = wtr
-                        .into_inner()
-                        .map_err(|e| PyException::new_err(e.to_string()))?;
+                if first.downcast::<PyList>().is_ok() || first.downcast::<PyTuple>().is_ok() {
+                    let bytes = format_csv(parameters)?;
                     let size = bytes.len() as u64;
                     let reader = Box::new(std::io::Cursor::new(bytes));
                     let stats = wait_for_future(py, async move {
@@ -238,7 +251,9 @@ impl BlockingDatabendCursor {
                     let result = stats.write_rows.into_pyobject(py)?;
                     return Ok(result.into());
                 } else {
-                    return Err(PyException::new_err("Invalid parameter type"));
+                    return Err(PyAttributeError::new_err(
+                        "Invalid parameter type, expected list or tuple",
+                    ));
                 }
             }
         }

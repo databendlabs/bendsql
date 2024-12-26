@@ -34,7 +34,7 @@ cursor.execute("INSERT INTO test VALUES", [('1', '1', '1.0', 'hello', 'world', '
 cursor.execute("SELECT * FROM test")
 rows = cursor.fetchall()
 for row in rows:
-    print(row)
+    print(row.values())
 ```
 
 ### Blocking
