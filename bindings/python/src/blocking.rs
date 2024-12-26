@@ -276,31 +276,23 @@ impl BlockingDatabendCursor {
 fn format_csv<'p>(parameters: Vec<Bound<'p, PyAny>>) -> PyResult<Vec<u8>> {
     let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
     for row in parameters {
-        let data = match row.try_iter() {
-            Err(e) => Err(PyAttributeError::new_err(format!(
-                "Parameter not iterable: {:?}",
-                e
-            ))),
-            Ok(data) => {
-                let ret = data
-                    .map(|v| match v {
-                        Ok(v) => {
-                            // TODO: support more primitive types
-                            if let Ok(v) = v.extract::<String>() {
-                                Ok(v)
-                            } else {
-                                Err(PyAttributeError::new_err(format!(
-                                    "Invalid parameter type for: {:?}, expected str",
-                                    v
-                                )))
-                            }
-                        }
-                        Err(e) => return Err(e),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(ret)
-            }
-        }?;
+        let iter = row.try_iter()?;
+        let data = iter
+            .map(|v| match v {
+                Ok(v) => {
+                    // TODO: support more primitive types
+                    if let Ok(v) = v.extract::<String>() {
+                        Ok(v)
+                    } else {
+                        Err(PyAttributeError::new_err(format!(
+                            "Invalid parameter type for: {:?}, expected str",
+                            v
+                        )))
+                    }
+                }
+                Err(e) => return Err(e),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         wtr.write_record(data)
             .map_err(|e| PyException::new_err(e.to_string()))
             .unwrap();
