@@ -14,7 +14,7 @@ pnpm run build
 const { Client } = require("databend-driver");
 
 const client = new Client(
-  "databend+http://root:root@localhost:8000/?sslmode=disable",
+  "databend://root:root@localhost:8000/?sslmode=disable",
 );
 const conn = await client.getConn();
 

@@ -9,12 +9,40 @@ maturin develop
 
 ## Usage
 
+### PEP 249 cursor object
+
+```python
+from databend_driver import BlockingDatabendClient
+
+client = BlockingDatabendClient('databend://root:root@localhost:8000/?sslmode=disable')
+cursor = client.cursor()
+
+cursor.execute(
+    """
+    CREATE TABLE test (
+        i64 Int64,
+        u64 UInt64,
+        f64 Float64,
+        s   String,
+        s2  String,
+        d   Date,
+        t   DateTime
+    )
+    """
+)
+cursor.execute("INSERT INTO test VALUES", (1, 1, 1.0, 'hello', 'world', '2021-01-01', '2021-01-01 00:00:00'))
+cursor.execute("SELECT * FROM test")
+rows = cursor.fetchall()
+for row in rows:
+    print(row.values())
+```
+
 ### Blocking
 
 ```python
 from databend_driver import BlockingDatabendClient
 
-client = BlockingDatabendClient('databend+http://root:root@localhost:8000/?sslmode=disable')
+client = BlockingDatabendClient('databend://root:root@localhost:8000/?sslmode=disable')
 conn = client.get_conn()
 conn.exec(
     """
@@ -41,7 +69,7 @@ import asyncio
 from databend_driver import AsyncDatabendClient
 
 async def main():
-    client = AsyncDatabendClient('databend+http://root:root@localhost:8000/?sslmode=disable')
+    client = AsyncDatabendClient('databend://root:root@localhost:8000/?sslmode=disable')
     conn = await client.get_conn()
     await conn.exec(
         """
@@ -141,6 +169,7 @@ class AsyncDatabendConnection:
 class BlockingDatabendClient:
     def __init__(self, dsn: str): ...
     def get_conn(self) -> BlockingDatabendConnection: ...
+    def cursor(self) -> BlockingDatabendCursor: ...
 ```
 
 ### BlockingDatabendConnection
@@ -156,11 +185,26 @@ class BlockingDatabendConnection:
     def load_file(self, sql: str, file: str, format_option: dict, copy_options: dict = None) -> ServerStats: ...
 ```
 
+### BlockingDatabendCursor
+
+```python
+class BlockingDatabendCursor:
+    def close(self) -> None: ...
+    def execute(self, operation: str, params: list[string] | tuple[string] = None) -> None | int: ...
+    def executemany(self, operation: str, params: list[list[string] | tuple[string]]) -> None | int: ...
+    def fetchone(self) -> Row: ...
+    def fetchall(self) -> list[Row]: ...
+```
+
 ### Row
 
 ```python
 class Row:
     def values(self) -> tuple: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> list: ...
+    def __dict__(self) -> dict: ...
+    def __getitem__(self, key: int | str) -> any: ...
 ```
 
 ### RowIterator

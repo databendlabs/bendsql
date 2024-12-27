@@ -289,21 +289,26 @@ impl Stream for RestAPIRows {
         if let Some(ss) = self.stats.take() {
             return Poll::Ready(Some(Ok(RowWithStats::Stats(ss))));
         }
-        if let Some(row) = self.data.pop_front() {
-            let row = Row::try_from((self.schema.clone(), row))?;
-            return Poll::Ready(Some(Ok(RowWithStats::Row(row))));
+        // Skip to fetch next page if there is only one row left in buffer.
+        // Therefore we could guarantee the `/final` called before the last row.
+        if self.data.len() > 1 {
+            if let Some(row) = self.data.pop_front() {
+                let row = Row::try_from((self.schema.clone(), row))?;
+                return Poll::Ready(Some(Ok(RowWithStats::Row(row))));
+            }
         }
         match self.next_page {
             Some(ref mut next_page) => match Pin::new(next_page).poll(cx) {
                 Poll::Ready(Ok(resp)) => {
-                    self.data = resp.data.into();
                     if self.schema.fields().is_empty() {
                         self.schema = Arc::new(resp.schema.try_into()?);
                     }
                     self.next_uri = resp.next_uri;
                     self.next_page = None;
-                    self.stats = Some(ServerStats::from(resp.stats));
-                    self.poll_next(cx)
+                    let mut new_data = resp.data.into();
+                    self.data.append(&mut new_data);
+                    let stats = ServerStats::from(resp.stats);
+                    Poll::Ready(Some(Ok(RowWithStats::Stats(stats))))
                 }
                 Poll::Ready(Err(e)) => {
                     self.next_page = None;
@@ -325,7 +330,13 @@ impl Stream for RestAPIRows {
                     }));
                     self.poll_next(cx)
                 }
-                None => Poll::Ready(None),
+                None => match self.data.pop_front() {
+                    Some(row) => {
+                        let row = Row::try_from((self.schema.clone(), row))?;
+                        Poll::Ready(Some(Ok(RowWithStats::Row(row))))
+                    }
+                    None => Poll::Ready(None),
+                },
             },
         }
     }
