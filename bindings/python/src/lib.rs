@@ -20,7 +20,7 @@ mod utils;
 use pyo3::prelude::*;
 
 use crate::asyncio::{AsyncDatabendClient, AsyncDatabendConnection};
-use crate::blocking::{BlockingDatabendClient, BlockingDatabendConnection};
+use crate::blocking::{BlockingDatabendClient, BlockingDatabendConnection, BlockingDatabendCursor};
 use crate::types::{ConnectionInfo, Field, Row, RowIterator, Schema, ServerStats};
 
 #[pymodule]
@@ -29,6 +29,7 @@ fn _databend_driver(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AsyncDatabendConnection>()?;
     m.add_class::<BlockingDatabendClient>()?;
     m.add_class::<BlockingDatabendConnection>()?;
+    m.add_class::<BlockingDatabendCursor>()?;
     m.add_class::<ConnectionInfo>()?;
     m.add_class::<Schema>()?;
     m.add_class::<Row>()?;
