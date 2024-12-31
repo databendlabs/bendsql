@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use databend_common_ast::{
-    ast::pretty_statement,
-    parser::{parse_sql, token::TokenKind, tokenize_sql, Dialect},
-};
+use databend_common_ast::parser::{parse_sql, token::TokenKind, tokenize_sql, Dialect};
+use sqlformat::{FormatOptions, QueryParams};
 
 use crate::session::QueryKind;
 
@@ -24,9 +22,22 @@ pub fn format_query(query: &str) -> String {
     if kind == QueryKind::Put || kind == QueryKind::Get {
         return query.to_owned();
     }
+
     if let Ok(tokens) = databend_common_ast::parser::tokenize_sql(query) {
         if let Ok((stmt, _)) = parse_sql(&tokens, Dialect::Experimental) {
-            return pretty_statement(stmt, 80).unwrap();
+            let options = FormatOptions::default();
+
+            let pretty_sql = sqlformat::format(query, &QueryParams::None, &options);
+            // if pretty sql could be parsed into same stmt, return pretty sql
+            if let Ok(pretty_tokens) = databend_common_ast::parser::tokenize_sql(&pretty_sql) {
+                if let Ok((pretty_stmt, _)) = parse_sql(&pretty_tokens, Dialect::Experimental) {
+                    if stmt.to_string() == pretty_stmt.to_string() {
+                        return pretty_sql;
+                    }
+                }
+            }
+
+            return stmt.to_string();
         }
     }
     query.to_string()
