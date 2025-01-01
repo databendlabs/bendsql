@@ -8,7 +8,6 @@ members = [
     "cli",
     "bindings/python",
     "bindings/nodejs",
-    "bindings/java",
 ]
 resolver = "2"
 
