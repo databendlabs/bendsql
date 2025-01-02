@@ -20,7 +20,7 @@ use tokio::net::TcpStream;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Connect to the server
-    let mut stream = TcpStream::connect("127.0.0.1:9901").await?;
+    let mut stream = TcpStream::connect("127.0.0.1:9092").await?;
 
     loop {
         // Prepare a sql
