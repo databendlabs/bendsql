@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::io::Cursor;
+use std::marker::PhantomData;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ use std::task::{Context, Poll};
 
 use async_compression::tokio::write::ZstdEncoder;
 use async_trait::async_trait;
+use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
 use log::info;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -83,8 +85,18 @@ impl Connection for RestAPIConnection {
         info!("query iter ext: {}", sql);
         let resp = self.client.start_query(sql).await?;
         let resp = self.wait_for_schema(resp).await?;
-        let (schema, rows) = RestAPIRows::from_response(self.client.clone(), resp)?;
+        let (schema, rows) = RestAPIRows::<RowWithStats>::from_response(self.client.clone(), resp)?;
         Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
+    }
+
+    // raw data reponse query, only for test
+    async fn query_raw_iter(&self, sql: &str) -> Result<RawRowIterator> {
+        info!("query raw iter: {}", sql);
+        let resp = self.client.start_query(sql).await?;
+        let resp = self.wait_for_schema(resp).await?;
+        let (schema, rows) =
+            RestAPIRows::<RawRowWithStats>::from_response(self.client.clone(), resp)?;
+        Ok(RawRowIterator::new(Arc::new(schema), Box::pin(rows)))
     }
 
     async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse> {
@@ -254,7 +266,7 @@ impl<'o> RestAPIConnection {
 
 type PageFut = Pin<Box<dyn Future<Output = Result<QueryResponse>> + Send>>;
 
-pub struct RestAPIRows {
+pub struct RestAPIRows<T> {
     client: Arc<APIClient>,
     schema: SchemaRef,
     data: VecDeque<Vec<Option<String>>>,
@@ -263,9 +275,10 @@ pub struct RestAPIRows {
     node_id: Option<String>,
     next_uri: Option<String>,
     next_page: Option<PageFut>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
-impl RestAPIRows {
+impl<T> RestAPIRows<T> {
     fn from_response(client: Arc<APIClient>, resp: QueryResponse) -> Result<(Schema, Self)> {
         let schema: Schema = resp.schema.try_into()?;
         let rows = Self {
@@ -277,24 +290,25 @@ impl RestAPIRows {
             data: resp.data.into(),
             stats: Some(ServerStats::from(resp.stats)),
             next_page: None,
+            _phantom: PhantomData,
         };
         Ok((schema, rows))
     }
 }
 
-impl Stream for RestAPIRows {
-    type Item = Result<RowWithStats>;
+impl<T: FromRowStats + std::marker::Unpin> Stream for RestAPIRows<T> {
+    type Item = Result<T>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if let Some(ss) = self.stats.take() {
-            return Poll::Ready(Some(Ok(RowWithStats::Stats(ss))));
+            return Poll::Ready(Some(Ok(T::from_stats(ss))));
         }
         // Skip to fetch next page if there is only one row left in buffer.
         // Therefore we could guarantee the `/final` called before the last row.
         if self.data.len() > 1 {
             if let Some(row) = self.data.pop_front() {
-                let row = Row::try_from((self.schema.clone(), row))?;
-                return Poll::Ready(Some(Ok(RowWithStats::Row(row))));
+                let row = T::try_from_row(row, self.schema.clone())?;
+                return Poll::Ready(Some(Ok(row)));
             }
         }
         match self.next_page {
@@ -307,8 +321,7 @@ impl Stream for RestAPIRows {
                     self.next_page = None;
                     let mut new_data = resp.data.into();
                     self.data.append(&mut new_data);
-                    let stats = ServerStats::from(resp.stats);
-                    Poll::Ready(Some(Ok(RowWithStats::Stats(stats))))
+                    Poll::Ready(Some(Ok(T::from_stats(resp.stats.into()))))
                 }
                 Poll::Ready(Err(e)) => {
                     self.next_page = None;
@@ -332,12 +345,37 @@ impl Stream for RestAPIRows {
                 }
                 None => match self.data.pop_front() {
                     Some(row) => {
-                        let row = Row::try_from((self.schema.clone(), row))?;
-                        Poll::Ready(Some(Ok(RowWithStats::Row(row))))
+                        let row = T::try_from_row(row, self.schema.clone())?;
+                        Poll::Ready(Some(Ok(row)))
                     }
                     None => Poll::Ready(None),
                 },
             },
         }
+    }
+}
+
+trait FromRowStats: Send + Sync + Clone {
+    fn from_stats(stats: ServerStats) -> Self;
+    fn try_from_row(row: Vec<Option<String>>, schema: SchemaRef) -> Result<Self>;
+}
+
+impl FromRowStats for RowWithStats {
+    fn from_stats(stats: ServerStats) -> Self {
+        RowWithStats::Stats(stats)
+    }
+
+    fn try_from_row(row: Vec<Option<String>>, schema: SchemaRef) -> Result<Self> {
+        Ok(RowWithStats::Row(Row::try_from((schema, row))?))
+    }
+}
+
+impl FromRowStats for RawRowWithStats {
+    fn from_stats(stats: ServerStats) -> Self {
+        RawRowWithStats::Stats(stats)
+    }
+
+    fn try_from_row(row: Vec<Option<String>>, schema: SchemaRef) -> Result<Self> {
+        Ok(RawRowWithStats::Row(RawRow::new(schema, row)))
     }
 }

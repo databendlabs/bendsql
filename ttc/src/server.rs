@@ -117,7 +117,7 @@ async fn execute_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let command_str = String::from_utf8_lossy(command);
 
-    let results = conn.query_all(&command_str).await;
+    let results = conn.query_raw_all(&command_str).await;
 
     let mut response = Response {
         values: vec![],
@@ -125,7 +125,7 @@ async fn execute_command(
     };
     match results {
         Ok(results) => {
-            response.values = results.into_iter().map(|row| row_to_vec(row)).collect();
+            response.values = results.into_iter().map(|row| row.values).collect();
         }
         Err(err) => response.error = Some(err.to_string()),
     }
@@ -144,16 +144,4 @@ async fn execute_command(
     socket.write_all(&buffer).await?;
 
     Ok(())
-}
-
-fn row_to_vec(row: Row) -> Vec<Option<String>> {
-    row.into_iter()
-        .map(|v| {
-            if v == Value::Null {
-                None
-            } else {
-                Some(v.to_string())
-            }
-        })
-        .collect()
 }

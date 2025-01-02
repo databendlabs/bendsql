@@ -14,6 +14,7 @@
 
 mod cursor_ext;
 pub mod error;
+pub mod raw_rows;
 pub mod rows;
 pub mod schema;
 pub mod value;
