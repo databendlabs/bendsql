@@ -23,7 +23,7 @@ use clap::{command, Parser};
 #[derive(Debug, Clone, Parser, PartialEq)]
 #[command(name = "ttc")]
 struct Config {
-    #[clap(short = 'P', default_value = "9092", env = "TTC_PORT", long)]
+    #[clap(short = 'P', default_value = "9902", env = "TTC_PORT", long)]
     port: u16,
     #[clap(
         long,
