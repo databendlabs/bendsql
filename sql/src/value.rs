@@ -980,6 +980,14 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
 pub fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
     let mut start = 0;
     let bytes = text.as_bytes();
+    let mut is_negative = false;
+
+    // Check if the number is negative
+    if bytes[start] == b'-' {
+        is_negative = true;
+        start += 1;
+    }
+
     while start < text.len() && bytes[start] == b'0' {
         start += 1
     }
@@ -1016,13 +1024,21 @@ pub fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
         let precision = std::cmp::min(digits.len(), 76);
         let digits = unsafe { std::str::from_utf8_unchecked(&digits[..precision]) };
 
-        if size.precision > 38 {
-            Ok(NumberValue::Decimal256(
-                i256::from_string(digits).unwrap(),
-                size,
-            ))
+        let result = if size.precision > 38 {
+            NumberValue::Decimal256(i256::from_string(digits).unwrap(), size)
         } else {
-            Ok(NumberValue::Decimal128(digits.parse::<i128>()?, size))
+            NumberValue::Decimal128(digits.parse::<i128>()?, size)
+        };
+
+        // If the number was negative, negate the result
+        if is_negative {
+            match result {
+                NumberValue::Decimal256(val, size) => Ok(NumberValue::Decimal256(-val, size)),
+                NumberValue::Decimal128(val, size) => Ok(NumberValue::Decimal128(-val, size)),
+                _ => Ok(result),
+            }
+        } else {
+            Ok(result)
         }
     }
 }
