@@ -9,6 +9,7 @@ on:
     paths:
       - 'core/**'
       - 'driver/**'
+      - 'ttc/**'
 
 jobs:
   docker:
