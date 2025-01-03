@@ -10,6 +10,7 @@ on:
       - 'core/**'
       - 'driver/**'
       - 'ttc/**'
+      - 'sql/**'
 
 jobs:
   docker:

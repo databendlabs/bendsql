@@ -19,6 +19,8 @@ select /* ignore this block */ 'with comment';
 select 1; select 2; select '
 a'; select 3;
 
+select -9999999999999999999999999999999999999999999999999999999999999999999999999999;
+
 -- issue 409
 drop table if exists t;
 create table t(id tuple(STRING, array(tuple(array(int), array(STRING NOT NULL)))));
