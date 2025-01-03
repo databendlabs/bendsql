@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use bytes::BytesMut;
-use databend_driver::{Client, Connection, Row, Value};
+use databend_driver::{Client, Connection};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -58,6 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let l = format!("127.0.0.1:{}", config.port);
     let listener = TcpListener::bind(&l).await?;
     println!("Rust TTC Server running on {l}");
+    println!("Ready to accept connections");
 
     loop {
         let (socket, _) = listener.accept().await?;
@@ -125,7 +126,7 @@ async fn execute_command(
     };
     match results {
         Ok(results) => {
-            response.values = results.into_iter().map(|row| row.values).collect();
+            response.values = results.into_iter().map(|row| row.raw_row).collect();
         }
         Err(err) => response.error = Some(err.to_string()),
     }

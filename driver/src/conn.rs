@@ -124,9 +124,9 @@ pub trait Connection: Send + Sync {
 
     // raw data reponse query, only for test
     async fn query_raw_iter(&self, _sql: &str) -> Result<RawRowIterator> {
-        Err(Error::BadArgument(format!(
-            "Unsupported implement query_raw_iter"
-        )))
+        Err(Error::BadArgument(
+            "Unsupported implement query_raw_iter".to_string(),
+        ))
     }
 
     // raw data reponse query, only for test

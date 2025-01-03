@@ -18,9 +18,12 @@ use std::task::Poll;
 
 use tokio_stream::{Stream, StreamExt};
 
+use crate::error::Error;
 use crate::error::Result;
+use crate::rows::Row;
 use crate::rows::ServerStats;
 use crate::schema::SchemaRef;
+use crate::value::Value;
 
 #[derive(Clone, Debug)]
 pub enum RawRowWithStats {
@@ -30,39 +33,44 @@ pub enum RawRowWithStats {
 
 #[derive(Clone, Debug, Default)]
 pub struct RawRow {
-    pub schema: SchemaRef,
-    pub values: Vec<Option<String>>,
+    pub row: Row,
+    pub raw_row: Vec<Option<String>>,
 }
 
 impl RawRow {
-    pub fn new(schema: SchemaRef, values: Vec<Option<String>>) -> Self {
-        Self { schema, values }
+    pub fn new(row: Row, raw_row: Vec<Option<String>>) -> Self {
+        Self { row, raw_row }
     }
 
     pub fn len(&self) -> usize {
-        self.values.len()
+        self.raw_row.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
+        self.raw_row.is_empty()
     }
 
     pub fn values(&self) -> &[Option<String>] {
-        &self.values
+        &self.raw_row
     }
 
     pub fn schema(&self) -> SchemaRef {
-        self.schema.clone()
-    }
-
-    pub fn from_vec(schema: SchemaRef, values: Vec<Option<String>>) -> Self {
-        Self { schema, values }
+        self.row.schema()
     }
 }
 
-impl From<(SchemaRef, Vec<Option<String>>)> for RawRow {
-    fn from(value: (SchemaRef, Vec<Option<String>>)) -> Self {
-        Self::new(value.0, value.1)
+impl TryFrom<(SchemaRef, Vec<Option<String>>)> for RawRow {
+    type Error = Error;
+
+    fn try_from((schema, data): (SchemaRef, Vec<Option<String>>)) -> Result<Self> {
+        let mut values: Vec<Value> = Vec::new();
+        for (i, field) in schema.fields().iter().enumerate() {
+            let val: Option<&str> = data.get(i).and_then(|v| v.as_deref());
+            values.push(Value::try_from((&field.data_type, val))?);
+        }
+
+        let row = Row::new(schema, values);
+        Ok(RawRow::new(row, data))
     }
 }
 
@@ -71,7 +79,7 @@ impl IntoIterator for RawRow {
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.values.into_iter()
+        self.raw_row.into_iter()
     }
 }
 

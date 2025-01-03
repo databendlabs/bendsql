@@ -376,6 +376,7 @@ impl FromRowStats for RawRowWithStats {
     }
 
     fn try_from_row(row: Vec<Option<String>>, schema: SchemaRef) -> Result<Self> {
-        Ok(RawRowWithStats::Row(RawRow::new(schema, row)))
+        let rows = Row::try_from((schema, row.clone()))?;
+        Ok(RawRowWithStats::Row(RawRow::new(rows, row)))
     }
 }
