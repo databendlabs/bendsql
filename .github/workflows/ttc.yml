@@ -33,4 +33,4 @@ jobs:
         with:
           push: true
           file: ./ttc/Dockerfile
-          tags: datafuselabs/ttc-rust:latest
+          tags: sundyli/ttc-rust:latest
