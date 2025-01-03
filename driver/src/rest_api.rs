@@ -89,7 +89,7 @@ impl Connection for RestAPIConnection {
         Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
     }
 
-    // raw data reponse query, only for test
+    // raw data response query, only for test
     async fn query_raw_iter(&self, sql: &str) -> Result<RawRowIterator> {
         info!("query raw iter: {}", sql);
         let resp = self.client.start_query(sql).await?;
