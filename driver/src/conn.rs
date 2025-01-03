@@ -17,6 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use databend_driver_core::raw_rows::{RawRow, RawRowIterator};
 use once_cell::sync::Lazy;
 use tokio::io::AsyncRead;
 use tokio_stream::StreamExt;
@@ -118,6 +119,19 @@ pub trait Connection: Send + Sync {
 
     async fn query_all(&self, sql: &str) -> Result<Vec<Row>> {
         let rows = self.query_iter(sql).await?;
+        rows.collect().await
+    }
+
+    // raw data response query, only for test
+    async fn query_raw_iter(&self, _sql: &str) -> Result<RawRowIterator> {
+        Err(Error::BadArgument(
+            "Unsupported implement query_raw_iter".to_string(),
+        ))
+    }
+
+    // raw data response query, only for test
+    async fn query_raw_all(&self, sql: &str) -> Result<Vec<RawRow>> {
+        let rows = self.query_raw_iter(sql).await?;
         rows.collect().await
     }
 
