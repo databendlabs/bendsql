@@ -8,9 +8,6 @@ on:
       - main
     tags:
       - v*
-  pull_request:
-    branches:
-      - main
     paths:
       - 'core/**'
       - 'driver/**'
@@ -35,10 +32,20 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set Docker tag
-        run: echo "DOCKER_TAG=${{ startsWith(github.ref, 'refs/tags/') && github.ref[10:] || 'latest' }}" >> $GITHUB_ENV
+        shell: bash
+        run: |
+          ref_v="${{ github.ref }}"
+          if [[ $ref_v == refs/tags/* ]]; then
+            DOCKER_TAG=${ref_v:10}
+          else
+            DOCKER_TAG="latest"
+          fi
+          echo "DOCKER_TAG=$DOCKER_TAG" >> $GITHUB_ENV
 
       - name: Print Docker tag
-        run: echo "Start to build and publish: datafuselabs/ttc-rust:$DOCKER_TAG"
+        shell: bash
+        run: |
+          echo "Start to build and publish: datafuselabs/ttc-rust:$DOCKER_TAG"
 
       - name: TTC Build and push
         uses: docker/build-push-action@v2
