@@ -23,16 +23,16 @@ use std::task::{Context, Poll};
 
 use async_compression::tokio::write::ZstdEncoder;
 use async_trait::async_trait;
-use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
 use log::info;
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio_stream::Stream;
 
 use databend_client::PresignedResponse;
 use databend_client::QueryResponse;
 use databend_client::{APIClient, SchemaField};
 use databend_driver_core::error::{Error, Result};
+use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
 use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
 use databend_driver_core::schema::{Schema, SchemaRef};
 
@@ -191,8 +191,8 @@ impl Connection for RestAPIConnection {
         );
         let file = File::open(fp).await?;
         let metadata = file.metadata().await?;
-        let data = Box::new(file);
         let size = metadata.len();
+        let data = BufReader::new(file);
         let mut format_options = format_options.unwrap_or_else(Self::default_file_format_options);
         if !format_options.contains_key("type") {
             let file_type = fp
@@ -202,8 +202,14 @@ impl Connection for RestAPIConnection {
                 .ok_or_else(|| Error::BadArgument("file type empty".to_string()))?;
             format_options.insert("type", file_type);
         }
-        self.load_data(sql, data, size, Some(format_options), copy_options)
-            .await
+        self.load_data(
+            sql,
+            Box::new(data),
+            size,
+            Some(format_options),
+            copy_options,
+        )
+        .await
     }
 
     async fn stream_load(&self, sql: &str, data: Vec<Vec<&str>>) -> Result<ServerStats> {

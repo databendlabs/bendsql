@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use tokio::fs::File;
+use tokio::io::BufReader;
 
 use databend_client::APIClient;
 
@@ -32,6 +33,7 @@ async fn insert_with_stage(presign: bool) {
 
     let file = File::open("tests/core/data/sample.csv").await.unwrap();
     let metadata = file.metadata().await.unwrap();
+    let data = BufReader::new(file);
 
     let path = chrono::Utc::now().format("%Y%m%d%H%M%S%9f").to_string();
     let stage_location = format!("@~/{}/sample.csv", path);
@@ -42,7 +44,7 @@ async fn insert_with_stage(presign: bool) {
     };
 
     client
-        .upload_to_stage(&stage_location, Box::new(file), metadata.len())
+        .upload_to_stage(&stage_location, Box::new(data), metadata.len())
         .await
         .unwrap();
     let sql = format!(
