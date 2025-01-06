@@ -287,5 +287,8 @@ cd bindings/python
 uv sync
 source .venv/bin/activate
 maturin develop --uv
-behave tests/*
+
+behave tests/asyncio
+behave tests/blocking
+behave tests/cursor
 ```
