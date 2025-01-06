@@ -23,7 +23,9 @@ test-bendsql: up
 	cd .. && ./cli/test.sh flight
 
 test-bindings-python: up
-	cd ../bindings/python && behave tests/*
+	cd ../bindings/python && behave tests/asyncio
+	cd ../bindings/python && behave tests/blocking
+	cd ../bindings/python && behave tests/cursor
 
 test-bindings-nodejs: up
 	cd ../bindings/nodejs && pnpm run test
