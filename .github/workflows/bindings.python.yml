@@ -128,9 +128,15 @@ jobs:
         run: |
           pip install behave
           pip install artifacts/*.whl
-      - name: Test
+      - name: Test AsyncIO
         working-directory: bindings/python
-        run: behave tests/*
+        run: behave tests/asyncio
+      - name: Test Blocking
+        working-directory: bindings/python
+        run: behave tests/blocking
+      - name: Test Cursor
+        working-directory: bindings/python
+        run: behave tests/cursor
 
   publish:
     if: startsWith(github.ref, 'refs/tags/v')

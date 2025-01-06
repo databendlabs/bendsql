@@ -51,7 +51,7 @@ def _(context):
 @then("Select string {input} should be equal to {output}")
 def _(context, input, output):
     context.cursor.execute(f"SELECT '{input}'")
-    row = context.cursor.fetch_one()
+    row = context.cursor.fetchone()
     assert output == row[0], f"output: {output}"
 
 
@@ -59,12 +59,12 @@ def _(context, input, output):
 async def _(context):
     # Binary
     context.cursor.execute("select to_binary('xyz')")
-    row = context.cursor.fetch_one()
+    row = context.cursor.fetchone()
     assert row[0] == b"xyz", f"Binary: {row.values()}"
 
     # Decimal
     context.cursor.execute("SELECT 15.7563::Decimal(8,4), 2.0+3.0")
-    row = context.cursor.fetch_one()
+    row = context.cursor.fetchone()
     assert row.values() == (
         Decimal("15.7563"),
         Decimal("5.0"),
@@ -72,19 +72,19 @@ async def _(context):
 
     # Array
     context.cursor.execute("select [10::Decimal(15,2), 1.1+2.3]")
-    row = context.cursor.fetch_one()
+    row = context.cursor.fetchone()
     assert row.values() == (
         [Decimal("10.00"), Decimal("3.40")],
     ), f"Array: {row.values()}"
 
     # Map
     context.cursor.execute("select {'xx':to_date('2020-01-01')}")
-    row = context.cursor.fetch_one()
+    row = context.cursor.fetchone()
     assert row.values() == ({"xx": date(2020, 1, 1)},), f"Map: {row.values()}"
 
     # Tuple
     context.cursor.execute("select (10, '20', to_datetime('2024-04-16 12:34:56.789'))")
-    row = context.cursor.fetch_one()
+    row = context.cursor.fetchone()
     assert row.values() == (
         (10, "20", datetime(2024, 4, 16, 12, 34, 56, 789000)),
     ), f"Tuple: {row.values()}"
@@ -93,7 +93,7 @@ async def _(context):
 @then("Select numbers should iterate all rows")
 def _(context):
     context.cursor.execute("SELECT number FROM numbers(5)")
-    rows = context.cursor.fetch_all()
+    rows = context.cursor.fetchall()
     ret = []
     for row in rows:
         ret.append(row[0])
@@ -103,7 +103,7 @@ def _(context):
 
 @then("Insert and Select should be equal")
 def _(context):
-    context.cursor.exec(
+    context.cursor.execute(
         """
         INSERT INTO test VALUES
             (-1, 1, 1.0, '1', '1', '2011-03-06', '2011-03-06 06:20:00'),
@@ -112,7 +112,7 @@ def _(context):
         """
     )
     context.cursor.execute("SELECT * FROM test")
-    rows = context.cursor.fetch_all()
+    rows = context.cursor.fetchall()
     ret = []
     for row in rows:
         ret.append(row.values())
@@ -135,7 +135,7 @@ def _(context):
     assert count == 3, f"count: {count}"
 
     context.cursor.execute("SELECT * FROM test")
-    rows = context.cursor.fetch_all()
+    rows = context.cursor.fetchall()
     ret = []
     for row in rows:
         ret.append(row.values())
