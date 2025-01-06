@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
+use std::io::BufRead;
+use std::path::Path;
+use std::sync::Arc;
+
 use anyhow::anyhow;
 use anyhow::Result;
 use async_recursion::async_recursion;
@@ -26,12 +31,8 @@ use rustyline::config::Builder;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::{CompletionType, Editor};
-use std::collections::BTreeMap;
-use std::io::BufRead;
-use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use tokio::fs::{remove_file, File};
 use tokio::io::AsyncWriteExt;
 use tokio::task::JoinHandle;

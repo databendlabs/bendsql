@@ -17,9 +17,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use databend_driver_core::raw_rows::{RawRow, RawRowIterator};
 use once_cell::sync::Lazy;
+use tokio::fs::File;
 use tokio::io::AsyncRead;
+use tokio::io::BufReader;
 use tokio_stream::StreamExt;
 use url::Url;
 
@@ -29,6 +30,7 @@ use crate::flight_sql::FlightSQLConnection;
 use databend_client::StageLocation;
 use databend_client::{presign_download_from_stage, PresignedResponse};
 use databend_driver_core::error::{Error, Result};
+use databend_driver_core::raw_rows::{RawRow, RawRowIterator};
 use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
 use databend_driver_core::schema::{DataType, Field, NumberDataType, Schema};
 use databend_driver_core::value::{NumberValue, Value};
@@ -152,6 +154,7 @@ pub trait Connection: Send + Sync {
         file_format_options: Option<BTreeMap<&str, &str>>,
         copy_options: Option<BTreeMap<&str, &str>>,
     ) -> Result<ServerStats>;
+
     async fn load_file(
         &self,
         sql: &str,
@@ -159,6 +162,7 @@ pub trait Connection: Send + Sync {
         format_options: Option<BTreeMap<&str, &str>>,
         copy_options: Option<BTreeMap<&str, &str>>,
     ) -> Result<ServerStats>;
+
     async fn stream_load(&self, sql: &str, data: Vec<Vec<&str>>) -> Result<ServerStats>;
 
     // PUT file://<path_to_file>/<filename> internalStage|externalStage
@@ -180,8 +184,9 @@ pub trait Connection: Send + Sync {
                     Error::BadArgument(format!("Invalid local file path: {:?}", entry))
                 })?;
             let stage_file = stage_location.file_path(filename);
-            let data = tokio::fs::File::open(&entry).await?;
-            let size = data.metadata().await?.len();
+            let file = File::open(&entry).await?;
+            let size = file.metadata().await?.len();
+            let data = BufReader::new(file);
             let (fname, status) = match self
                 .upload_to_stage(&stage_file, Box::new(data), size)
                 .await
