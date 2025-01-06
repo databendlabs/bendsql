@@ -93,6 +93,7 @@ pub struct APIClient {
 
     presign: PresignMode,
     last_node_id: Arc<parking_lot::Mutex<Option<String>>>,
+    last_query_id: Arc<parking_lot::Mutex<Option<String>>>,
 }
 
 impl APIClient {
@@ -347,6 +348,15 @@ impl APIClient {
     pub fn set_last_node_id(&self, node_id: String) {
         *self.last_node_id.lock() = Some(node_id)
     }
+
+    pub fn set_last_query_id(&self, query_id: Option<String>) {
+        *self.last_query_id.lock() = query_id
+    }
+
+    pub fn last_query_id(&self) -> Option<String> {
+        self.last_query_id.lock().clone()
+    }
+
     fn last_node_id(&self) -> Option<String> {
         self.last_node_id.lock().clone()
     }
@@ -412,6 +422,8 @@ impl APIClient {
         if let Some(err) = result.error {
             return Err(Error::QueryFailed(err));
         }
+
+        self.set_last_query_id(Some(query_id));
         self.handle_warnings(&result);
         Ok(result)
     }
@@ -452,12 +464,13 @@ impl APIClient {
         }
     }
 
-    #[allow(dead_code)]
-    async fn kill_query(&self, query_id: &str, kill_uri: &str) -> Result<()> {
-        info!("kill query: {}", kill_uri);
-        let endpoint = self.endpoint.join(kill_uri)?;
+    pub async fn kill_query(&self, query_id: &str) -> Result<()> {
+        let kill_uri = format!("/v1/query/{}/kill", query_id);
+        let endpoint = self.endpoint.join(&kill_uri)?;
         let headers = self.make_headers(Some(query_id))?;
-        let mut builder = self.cli.post(endpoint.clone());
+        info!("kill query: {}", kill_uri);
+
+        let mut builder = self.cli.post(endpoint);
         builder = self.wrap_auth_or_session_token(builder)?;
         let resp = builder.headers(headers.clone()).send().await?;
         if resp.status() != 200 {
@@ -473,6 +486,7 @@ impl APIClient {
         if let Some(node_id) = self.last_node_id() {
             self.set_last_node_id(node_id.clone());
         }
+
         if let Some(next_uri) = &resp.next_uri {
             let schema = resp.schema;
             let mut data = resp.data;
@@ -954,6 +968,7 @@ impl Default for APIClient {
             disable_login: false,
             session_token_info: None,
             closed: Arc::new(Default::default()),
+            last_query_id: Arc::new(Default::default()),
             server_version: None,
         }
     }

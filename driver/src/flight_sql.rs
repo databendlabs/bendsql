@@ -61,11 +61,20 @@ impl Connection for FlightSQLConnection {
         }
     }
 
+    fn last_query_id(&self) -> Option<String> {
+        None
+    }
+
     async fn exec(&self, sql: &str) -> Result<i64> {
         self.handshake().await?;
         let mut client = self.client.lock().await;
         let affected_rows = client.execute_update(sql.to_string(), None).await?;
         Ok(affected_rows)
+    }
+
+    async fn kill_query(&self, _query_id: &str) -> Result<()> {
+        // todo: implement kill query
+        Ok(())
     }
 
     async fn query_iter(&self, sql: &str) -> Result<RowIterator> {

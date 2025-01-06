@@ -95,6 +95,8 @@ pub trait Connection: Send + Sync {
         Ok(())
     }
 
+    fn last_query_id(&self) -> Option<String>;
+
     async fn version(&self) -> Result<String> {
         let row = self.query_row("SELECT version()").await?;
         let version = match row {
@@ -108,6 +110,7 @@ pub trait Connection: Send + Sync {
     }
 
     async fn exec(&self, sql: &str) -> Result<i64>;
+    async fn kill_query(&self, query_id: &str) -> Result<()>;
     async fn query_iter(&self, sql: &str) -> Result<RowIterator>;
     async fn query_iter_ext(&self, sql: &str) -> Result<RowStatsIterator>;
 

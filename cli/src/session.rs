@@ -29,6 +29,8 @@ use rustyline::{CompletionType, Editor};
 use std::collections::BTreeMap;
 use std::io::BufRead;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::fs::{remove_file, File};
 use tokio::io::AsyncWriteExt;
@@ -38,6 +40,7 @@ use tokio_stream::StreamExt;
 
 use crate::config::Settings;
 use crate::config::TimeOption;
+use crate::display::INTERRUPTED_MESSAGE;
 use crate::display::{format_write_progress, ChunkDisplay, FormatDisplay};
 use crate::helper::CliHelper;
 use crate::web::find_available_port;
@@ -75,6 +78,7 @@ pub struct Session {
 
     server_handle: Option<JoinHandle<std::io::Result<()>>>,
     keywords: Option<Arc<sled::Db>>,
+    interrupted: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -180,9 +184,19 @@ impl Session {
             None
         };
 
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let interrupted_clone = interrupted.clone();
+
         if is_repl {
             println!();
+
+            // Register the Ctrl+C handler
+            ctrlc::set_handler(move || {
+                interrupted_clone.store(true, Ordering::SeqCst);
+            })
+            .expect("Error setting Ctrl-C handler");
         }
+
         Ok(Self {
             client,
             conn,
@@ -191,6 +205,7 @@ impl Session {
             query: String::new(),
             keywords,
             server_handle,
+            interrupted,
         })
     }
 
@@ -329,6 +344,12 @@ impl Session {
                                     }
                                 } else {
                                     eprintln!("error: {}", e);
+                                    if e.to_string().contains(INTERRUPTED_MESSAGE) {
+                                        if let Some(query_id) = self.conn.last_query_id() {
+                                            println!("killing query: {}", query_id);
+                                            let _ = self.conn.kill_query(&query_id).await;
+                                        }
+                                    }
                                     self.query.clear();
                                     break;
                                 }
@@ -458,6 +479,7 @@ impl Session {
     ) -> Result<Option<ServerStats>> {
         let query = query.trim_end_matches(';').trim();
 
+        self.interrupted.store(false, Ordering::SeqCst);
         if is_repl {
             if query.starts_with('!') {
                 return self.handle_commands(query).await;
@@ -503,8 +525,14 @@ impl Session {
                     _ => self.conn.query_iter_ext(query).await?,
                 };
 
-                let mut displayer =
-                    FormatDisplay::new(&self.settings, query, replace_newline, start, data);
+                let mut displayer = FormatDisplay::new(
+                    &self.settings,
+                    query,
+                    replace_newline,
+                    start,
+                    data,
+                    self.interrupted.clone(),
+                );
                 let stats = displayer.display().await?;
                 Ok(Some(stats))
             }
