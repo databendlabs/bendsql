@@ -28,7 +28,6 @@ def _(context):
     )
     client = databend_driver.BlockingDatabendClient(dsn)
     context.cursor = client.cursor()
-    raise Exception("test")
 
 
 @when("Create a test table")
