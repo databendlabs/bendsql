@@ -56,6 +56,10 @@ impl Connection for RestAPIConnection {
         }
     }
 
+    fn last_query_id(&self) -> Option<String> {
+        self.client.last_query_id()
+    }
+
     async fn close(&self) -> Result<()> {
         self.client.close().await;
         Ok(())
@@ -72,6 +76,10 @@ impl Connection for RestAPIConnection {
                 .await?;
         }
         Ok(resp.stats.progresses.write_progress.rows as i64)
+    }
+
+    async fn kill_query(&self, query_id: &str) -> Result<()> {
+        Ok(self.client.kill_query(query_id).await?)
     }
 
     async fn query_iter(&self, sql: &str) -> Result<RowIterator> {

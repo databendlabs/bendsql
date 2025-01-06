@@ -13,6 +13,8 @@
 // limitations under the License.
 
 use std::fmt::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::{collections::HashSet, env};
 
 use anyhow::{anyhow, Result};
@@ -30,6 +32,8 @@ use crate::{
     session::QueryKind,
     web::set_data,
 };
+
+pub(crate) const INTERRUPTED_MESSAGE: &str = "Interrupted by Ctrl+C";
 
 #[async_trait::async_trait]
 pub trait ChunkDisplay {
@@ -49,6 +53,7 @@ pub struct FormatDisplay<'a> {
     progress: Option<ProgressBar>,
     start: Instant,
     stats: Option<ServerStats>,
+    interrupted: Arc<AtomicBool>,
 }
 
 impl<'a> FormatDisplay<'a> {
@@ -58,6 +63,7 @@ impl<'a> FormatDisplay<'a> {
         replace_newline: bool,
         start: Instant,
         data: RowStatsIterator,
+        interrupted: Arc<AtomicBool>,
     ) -> Self {
         Self {
             settings,
@@ -69,6 +75,7 @@ impl<'a> FormatDisplay<'a> {
             progress: None,
             start,
             stats: None,
+            interrupted,
         }
     }
 }
@@ -133,6 +140,9 @@ impl<'a> FormatDisplay<'a> {
         let mut rows = Vec::new();
         let mut error = None;
         while let Some(line) = self.data.next().await {
+            if self.interrupted.load(Ordering::SeqCst) {
+                return Err(anyhow!(INTERRUPTED_MESSAGE));
+            }
             match line {
                 Ok(RowWithStats::Row(row)) => {
                     self.rows += 1;
@@ -224,6 +234,9 @@ impl<'a> FormatDisplay<'a> {
             .quote_style(quote_style)
             .from_writer(std::io::stdout());
         while let Some(line) = self.data.next().await {
+            if self.interrupted.load(Ordering::SeqCst) {
+                return Err(anyhow!(INTERRUPTED_MESSAGE));
+            }
             match line {
                 Ok(RowWithStats::Row(row)) => {
                     self.rows += 1;
@@ -254,6 +267,9 @@ impl<'a> FormatDisplay<'a> {
             .quote_style(quote_style)
             .from_writer(std::io::stdout());
         while let Some(line) = self.data.next().await {
+            if self.interrupted.load(Ordering::SeqCst) {
+                return Err(anyhow!(INTERRUPTED_MESSAGE));
+            }
             match line {
                 Ok(RowWithStats::Row(row)) => {
                     self.rows += 1;
@@ -274,6 +290,9 @@ impl<'a> FormatDisplay<'a> {
     async fn display_null(&mut self) -> Result<()> {
         let mut error = None;
         while let Some(line) = self.data.next().await {
+            if self.interrupted.load(Ordering::SeqCst) {
+                return Err(anyhow!(INTERRUPTED_MESSAGE));
+            }
             match line {
                 Ok(RowWithStats::Row(_)) => {
                     self.rows += 1;
@@ -365,6 +384,10 @@ impl<'a> FormatDisplay<'a> {
 #[async_trait::async_trait]
 impl ChunkDisplay for FormatDisplay<'_> {
     async fn display(&mut self) -> Result<ServerStats> {
+        if self.interrupted.load(Ordering::SeqCst) {
+            return Err(anyhow!(INTERRUPTED_MESSAGE));
+        }
+
         match self.settings.output_format {
             OutputFormat::Table => {
                 self.display_table().await?;
