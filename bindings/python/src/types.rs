@@ -361,7 +361,7 @@ impl ServerStats {
         self.0.write_bytes
     }
     #[getter]
-    pub fn spill_file_nums(&self) -> f64 {
+    pub fn spill_file_nums(&self) -> usize {
         self.0.spill_file_nums
     }
     #[getter]
