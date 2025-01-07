@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from decimal import Decimal
 
 from behave import given, when, then
@@ -61,6 +61,11 @@ async def _(context):
     context.cursor.execute("select to_binary('xyz')")
     row = context.cursor.fetchone()
     assert row[0] == b"xyz", f"Binary: {row.values()}"
+
+    # Interval
+    context.cursor.execute("select to_interval('1 days')")
+    row = context.cursor.fetch_one()
+    assert row.values() == (timedelta(1),), f"Interval: {row.values()}"
 
     # Decimal
     context.cursor.execute("SELECT 15.7563::Decimal(8,4), 2.0+3.0")
