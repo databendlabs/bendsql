@@ -1030,19 +1030,21 @@ mod test {
         Ok(())
     }
 
-    // #[tokio::test]
-    // async fn parse_encoded_password() -> Result<()> {
-    //     let dsn = "databend://username:3a%40SC(nYE1k%3D%7B%7BR@localhost";
-    //     let client = APIClient::from_dsn(dsn).await?;
-    //     assert_eq!(client.password, Some("3a@SC(nYE1k={{R".to_string()));
-    //     Ok(())
-    // }
+    #[tokio::test]
+    async fn parse_encoded_password() -> Result<()> {
+        let dsn = "databend://username:3a%40SC(nYE1k%3D%7B%7BR@localhost";
+        let client = APIClient::from_dsn(dsn).await?;
+        assert_eq!(client.host(), "localhost");
+        assert_eq!(client.port(), 443);
+        Ok(())
+    }
 
-    // #[tokio::test]
-    // async fn parse_special_chars_password() -> Result<()> {
-    //     let dsn = "databend://username:3a@SC(nYE1k={{R@localhost:8000";
-    //     let client = APIClient::from_dsn(dsn).await?;
-    //     assert_eq!(client.password, Some("3a@SC(nYE1k={{R".to_string()));
-    //     Ok(())
-    // }
+    #[tokio::test]
+    async fn parse_special_chars_password() -> Result<()> {
+        let dsn = "databend://username:3a@SC(nYE1k={{R@localhost:8000";
+        let client = APIClient::from_dsn(dsn).await?;
+        assert_eq!(client.host(), "localhost");
+        assert_eq!(client.port(), 8000);
+        Ok(())
+    }
 }
