@@ -51,6 +51,12 @@ pub struct ServerStats {
 
     #[serde(default)]
     pub running_time_ms: f64,
+
+    #[serde(default)]
+    pub spill_file_nums: usize,
+
+    #[serde(default)]
+    pub spill_bytes: usize,
 }
 
 impl ServerStats {
@@ -73,6 +79,8 @@ impl From<databend_client::QueryStats> for ServerStats {
             read_bytes: stats.progresses.scan_progress.bytes,
             write_rows: stats.progresses.write_progress.rows,
             write_bytes: stats.progresses.write_progress.bytes,
+            spill_file_nums: stats.progresses.spill_progress.file_nums,
+            spill_bytes: stats.progresses.spill_progress.bytes,
             running_time_ms: stats.running_time_ms,
         };
         if let Some(total) = stats.progresses.total_scan {

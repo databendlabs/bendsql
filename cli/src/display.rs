@@ -410,23 +410,41 @@ impl ChunkDisplay for FormatDisplay<'_> {
 
 fn format_read_progress(ss: &ServerStats, elapsed: f64) -> String {
     format!(
-        "Processing {}/{} ({} rows/s), {}/{} ({}/s)",
+        "Processing {}/{} ({} rows/s), {}/{} ({}/s){}",
         humanize_count(ss.read_rows as f64),
         humanize_count(ss.total_rows as f64),
         humanize_count(ss.read_rows as f64 / elapsed),
         HumanBytes(ss.read_bytes as u64),
         HumanBytes(ss.total_bytes as u64),
-        HumanBytes((ss.read_bytes as f64 / elapsed) as u64)
+        HumanBytes((ss.read_bytes as f64 / elapsed) as u64),
+        if ss.spill_file_nums > 0 {
+            format!(
+                ", spilled {} files, {}",
+                ss.spill_file_nums,
+                HumanBytes(ss.spill_bytes as u64)
+            )
+        } else {
+            "".to_string()
+        }
     )
 }
 
 pub fn format_write_progress(ss: &ServerStats, elapsed: f64) -> String {
     format!(
-        "Written {} ({} rows/s), {} ({}/s)",
+        "Written {} ({} rows/s), {} ({}/s){}",
         humanize_count(ss.write_rows as f64),
         humanize_count(ss.write_rows as f64 / elapsed),
         HumanBytes(ss.write_bytes as u64),
-        HumanBytes((ss.write_bytes as f64 / elapsed) as u64)
+        HumanBytes((ss.write_bytes as f64 / elapsed) as u64),
+        if ss.spill_file_nums > 0 {
+            format!(
+                ", spilled {} files, {}",
+                ss.spill_file_nums,
+                HumanBytes(ss.spill_bytes as u64)
+            )
+        } else {
+            "".to_string()
+        }
     )
 }
 
