@@ -52,4 +52,4 @@ jobs:
         with:
           push: true
           file: ./ttc/Dockerfile
-          tags: datafuselabs/ttc-rust:$DOCKER_TAG
+          tags: datafuselabs/ttc-rust:${{ env.DOCKER_TAG }}
