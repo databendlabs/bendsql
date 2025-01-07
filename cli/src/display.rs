@@ -417,8 +417,12 @@ fn format_read_progress(ss: &ServerStats, elapsed: f64) -> String {
         HumanBytes(ss.read_bytes as u64),
         HumanBytes(ss.total_bytes as u64),
         HumanBytes((ss.read_bytes as f64 / elapsed) as u64),
-        if ss.spill_file_count > 0 {
-            format!(", spilled {} files", ss.spill_file_count)
+        if ss.spill_file_nums > 0 {
+            format!(
+                ", spilled {} files, {}",
+                ss.spill_file_nums,
+                HumanBytes(ss.spill_bytes as u64)
+            )
         } else {
             "".to_string()
         }
@@ -432,8 +436,12 @@ pub fn format_write_progress(ss: &ServerStats, elapsed: f64) -> String {
         humanize_count(ss.write_rows as f64 / elapsed),
         HumanBytes(ss.write_bytes as u64),
         HumanBytes((ss.write_bytes as f64 / elapsed) as u64),
-        if ss.spill_file_count > 0 {
-            format!(", spilled {} files", ss.spill_file_count)
+        if ss.spill_file_nums > 0 {
+            format!(
+                ", spilled {} files, {}",
+                ss.spill_file_nums,
+                HumanBytes(ss.spill_bytes as u64)
+            )
         } else {
             "".to_string()
         }

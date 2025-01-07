@@ -30,7 +30,7 @@ pub struct Progresses {
     pub result_progress: ProgressValues,
     // make it optional for backward compatibility
     pub total_scan: Option<ProgressValues>,
-    pub spill_file_count: usize,
+    pub spill_progress: SpillProgress,
 }
 
 impl Progresses {
@@ -51,6 +51,12 @@ impl Progresses {
 #[derive(Debug, Deserialize)]
 pub struct ProgressValues {
     pub rows: usize,
+    pub bytes: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SpillProgress {
+    pub file_nums: usize,
     pub bytes: usize,
 }
 

@@ -548,8 +548,8 @@ impl ServerStats {
     }
 
     #[napi(getter)]
-    pub fn spill_file_count(&self) -> usize {
-        self.0.spill_file_count
+    pub fn spill_file_nums(&self) -> usize {
+        self.0.spill_file_nums
     }
 
     #[napi(getter)]
