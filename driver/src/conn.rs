@@ -205,6 +205,7 @@ pub trait Connection: Send + Sync {
                 read_bytes: 0,
                 write_rows: total_count,
                 write_bytes: total_size,
+                spill_file_count: 0,
                 running_time_ms: 0.0,
             };
             results.push(Ok(RowWithStats::Stats(ss)));
@@ -259,6 +260,7 @@ pub trait Connection: Send + Sync {
                 total_bytes: 0,
                 read_rows: total_count,
                 read_bytes: total_size,
+                spill_file_count: 0,
                 write_rows: 0,
                 write_bytes: 0,
                 running_time_ms: 0.0,

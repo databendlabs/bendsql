@@ -548,6 +548,11 @@ impl ServerStats {
     }
 
     #[napi(getter)]
+    pub fn spill_file_count(&self) -> usize {
+        self.0.spill_file_count
+    }
+
+    #[napi(getter)]
     pub fn running_time_ms(&self) -> f64 {
         self.0.running_time_ms
     }

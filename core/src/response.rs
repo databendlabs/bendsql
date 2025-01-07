@@ -30,6 +30,7 @@ pub struct Progresses {
     pub result_progress: ProgressValues,
     // make it optional for backward compatibility
     pub total_scan: Option<ProgressValues>,
+    pub spill_file_count: usize,
 }
 
 impl Progresses {

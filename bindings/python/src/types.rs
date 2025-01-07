@@ -361,6 +361,10 @@ impl ServerStats {
         self.0.write_bytes
     }
     #[getter]
+    pub fn spill_file_count(&self) -> f64 {
+        self.0.spill_file_count
+    }
+    #[getter]
     pub fn running_time_ms(&self) -> f64 {
         self.0.running_time_ms
     }
