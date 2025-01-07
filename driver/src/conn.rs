@@ -199,13 +199,10 @@ pub trait Connection: Send + Sync {
                 Err(e) => (entry.to_string_lossy().to_string(), e.to_string()),
             };
             let ss = ServerStats {
-                total_rows: 0,
-                total_bytes: 0,
-                read_rows: 0,
-                read_bytes: 0,
                 write_rows: total_count,
                 write_bytes: total_size,
-                running_time_ms: 0.0,
+
+                ..Default::default()
             };
             results.push(Ok(RowWithStats::Stats(ss)));
             results.push(Ok(RowWithStats::Row(Row::from_vec(
@@ -255,13 +252,9 @@ pub trait Connection: Send + Sync {
                 Err(e) => (e.to_string(), 0),
             };
             let ss = ServerStats {
-                total_rows: 0,
-                total_bytes: 0,
                 read_rows: total_count,
                 read_bytes: total_size,
-                write_rows: 0,
-                write_bytes: 0,
-                running_time_ms: 0.0,
+                ..Default::default()
             };
             results.push(Ok(RowWithStats::Stats(ss)));
             results.push(Ok(RowWithStats::Row(Row::from_vec(
