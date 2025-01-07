@@ -30,6 +30,7 @@ pub struct Progresses {
     pub result_progress: ProgressValues,
     // make it optional for backward compatibility
     pub total_scan: Option<ProgressValues>,
+    #[serde(default)]
     pub spill_progress: SpillProgress,
 }
 
