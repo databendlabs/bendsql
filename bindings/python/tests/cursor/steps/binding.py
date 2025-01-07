@@ -64,7 +64,7 @@ async def _(context):
 
     # Interval
     context.cursor.execute("select to_interval('1 days')")
-    row = context.cursor.fetch_one()
+    row = context.cursor.fetchone()
     assert row.values() == (timedelta(1),), f"Interval: {row.values()}"
 
     # Decimal
