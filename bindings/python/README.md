@@ -97,20 +97,21 @@ asyncio.run(main())
 
 ### General Data Types
 
-| Databend    | Python              |
-| ----------- | ------------------- |
-| `BOOLEAN`   | `bool`              |
-| `TINYINT`   | `int`               |
-| `SMALLINT`  | `int`               |
-| `INT`       | `int`               |
-| `BIGINT`    | `int`               |
-| `FLOAT`     | `float`             |
-| `DOUBLE`    | `float`             |
-| `DECIMAL`   | `decimal.Decimal`   |
-| `DATE`      | `datetime.date`     |
-| `TIMESTAMP` | `datetime.datetime` |
-| `VARCHAR`   | `str`               |
-| `BINARY`    | `bytes`             |
+| Databend    | Python               |
+|-------------|----------------------|
+| `BOOLEAN`   | `bool`               |
+| `TINYINT`   | `int`                |
+| `SMALLINT`  | `int`                |
+| `INT`       | `int`                |
+| `BIGINT`    | `int`                |
+| `FLOAT`     | `float`              |
+| `DOUBLE`    | `float`              |
+| `DECIMAL`   | `decimal.Decimal`    |
+| `DATE`      | `datetime.date`      |
+| `TIMESTAMP` | `datetime.datetime`  |
+| `INTERVAL`  | `datetime.timedelta` |
+| `VARCHAR`   | `str`                |
+| `BINARY`    | `bytes`              |
 
 ### Semi-Structured Data Types
 

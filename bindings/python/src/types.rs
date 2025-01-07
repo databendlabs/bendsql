@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{Duration, NaiveDate, NaiveDateTime};
 use once_cell::sync::Lazy;
 use pyo3::exceptions::{PyAttributeError, PyException, PyStopAsyncIteration, PyStopIteration};
 use pyo3::sync::GILOnceCell;
@@ -102,7 +102,14 @@ impl<'py> IntoPyObject<'py> for Value {
             databend_driver::Value::Variant(s) => s.into_bound_py_any(py)?,
             databend_driver::Value::Geometry(s) => s.into_bound_py_any(py)?,
             databend_driver::Value::Geography(s) => s.into_bound_py_any(py)?,
-            databend_driver::Value::Interval(s) => s.into_bound_py_any(py)?,
+            databend_driver::Value::Interval(s) => {
+                let value = databend_driver::Interval::from_string(&s).unwrap();
+                let total_micros = (value.months as i64) * 30 * 86400000000
+                    + (value.days as i64) * 86400000000
+                    + value.micros;
+                let s = Duration::microseconds(total_micros);
+                s.into_bound_py_any(py)?
+            }
         };
         Ok(val)
     }
