@@ -14,18 +14,16 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
-use std::io::Cursor;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use async_compression::tokio::write::ZstdEncoder;
 use async_trait::async_trait;
 use log::info;
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::BufReader;
 use tokio_stream::Stream;
 
 use databend_client::PresignedResponse;
@@ -145,30 +143,9 @@ impl Connection for RestAPIConnection {
             .ok_or_else(|| Error::IO("Failed to get current timestamp".to_string()))?;
         let stage = format!("@~/client/load/{}", now);
 
-        let mut file_format_options =
+        let file_format_options =
             file_format_options.unwrap_or_else(Self::default_file_format_options);
         let copy_options = copy_options.unwrap_or_else(Self::default_copy_options);
-
-        let mut data = data;
-        let mut size = size;
-
-        if !file_format_options.contains_key("compression") {
-            let mut buffer = Vec::new();
-            let real_size = data.read_to_end(&mut buffer).await?;
-            if real_size != size as usize && size != 0 {
-                return Err(Error::IO(format!(
-                    "Failed to read all data, expected: {}, read: {}",
-                    size, real_size
-                )));
-            }
-            let mut encoder = ZstdEncoder::new(Vec::new());
-            encoder.write_all(&buffer).await?;
-            encoder.shutdown().await?;
-            file_format_options.insert("compression", "ZSTD");
-            let output = encoder.into_inner();
-            size = output.len() as u64;
-            data = Box::new(Cursor::new(output))
-        }
 
         self.upload_to_stage(&stage, data, size).await?;
         let resp = self
