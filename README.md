@@ -4,11 +4,11 @@ Databend Native Client in Rust
 
 ## Components
 
-- [**core**](core): Databend RestAPI Rust client
+- [![image](https://img.shields.io/crates/v/databend-client.svg)](https://crates.io/crates/databend-client) [**core**](core): Databend RestAPI Rust client
 
-- [**driver**](driver): Databend SQL client for both RestAPI and FlightSQL in Rust
+- [![image](https://img.shields.io/crates/v/databend-driver.svg)](https://crates.io/crates/databend-driver) [**driver**](driver): Databend SQL client for both RestAPI and FlightSQL in Rust
 
-- [**cli**](cli): Databend native CLI
+- [![image](https://img.shields.io/crates/v/bendsql.svg)](https://crates.io/crates/bendsql) [**cli**](cli): Databend native CLI
 
 ### Bindings
 
