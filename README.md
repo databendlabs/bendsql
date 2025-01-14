@@ -4,17 +4,17 @@ Databend Native Client in Rust
 
 ## Components
 
-- [![image](https://img.shields.io/crates/v/databend-client.svg)](https://crates.io/crates/databend-client) [**core**](core): Databend RestAPI Rust Client
+- [**core**](core): Databend RestAPI Rust Client [![image](https://img.shields.io/crates/v/databend-client.svg)](https://crates.io/crates/databend-client)
 
-- [![image](https://img.shields.io/crates/v/databend-driver.svg)](https://crates.io/crates/databend-driver) [**driver**](driver): Databend SQL Client for both RestAPI and FlightSQL in Rust
+- [**driver**](driver): Databend SQL Client for both RestAPI and FlightSQL in Rust [![image](https://img.shields.io/crates/v/databend-driver.svg)](https://crates.io/crates/databend-driver)
 
-- [![image](https://img.shields.io/crates/v/bendsql.svg)](https://crates.io/crates/bendsql) [**cli**](cli): Databend Native CLI
+- [**cli**](cli): Databend Native CLI [![image](https://img.shields.io/crates/v/bendsql.svg)](https://crates.io/crates/bendsql)
 
 ### Bindings
 
-- [![image](https://img.shields.io/pypi/v/databend-driver.svg)](https://pypi.org/project/databend-driver) [**python**](bindings/python): Databend Python Client
+- [**python**](bindings/python): Databend Python Client [![image](https://img.shields.io/pypi/v/databend-driver.svg)](https://pypi.org/project/databend-driver)
 
-- [![image](https://img.shields.io/npm/v/databend-driver.svg)](https://www.npmjs.com/package/databend-driver) [**nodejs**](bindings/nodejs): Databend Node.js Client
+- [**nodejs**](bindings/nodejs): Databend Node.js Client [![image](https://img.shields.io/npm/v/databend-driver.svg)](https://www.npmjs.com/package/databend-driver)
 
 - [**java**](bindings/java): Databend Java Client (upcoming)
 
