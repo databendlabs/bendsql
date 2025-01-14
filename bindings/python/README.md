@@ -1,15 +1,8 @@
 # databend-driver
 
-## Build
-
-```shell
-cd bindings/python
-maturin develop
-```
-
 ## Usage
 
-### PEP 249 cursor object
+### PEP 249 Cursor Object
 
 ```python
 from databend_driver import BlockingDatabendClient
@@ -37,7 +30,7 @@ for row in rows:
     print(row.values())
 ```
 
-### Blocking
+### Blocking Connection Object
 
 ```python
 from databend_driver import BlockingDatabendClient
@@ -62,7 +55,7 @@ for row in rows:
     print(row.values())
 ```
 
-### Asyncio
+### Asyncio Connection Object
 
 ```python
 import asyncio
@@ -98,7 +91,7 @@ asyncio.run(main())
 ### General Data Types
 
 | Databend    | Python               |
-|-------------|----------------------|
+| ----------- | -------------------- |
 | `BOOLEAN`   | `bool`               |
 | `TINYINT`   | `int`                |
 | `SMALLINT`  | `int`                |

@@ -45,7 +45,7 @@ impl Progresses {
             || self
                 .total_scan
                 .as_ref()
-                .map_or(false, |v| v.bytes > 0 || v.rows > 0)
+                .is_some_and(|v| v.bytes > 0 || v.rows > 0)
     }
 }
 

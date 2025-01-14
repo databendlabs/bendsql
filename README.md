@@ -4,11 +4,19 @@ Databend Native Client in Rust
 
 ## Components
 
-- [**core**](core): Databend RestAPI Rust client
+- [**core**](core): Databend RestAPI Rust Client [![image](https://img.shields.io/crates/v/databend-client.svg)](https://crates.io/crates/databend-client)
 
-- [**driver**](driver): Databend SQL client for both RestAPI and FlightSQL
+- [**driver**](driver): Databend SQL Client for both RestAPI and FlightSQL in Rust [![image](https://img.shields.io/crates/v/databend-driver.svg)](https://crates.io/crates/databend-driver)
 
-- [**cli**](cli): Databend native CLI
+- [**cli**](cli): Databend Native CLI [![image](https://img.shields.io/crates/v/bendsql.svg)](https://crates.io/crates/bendsql)
+
+### Bindings
+
+- [**python**](bindings/python): Databend Python Client [![image](https://img.shields.io/pypi/v/databend-driver.svg)](https://pypi.org/project/databend-driver)
+
+- [**nodejs**](bindings/nodejs): Databend Node.js Client [![image](https://img.shields.io/npm/v/databend-driver.svg)](https://www.npmjs.com/package/databend-driver)
+
+- [**java**](bindings/java): Databend Java Client (upcoming)
 
 ## Installation for BendSQL
 
@@ -197,9 +205,9 @@ Examples:
 
 - `databend+flight://root:@localhost:8900/database1?connect_timeout=10`
 
-Available Args:
+### Available Args
 
-Common:
+#### Common
 
 | Arg               | Description                          |
 | ----------------- | ------------------------------------ |
@@ -209,7 +217,7 @@ Common:
 | `tls_ca_file`     | Custom root CA certificate path.     |
 | `connect_timeout` | Connect timeout in seconds           |
 
-RestAPI client:
+#### RestAPI Client
 
 | Arg                         | Description                                                                                                                                                      |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -219,7 +227,7 @@ RestAPI client:
 | `page_request_timeout_secs` | Timeout for a single page request, default to `30`                                                                                                               |
 | `presign`                   | Whether to enable presign for data loading, available arguments are `auto`/`detect`/`on`/`off`. Default to `auto` which only enable presign for `Databend Cloud` |
 
-FlightSQL client:
+#### FlightSQL Client
 
 | Arg                         | Description                                                               |
 | --------------------------- | ------------------------------------------------------------------------- |
@@ -230,7 +238,7 @@ FlightSQL client:
 | `keep_alive_timeout`        | Keep alive timeout in seconds, default to `20`                            |
 | `keep_alive_while_idle`     | Default to `true`                                                         |
 
-Query Settings:
+#### Query Settings
 
 see: [Databend Query Settings](https://databend.rs/doc/sql-commands/show/show-settings)
 

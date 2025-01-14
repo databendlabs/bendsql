@@ -79,9 +79,9 @@ async def _(context):
 
     # Array
     row = await context.conn.query_row("select [10::Decimal(15,2), 1.1+2.3]")
-    assert row.values() == (
-        [Decimal("10.00"), Decimal("3.40")],
-    ), f"Array: {row.values()}"
+    assert row.values() == ([Decimal("10.00"), Decimal("3.40")],), (
+        f"Array: {row.values()}"
+    )
 
     # Map
     row = await context.conn.query_row("select {'xx':to_date('2020-01-01')}")
@@ -91,9 +91,9 @@ async def _(context):
     row = await context.conn.query_row(
         "select (10, '20', to_datetime('2024-04-16 12:34:56.789'))"
     )
-    assert row.values() == (
-        (10, "20", datetime(2024, 4, 16, 12, 34, 56, 789000)),
-    ), f"Tuple: {row.values()}"
+    assert row.values() == ((10, "20", datetime(2024, 4, 16, 12, 34, 56, 789000)),), (
+        f"Tuple: {row.values()}"
+    )
 
 
 @then("Select numbers should iterate all rows")

@@ -80,7 +80,7 @@ impl<'a> FormatDisplay<'a> {
     }
 }
 
-impl<'a> FormatDisplay<'a> {
+impl FormatDisplay<'_> {
     fn running_secs(&self) -> f64 {
         // prefer to show server running time
         if let Some(ref stats) = self.stats {
