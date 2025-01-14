@@ -12,9 +12,9 @@ Databend Native Client in Rust
 
 ### Bindings
 
-- [**python**](bindings/python): Databend Python client
+- [![image](https://img.shields.io/pypi/v/databend-driver.svg)](https://pypi.org/project/databend-driver) [**python**](bindings/python): Databend Python client
 
-- [**nodejs**](bindings/nodejs): Databend Node.js client
+- [![image](https://img.shields.io/npm/v/databend-driver.svg)](https://www.npmjs.com/package/databend-driver) [**nodejs**](bindings/nodejs): Databend Node.js client
 
 - [**java**](bindings/java): Databend Java client (upcoming)
 
