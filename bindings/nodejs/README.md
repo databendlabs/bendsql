@@ -1,13 +1,5 @@
 # databend-driver
 
-## Build
-
-```shell
-cd bindings/nodejs
-pnpm install
-pnpm run build
-```
-
 ## Usage
 
 ```javascript

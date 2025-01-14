@@ -6,9 +6,17 @@ Databend Native Client in Rust
 
 - [**core**](core): Databend RestAPI Rust client
 
-- [**driver**](driver): Databend SQL client for both RestAPI and FlightSQL
+- [**driver**](driver): Databend SQL client for both RestAPI and FlightSQL in Rust
 
 - [**cli**](cli): Databend native CLI
+
+### Bindings
+
+- [**python**](bindings/python): Databend Python client
+
+- [**nodejs**](bindings/nodejs): Databend Node.js client
+
+- [**java**](bindings/java): Databend Java client (upcoming)
 
 ## Installation for BendSQL
 
@@ -197,9 +205,9 @@ Examples:
 
 - `databend+flight://root:@localhost:8900/database1?connect_timeout=10`
 
-Available Args:
+### Available Args
 
-Common:
+#### Common
 
 | Arg               | Description                          |
 | ----------------- | ------------------------------------ |
@@ -209,7 +217,7 @@ Common:
 | `tls_ca_file`     | Custom root CA certificate path.     |
 | `connect_timeout` | Connect timeout in seconds           |
 
-RestAPI client:
+#### RestAPI Client
 
 | Arg                         | Description                                                                                                                                                      |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -219,7 +227,7 @@ RestAPI client:
 | `page_request_timeout_secs` | Timeout for a single page request, default to `30`                                                                                                               |
 | `presign`                   | Whether to enable presign for data loading, available arguments are `auto`/`detect`/`on`/`off`. Default to `auto` which only enable presign for `Databend Cloud` |
 
-FlightSQL client:
+#### FlightSQL Client
 
 | Arg                         | Description                                                               |
 | --------------------------- | ------------------------------------------------------------------------- |
@@ -230,7 +238,7 @@ FlightSQL client:
 | `keep_alive_timeout`        | Keep alive timeout in seconds, default to `20`                            |
 | `keep_alive_while_idle`     | Default to `true`                                                         |
 
-Query Settings:
+#### Query Settings
 
 see: [Databend Query Settings](https://databend.rs/doc/sql-commands/show/show-settings)
 
