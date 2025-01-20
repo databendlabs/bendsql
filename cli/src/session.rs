@@ -449,11 +449,11 @@ impl Session {
         if line.starts_with("/*") && !line.ends_with("*/") {
             self.is_comment = true;
         }
-        if self.is_comment {
+        if line.starts_with("*/") {
+            self.is_comment = false;
             return vec![];
         }
-        if line.starts_with("*/") {
-            self.is_comment = true;
+        if self.is_comment {
             return vec![];
         }
         // consume self.query and get the result
