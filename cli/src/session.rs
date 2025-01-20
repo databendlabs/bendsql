@@ -472,12 +472,10 @@ impl Session {
                     Err(err) => {
                         // clear invalid query
                         self.query.clear();
-                        println!("{:?}", err);
                         break;
                     }
                 }
             }
-
             break;
         }
 
