@@ -264,6 +264,26 @@ impl BlockingDatabendCursor {
         }
     }
 
+    #[pyo3(signature = (size=1))]
+    pub fn fetchmany(&mut self, py: Python, size: Option<usize>) -> PyResult<Vec<Row>> {
+        let mut result = self.buffer.drain(..).collect::<Vec<_>>();
+        if let Some(ref rows) = self.rows {
+            let size = size.unwrap_or(1);
+            while result.len() < size {
+                let row = wait_for_future(py, async move {
+                    let mut rows = rows.lock().await;
+                    rows.next().await.transpose().map_err(DriverError::new)
+                })?;
+                if let Some(row) = row {
+                    result.push(Row::new(row));
+                } else {
+                    break;
+                }
+            }
+        }
+        Ok(result)
+    }
+
     pub fn fetchall(&mut self, py: Python) -> PyResult<Vec<Row>> {
         let mut result = self.buffer.drain(..).collect::<Vec<_>>();
         match self.rows.take() {
