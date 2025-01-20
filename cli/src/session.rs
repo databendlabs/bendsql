@@ -325,8 +325,9 @@ impl Session {
         rl.set_helper(Some(CliHelper::new(self.keywords.clone())));
         rl.load_history(&get_history_path()).ok();
 
+        let prompt = self.prompt().await;
         'F: loop {
-            match rl.readline(&self.prompt().await) {
+            match rl.readline(&prompt) {
                 Ok(line) => {
                     let queries = self.append_query(&line);
                     for query in queries {
@@ -455,17 +456,28 @@ impl Session {
         'Parser: loop {
             let mut tokenizer = Tokenizer::new(&self.query);
 
-            while let Some(Ok(token)) = tokenizer.next() {
-                if let TokenKind::SemiColon = token.kind {
-                    // push to current and continue the tokenizer
-                    let (sql, remain) = self.query.split_at(token.span.end as usize);
-                    if !sql.is_empty() {
-                        queries.push(sql.to_string());
+            for token in tokenizer {
+                match token {
+                    Ok(token) => {
+                        if let TokenKind::SemiColon = token.kind {
+                            // push to current and continue the tokenizer
+                            let (sql, remain) = self.query.split_at(token.span.end as usize);
+                            if !sql.is_empty() {
+                                queries.push(sql.to_string());
+                            }
+                            self.query = remain.to_string();
+                            continue 'Parser;
+                        }
                     }
-                    self.query = remain.to_string();
-                    continue 'Parser;
+                    Err(err) => {
+                        // clear invalid query
+                        self.query.clear();
+                        println!("{:?}", err);
+                        break;
+                    }
                 }
             }
+
             break;
         }
 
