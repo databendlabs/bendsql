@@ -76,7 +76,6 @@ pub struct Session {
 
     settings: Settings,
     query: String,
-    is_comment: bool,
 
     server_handle: Option<JoinHandle<std::io::Result<()>>>,
     keywords: Option<Arc<sled::Db>>,
@@ -205,7 +204,6 @@ impl Session {
             is_repl,
             settings,
             query: String::new(),
-            is_comment: false,
             keywords,
             server_handle,
             interrupted,
@@ -445,17 +443,7 @@ impl Session {
                 return vec![line.to_owned()];
             }
         }
-        // handle multiple line comments.
-        if line.starts_with("/*") && !line.ends_with("*/") {
-            self.is_comment = true;
-        }
-        if line.starts_with("*/") {
-            self.is_comment = false;
-            return vec![];
-        }
-        if self.is_comment {
-            return vec![];
-        }
+
         // consume self.query and get the result
         let mut queries = Vec::new();
 
@@ -465,6 +453,7 @@ impl Session {
         self.query.push_str(line);
 
         'Parser: loop {
+            let mut is_valid = true;
             let tokenizer = Tokenizer::new(&self.query);
             for token in tokenizer {
                 match token {
@@ -472,7 +461,7 @@ impl Session {
                         if let TokenKind::SemiColon = token.kind {
                             // push to current and continue the tokenizer
                             let (sql, remain) = self.query.split_at(token.span.end as usize);
-                            if !sql.is_empty() {
+                            if is_valid && !sql.is_empty() {
                                 queries.push(sql.to_string());
                             }
                             self.query = remain.to_string();
@@ -480,9 +469,9 @@ impl Session {
                         }
                     }
                     Err(_) => {
-                        // clear invalid query
-                        self.query.clear();
-                        break;
+                        // ignore current query if have invalid token.
+                        is_valid = false;
+                        continue;
                     }
                 }
             }
