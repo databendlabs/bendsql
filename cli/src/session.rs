@@ -76,6 +76,7 @@ pub struct Session {
 
     settings: Settings,
     query: String,
+    is_comment: bool,
 
     server_handle: Option<JoinHandle<std::io::Result<()>>>,
     keywords: Option<Arc<sled::Db>>,
@@ -204,6 +205,7 @@ impl Session {
             is_repl,
             settings,
             query: String::new(),
+            is_comment: false,
             keywords,
             server_handle,
             interrupted,
@@ -325,9 +327,8 @@ impl Session {
         rl.set_helper(Some(CliHelper::new(self.keywords.clone())));
         rl.load_history(&get_history_path()).ok();
 
-        let prompt = self.prompt().await;
         'F: loop {
-            match rl.readline(&prompt) {
+            match rl.readline(&self.prompt().await) {
                 Ok(line) => {
                     let queries = self.append_query(&line);
                     for query in queries {
@@ -444,7 +445,17 @@ impl Session {
                 return vec![line.to_owned()];
             }
         }
-
+        // handle multiple line comments.
+        if line.starts_with("/*") && !line.ends_with("*/") {
+            self.is_comment = true;
+        }
+        if self.is_comment {
+            return vec![];
+        }
+        if line.starts_with("*/") {
+            self.is_comment = true;
+            return vec![];
+        }
         // consume self.query and get the result
         let mut queries = Vec::new();
 
