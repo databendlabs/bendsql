@@ -264,9 +264,11 @@ impl BlockingDatabendCursor {
         }
     }
 
-    pub fn fetchmany(&mut self, py: Python, size: usize) -> PyResult<Vec<Row>> {
+    #[pyo3(signature = (size=1))]
+    pub fn fetchmany(&mut self, py: Python, size: Option<usize>) -> PyResult<Vec<Row>> {
         let mut result = self.buffer.drain(..).collect::<Vec<_>>();
         if let Some(ref rows) = self.rows {
+            let size = size.unwrap_or(1);
             while result.len() < size {
                 let row = wait_for_future(py, async move {
                     let mut rows = rows.lock().await;
