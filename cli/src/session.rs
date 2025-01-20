@@ -454,8 +454,7 @@ impl Session {
         self.query.push_str(line);
 
         'Parser: loop {
-            let mut tokenizer = Tokenizer::new(&self.query);
-
+            let tokenizer = Tokenizer::new(&self.query);
             for token in tokenizer {
                 match token {
                     Ok(token) => {
@@ -469,7 +468,7 @@ impl Session {
                             continue 'Parser;
                         }
                     }
-                    Err(err) => {
+                    Err(_) => {
                         // clear invalid query
                         self.query.clear();
                         break;
