@@ -52,7 +52,13 @@ def _(context):
 def _(context, input, output):
     context.cursor.execute(f"SELECT '{input}'")
     row = context.cursor.fetchone()
+
+    # getitem
     assert output == row[0], f"output: {output}"
+
+    # iter
+    val = next(row)
+    assert val == output, f"val: {val}"
 
 
 @then("Select types should be expected native types")
@@ -127,16 +133,33 @@ def _(context):
             (-3, 3, 3.0, '3', '2', '2016-04-04', '2016-04-04 11:30:00')
         """
     )
-    context.cursor.execute("SELECT * FROM test")
-    rows = context.cursor.fetchall()
-    ret = []
-    for row in rows:
-        ret.append(row.values())
     expected = [
         (-1, 1, 1.0, "1", "1", date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
         (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
         (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
+
+    # fetchall
+    context.cursor.execute("SELECT * FROM test")
+    rows = context.cursor.fetchall()
+    ret = []
+    for row in rows:
+        ret.append(row.values())
+    assert ret == expected, f"ret: {ret}"
+
+    # fetchmany
+    context.cursor.execute("SELECT * FROM test")
+    rows = context.cursor.fetchmany(3)
+    ret = []
+    for row in rows:
+        ret.append(row.values())
+    assert ret == expected, f"ret: {ret}"
+
+    # iter
+    context.cursor.execute("SELECT * FROM test")
+    ret = []
+    for row in context.cursor:
+        ret.append(row.values())
     assert ret == expected, f"ret: {ret}"
 
 
