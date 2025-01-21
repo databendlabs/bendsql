@@ -53,10 +53,10 @@ def _(context, input, output):
     context.cursor.execute(f"SELECT '{input}'")
     row = context.cursor.fetchone()
 
-    # row __getitem__
+    # getitem
     assert output == row[0], f"output: {output}"
 
-    # row iter
+    # iter
     val = next(row)
     assert val == output, f"val: {val}"
 
