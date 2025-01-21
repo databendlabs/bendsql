@@ -314,6 +314,9 @@ impl BlockingDatabendCursor {
             None => Err(PyStopIteration::new_err("Rows exhausted")),
         }
     }
+    pub fn next(&mut self, py: Python) -> PyResult<Row> {
+        self.__next__(py)
+    }
 }
 
 fn format_csv<'p>(parameters: Vec<Bound<'p, PyAny>>) -> PyResult<Vec<u8>> {
