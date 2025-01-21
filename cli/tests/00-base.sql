@@ -28,6 +28,9 @@ insert into t values(null);
 select * from t;
 drop table t;
 
+-- issue 572
+CREATE TABLE 🐳🍞(🐳🐳 INTEGER, 🍞🍞 INTEGER);
+
 -- enable it after we support code string in databend
 -- select $$aa$$;
 -- select $$
