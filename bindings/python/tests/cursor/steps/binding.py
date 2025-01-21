@@ -52,7 +52,13 @@ def _(context):
 def _(context, input, output):
     context.cursor.execute(f"SELECT '{input}'")
     row = context.cursor.fetchone()
+
+    # row __getitem__
     assert output == row[0], f"output: {output}"
+
+    # row iter
+    val = next(row)
+    assert val == output, f"val: {val}"
 
 
 @then("Select types should be expected native types")
