@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use pyo3::exceptions::{PyAttributeError, PyException};
+use pyo3::exceptions::{PyAttributeError, PyException, PyStopIteration};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
 use tokio::sync::Mutex;
@@ -302,6 +302,16 @@ impl BlockingDatabendCursor {
                 Ok(result)
             }
             None => Ok(vec![]),
+        }
+    }
+
+    pub fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+    pub fn __next__(&mut self, py: Python) -> PyResult<Row> {
+        match self.fetchone(py)? {
+            Some(row) => Ok(row),
+            None => Err(PyStopIteration::new_err("Rows exhausted")),
         }
     }
 }
