@@ -225,6 +225,8 @@ impl BlockingDatabendCursor {
         Ok(())
     }
 
+    /// Only `INSERT` and `REPLACE` statements are supported if parameters are provided.
+    /// Parameters will be translated into CSV format, and then loaded as stage attachment.
     #[pyo3(signature = (operation, parameters=None))]
     pub fn execute<'p>(
         &'p mut self,
@@ -253,6 +255,8 @@ impl BlockingDatabendCursor {
         Ok(py.None())
     }
 
+    /// Only `INSERT` and `REPLACE` statements are supported.
+    /// Parameters will be translated into CSV format, and then loaded as stage attachment.
     pub fn executemany<'p>(
         &'p mut self,
         py: Python<'p>,
