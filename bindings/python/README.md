@@ -1,5 +1,11 @@
 # databend-driver
 
+Databend Python Client
+
+[![image](https://img.shields.io/pypi/v/databend-driver.svg)](https://pypi.org/project/databend-driver)
+![License](https://img.shields.io/pypi/l/databend-driver.svg)
+[![image](https://img.shields.io/pypi/pyversions/databend-driver.svg)](https://pypi.org/project/databend-driver)
+
 ## Usage
 
 ### PEP 249 Cursor Object
