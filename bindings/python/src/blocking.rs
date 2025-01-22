@@ -212,9 +212,9 @@ impl BlockingDatabendCursor {
     }
 
     #[getter]
-    pub fn rowcount(&self, _py: Python) -> PyResult<i64> {
+    pub fn rowcount(&self, _py: Python) -> i64 {
         // not supported currently
-        Ok(-1)
+        -1
     }
 
     pub fn close(&mut self, py: Python) -> PyResult<()> {
