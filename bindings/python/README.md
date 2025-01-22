@@ -1,5 +1,10 @@
 # databend-driver
 
+Databend Python Client
+
+[![crates.io](https://img.shields.io/crates/v/databend-driver.svg)](https://crates.io/crates/databend-driver)
+![License](https://img.shields.io/crates/l/databend-driver.svg)
+
 ## Usage
 
 ### PEP 249 Cursor Object
