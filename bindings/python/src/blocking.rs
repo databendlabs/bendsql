@@ -211,9 +211,9 @@ impl BlockingDatabendCursor {
         }
     }
 
+    /// Not supported currently
     #[getter]
     pub fn rowcount(&self, _py: Python) -> i64 {
-        // not supported currently
         -1
     }
 
@@ -225,7 +225,7 @@ impl BlockingDatabendCursor {
         Ok(())
     }
 
-    /// Only `INSERT` and `REPLACE` statements are supported if parameters are provided.
+    /// Only `INSERT` and `REPLACE` statements are supported if parameters provided.
     /// Parameters will be translated into CSV format, and then loaded as stage attachment.
     #[pyo3(signature = (operation, parameters=None))]
     pub fn execute<'p>(
@@ -261,13 +261,13 @@ impl BlockingDatabendCursor {
         &'p mut self,
         py: Python<'p>,
         operation: String,
-        parameters: Vec<Bound<'p, PyAny>>,
+        seq_of_parameters: Vec<Bound<'p, PyAny>>,
     ) -> PyResult<PyObject> {
         self.reset();
         let conn = self.conn.clone();
-        if let Some(param) = parameters.first() {
+        if let Some(param) = seq_of_parameters.first() {
             if param.downcast::<PyList>().is_ok() || param.downcast::<PyTuple>().is_ok() {
-                let bytes = format_csv(parameters)?;
+                let bytes = format_csv(seq_of_parameters)?;
                 let size = bytes.len() as u64;
                 let reader = Box::new(std::io::Cursor::new(bytes));
                 let stats = wait_for_future(py, async move {
