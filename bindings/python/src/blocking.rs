@@ -17,8 +17,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use pyo3::exceptions::{PyAttributeError, PyException, PyStopIteration};
-use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
+use pyo3::{prelude::*, IntoPyObjectExt};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
@@ -184,6 +184,39 @@ impl BlockingDatabendCursor {
 
 #[pymethods]
 impl BlockingDatabendCursor {
+    #[getter]
+    pub fn description<'p>(&'p self, py: Python<'p>) -> PyResult<PyObject> {
+        match self.rows {
+            None => Ok(py.None()),
+            Some(ref rows) => {
+                let schema = wait_for_future(py, async move {
+                    let rows = rows.lock().await;
+                    rows.schema()
+                });
+                let mut fields = vec![];
+                for field in schema.fields() {
+                    let field = (
+                        field.name.clone(),          // name
+                        field.data_type.to_string(), // type_code
+                        None::<i64>,                 // display_size
+                        None::<i64>,                 // internal_size
+                        None::<i64>,                 // precision
+                        None::<i64>,                 // scale
+                        None::<bool>,                // null_ok
+                    );
+                    fields.push(field.into_pyobject(py)?);
+                }
+                PyList::new(py, fields)?.into_py_any(py)
+            }
+        }
+    }
+
+    /// Not supported currently
+    #[getter]
+    pub fn rowcount(&self, _py: Python) -> i64 {
+        -1
+    }
+
     pub fn close(&mut self, py: Python) -> PyResult<()> {
         self.reset();
         wait_for_future(py, async move {
@@ -192,6 +225,8 @@ impl BlockingDatabendCursor {
         Ok(())
     }
 
+    /// Only `INSERT` and `REPLACE` statements are supported if parameters provided.
+    /// Parameters will be translated into CSV format, and then loaded as stage attachment.
     #[pyo3(signature = (operation, parameters=None))]
     pub fn execute<'p>(
         &'p mut self,
@@ -220,17 +255,19 @@ impl BlockingDatabendCursor {
         Ok(py.None())
     }
 
+    /// Only `INSERT` and `REPLACE` statements are supported.
+    /// Parameters will be translated into CSV format, and then loaded as stage attachment.
     pub fn executemany<'p>(
         &'p mut self,
         py: Python<'p>,
         operation: String,
-        parameters: Vec<Bound<'p, PyAny>>,
+        seq_of_parameters: Vec<Bound<'p, PyAny>>,
     ) -> PyResult<PyObject> {
         self.reset();
         let conn = self.conn.clone();
-        if let Some(param) = parameters.first() {
+        if let Some(param) = seq_of_parameters.first() {
             if param.downcast::<PyList>().is_ok() || param.downcast::<PyTuple>().is_ok() {
-                let bytes = format_csv(parameters)?;
+                let bytes = format_csv(seq_of_parameters)?;
                 let size = bytes.len() as u64;
                 let reader = Box::new(std::io::Cursor::new(bytes));
                 let stats = wait_for_future(py, async move {
@@ -305,17 +342,20 @@ impl BlockingDatabendCursor {
         }
     }
 
-    pub fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
+    // Optional DB API Extensions
+
+    pub fn next(&mut self, py: Python) -> PyResult<Row> {
+        self.__next__(py)
     }
+
     pub fn __next__(&mut self, py: Python) -> PyResult<Row> {
         match self.fetchone(py)? {
             Some(row) => Ok(row),
             None => Err(PyStopIteration::new_err("Rows exhausted")),
         }
     }
-    pub fn next(&mut self, py: Python) -> PyResult<Row> {
-        self.__next__(py)
+    pub fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
     }
 }
 
