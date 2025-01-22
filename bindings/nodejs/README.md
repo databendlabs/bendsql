@@ -2,8 +2,8 @@
 
 Databend Node.js Client
 
-[![crates.io](https://img.shields.io/crates/v/databend-driver.svg)](https://crates.io/crates/databend-driver)
-![License](https://img.shields.io/crates/l/databend-driver.svg)
+[![image](https://img.shields.io/npm/v/databend-driver.svg)](https://www.npmjs.com/package/databend-driver)
+![License](https://img.shields.io/npm/l/databend-driver.svg)
 
 ## Usage
 

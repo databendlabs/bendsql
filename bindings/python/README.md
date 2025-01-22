@@ -2,8 +2,8 @@
 
 Databend Python Client
 
-[![crates.io](https://img.shields.io/crates/v/databend-driver.svg)](https://crates.io/crates/databend-driver)
-![License](https://img.shields.io/crates/l/databend-driver.svg)
+[![image](https://img.shields.io/pypi/v/databend-driver.svg)](https://pypi.org/project/databend-driver)
+![License](https://img.shields.io/pypi/l/databend-driver.svg)
 
 ## Usage
 
