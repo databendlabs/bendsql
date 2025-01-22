@@ -4,6 +4,7 @@ Databend Node.js Client
 
 [![image](https://img.shields.io/npm/v/databend-driver.svg)](https://www.npmjs.com/package/databend-driver)
 ![License](https://img.shields.io/npm/l/databend-driver.svg)
+[![image](https://img.shields.io/npm/types/databend-driver.svg)](https://www.npmjs.com/package/databend-driver)
 
 ## Usage
 
