@@ -241,7 +241,7 @@ impl RowIterator {
     pub fn schema(&self, py: Python) -> PyResult<Schema> {
         let streamer = self.0.clone();
         let ret = wait_for_future(py, async move { streamer.lock().await.schema() });
-        Ok(Schema(ret))
+        Ok(Schema::new(ret))
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -277,8 +277,15 @@ impl RowIterator {
     }
 }
 
+#[derive(Default)]
 #[pyclass(module = "databend_driver")]
 pub struct Schema(databend_driver::SchemaRef);
+
+impl Schema {
+    pub fn new(schema: databend_driver::SchemaRef) -> Self {
+        Schema(schema)
+    }
+}
 
 #[pymethods]
 impl Schema {
