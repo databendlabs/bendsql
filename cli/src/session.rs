@@ -453,17 +453,26 @@ impl Session {
         self.query.push_str(line);
 
         'Parser: loop {
-            let mut tokenizer = Tokenizer::new(&self.query);
-
-            while let Some(Ok(token)) = tokenizer.next() {
-                if let TokenKind::SemiColon = token.kind {
-                    // push to current and continue the tokenizer
-                    let (sql, remain) = self.query.split_at(token.span.end as usize);
-                    if !sql.is_empty() {
-                        queries.push(sql.to_string());
+            let mut is_valid = true;
+            let tokenizer = Tokenizer::new(&self.query);
+            for token in tokenizer {
+                match token {
+                    Ok(token) => {
+                        if let TokenKind::SemiColon = token.kind {
+                            // push to current and continue the tokenizer
+                            let (sql, remain) = self.query.split_at(token.span.end as usize);
+                            if is_valid && !sql.is_empty() {
+                                queries.push(sql.to_string());
+                            }
+                            self.query = remain.to_string();
+                            continue 'Parser;
+                        }
                     }
-                    self.query = remain.to_string();
-                    continue 'Parser;
+                    Err(_) => {
+                        // ignore current query if have invalid token.
+                        is_valid = false;
+                        continue;
+                    }
                 }
             }
             break;

@@ -154,47 +154,56 @@ impl<'py> IntoPyObject<'py> for NumberValue {
 }
 
 #[pyclass(module = "databend_driver")]
-pub struct Row(databend_driver::Row);
+pub struct Row {
+    inner: databend_driver::Row,
+    idx: usize,
+}
 
 impl Row {
     pub fn new(row: databend_driver::Row) -> Self {
-        Row(row)
+        Row { inner: row, idx: 0 }
     }
 }
 
 #[pymethods]
 impl Row {
     pub fn values<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyTuple>> {
-        let vals = self.0.values().iter().map(|v| Value(v.clone()));
+        let vals = self.inner.values().iter().map(|v| Value(v.clone()));
         let tuple = PyTuple::new(py, vals)?;
         Ok(tuple)
     }
 
     pub fn __len__(&self) -> usize {
-        self.0.len()
+        self.inner.len()
     }
 
-    pub fn __iter__<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyList>> {
-        let vals = self.0.values().iter().map(|v| Value(v.clone()));
-        let list = PyList::new(py, vals)?;
-        Ok(list.into_bound())
+    pub fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+    pub fn __next__(&mut self) -> PyResult<Value> {
+        if self.idx >= self.inner.len() {
+            return Err(PyStopIteration::new_err("Columns exhausted"));
+        }
+        let val = self.get_by_index(self.idx)?;
+        self.idx += 1;
+        Ok(val)
     }
 
     pub fn __dict__<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyDict>> {
         let dict = PyDict::new(py);
-        let schema = self.0.schema();
-        for (field, value) in schema.fields().iter().zip(self.0.values()) {
+        let schema = self.inner.schema();
+        for (field, value) in schema.fields().iter().zip(self.inner.values()) {
             dict.set_item(&field.name, Value(value.clone()))?;
         }
         Ok(dict.into_bound())
     }
 
     fn get_by_index(&self, idx: usize) -> PyResult<Value> {
-        Ok(Value(self.0.values()[idx].clone()))
+        Ok(Value(self.inner.values()[idx].clone()))
     }
 
     fn get_by_field(&self, field: &str) -> PyResult<Value> {
-        let schema = self.0.schema();
+        let schema = self.inner.schema();
         let idx = schema
             .fields()
             .iter()
@@ -202,7 +211,7 @@ impl Row {
             .ok_or_else(|| {
                 PyException::new_err(format!("field '{}' not found in schema", field))
             })?;
-        Ok(Value(self.0.values()[idx].clone()))
+        Ok(Value(self.inner.values()[idx].clone()))
     }
 
     pub fn __getitem__<'p>(&'p self, key: Bound<'p, PyAny>) -> PyResult<Value> {
@@ -232,7 +241,7 @@ impl RowIterator {
     pub fn schema(&self, py: Python) -> PyResult<Schema> {
         let streamer = self.0.clone();
         let ret = wait_for_future(py, async move { streamer.lock().await.schema() });
-        Ok(Schema(ret))
+        Ok(Schema::new(ret))
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -244,9 +253,9 @@ impl RowIterator {
             match streamer.lock().await.next().await {
                 Some(val) => match val {
                     Err(e) => Err(PyException::new_err(format!("{}", e))),
-                    Ok(ret) => Ok(Row(ret)),
+                    Ok(ret) => Ok(Row::new(ret)),
                 },
-                None => Err(PyStopIteration::new_err("The iterator is exhausted")),
+                None => Err(PyStopIteration::new_err("Rows exhausted")),
             }
         })
     }
@@ -260,7 +269,7 @@ impl RowIterator {
             match streamer.lock().await.next().await {
                 Some(val) => match val {
                     Err(e) => Err(PyException::new_err(format!("{}", e))),
-                    Ok(ret) => Ok(Row(ret)),
+                    Ok(ret) => Ok(Row::new(ret)),
                 },
                 None => Err(PyStopAsyncIteration::new_err("The iterator is exhausted")),
             }
@@ -268,8 +277,15 @@ impl RowIterator {
     }
 }
 
+#[derive(Default)]
 #[pyclass(module = "databend_driver")]
 pub struct Schema(databend_driver::SchemaRef);
+
+impl Schema {
+    pub fn new(schema: databend_driver::SchemaRef) -> Self {
+        Schema(schema)
+    }
+}
 
 #[pymethods]
 impl Schema {
