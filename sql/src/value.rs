@@ -40,6 +40,7 @@ const DAYS_FROM_CE: i32 = 719_163;
 const NULL_VALUE: &str = "NULL";
 const TRUE_VALUE: &str = "1";
 const FALSE_VALUE: &str = "0";
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.6f";
 
 #[cfg(feature = "flight-sql")]
 use {
@@ -837,15 +838,18 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
                 write!(f, "'{}'", s)
             }
         }
-        Value::Timestamp(i) => {
-            let secs = i / 1_000_000;
-            let nanos = ((i % 1_000_000) * 1000) as u32;
-            let t = DateTime::from_timestamp(secs, nanos).unwrap_or_default();
+        Value::Timestamp(micros) => {
+            let (mut secs, mut nanos) = (*micros / 1_000_000, (*micros % 1_000_000) * 1_000);
+            if nanos < 0 {
+                secs -= 1;
+                nanos += 1_000_000_000;
+            }
+            let t = DateTime::from_timestamp(secs, nanos as _).unwrap_or_default();
             let t = t.naive_utc();
             if raw {
-                write!(f, "{}", t)
+                write!(f, "{}", t.format(TIMESTAMP_FORMAT))
             } else {
-                write!(f, "'{}'", t)
+                write!(f, "'{}'", t.format(TIMESTAMP_FORMAT))
             }
         }
         Value::Date(i) => {

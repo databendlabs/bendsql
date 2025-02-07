@@ -9,6 +9,7 @@ insert into test select to_string(number), number, false, number from numbers(10
 select min(a), max(b), max(d), count() from test;
 
 select '1';select 2; select 1+2;
+select TO_TIMESTAMP(-7233803000000+1), TO_TIMESTAMP(-7233803000000), TO_TIMESTAMP(-7233803000000-1);
 
 select [], {};
 
