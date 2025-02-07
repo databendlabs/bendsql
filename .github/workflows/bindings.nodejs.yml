@@ -54,8 +54,9 @@ jobs:
           - { target: aarch64-unknown-linux-gnu, runner: ubuntu-20.04 }
           - { target: x86_64-unknown-linux-musl, runner: ubuntu-latest }
           - { target: aarch64-unknown-linux-musl, runner: ubuntu-latest }
-          - { target: x86_64-pc-windows-msvc, runner: windows-latest }
-          - { target: aarch64-pc-windows-msvc, runner: windows-latest }
+          # resolve it after: https://github.com/actions/setup-node/issues/1222
+          # - { target: x86_64-pc-windows-msvc, runner: windows-latest }
+          # - { target: aarch64-pc-windows-msvc, runner: windows-latest }
           - { target: x86_64-apple-darwin, runner: macos-latest }
           - { target: aarch64-apple-darwin, runner: macos-latest }
     steps:
