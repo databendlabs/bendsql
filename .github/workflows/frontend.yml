@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: "22"
 
-      - run: corepack enable
+      - run: npm i -g --force corepack && corepack enable
 
       - name: Install dependencies
         working-directory: frontend/

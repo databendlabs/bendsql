@@ -35,7 +35,7 @@ jobs:
           node-version: "22"
       - name: Corepack
         working-directory: bindings/nodejs
-        run: corepack enable
+        run: npm i -g --force corepack && corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
         run: pnpm install
@@ -76,7 +76,7 @@ jobs:
           version: 0.11.0
       - name: Corepack
         working-directory: bindings/nodejs
-        run: corepack enable
+        run: npm i -g --force corepack && corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
         run: pnpm install
@@ -117,7 +117,7 @@ jobs:
           node-version: ${{ matrix.ver }}
       - name: Corepack
         working-directory: bindings/nodejs
-        run: corepack enable
+        run: npm i -g --force corepack && corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
         run: pnpm install
@@ -146,7 +146,7 @@ jobs:
           node-version: "22"
       - name: Corepack
         working-directory: bindings/nodejs
-        run: corepack enable
+        run: npm i -g --force corepack && corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
         run: pnpm install
