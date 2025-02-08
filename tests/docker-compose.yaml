@@ -10,12 +10,11 @@ services:
     image: docker.io/datafuselabs/databend-meta:nightly
     volumes:
       - ./config/databend-meta-node-1.toml:/conf.toml:ro
-      - ./check_port.pl:/check_port.pl:ro
     command: -c /conf.toml
     ports:
       - "28101:28101"
     healthcheck:
-      test: [ "CMD-SHELL", "perl /check_port.pl 28101" ]
+      test: "/databend-metactl status || exit 1"
       interval: 2s
       retries: 10
       start_period: 2s
@@ -24,7 +23,6 @@ services:
     image: docker.io/datafuselabs/databend-query:nightly
     volumes:
       - ./config/databend-query-node-1.toml:/conf.toml:ro
-      - ./check_port.pl:/check_port.pl:ro
     command: -c /conf.toml
     environment:
       - QUERY_DATABEND_ENTERPRISE_LICENSE
