@@ -164,3 +164,16 @@ def _(context):
         (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
     assert ret == expected, f"ret: {ret}"
+
+
+@then("Temp table should work with cluster")
+async def _(context):
+    context.conn.exec("create or replace temp table temp_1(a int)")
+    context.conn.exec("INSERT INTO temp_1 VALUES (1),(2)")
+    rows = context.conn.query_iter("SELECT * FROM temp_1")
+    ret = []
+    for row in rows:
+        ret.append(row.values())
+    expected = [(1), (2)]
+    assert ret == expected, f"ret: {ret}"
+    context.conn.exec("DROP TABLE temp_1")

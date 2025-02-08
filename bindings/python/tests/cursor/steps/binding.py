@@ -186,6 +186,19 @@ def _(context):
     assert ret == expected, f"ret: {ret}"
 
 
+@then("Temp table should work with cluster")
+def _(context):
+    for i in range(10):
+        context.cursor.execute(f"create or replace temp table temp_{i}(a int)")
+        context.cursor.execute(f"INSERT INTO temp_{i} VALUES (1),({i})")
+        context.cursor.execute(f"SELECT * FROM temp_{i}")
+        rows = context.cursor.fetchall()
+        ret = [row.values() for row in rows]
+        expected = [(1,), (i,)]
+        assert ret == expected, f"ret: {ret}"
+        context.cursor.execute(f"DROP TABLE temp_{i}")
+
+
 @then("Load file and Select should be equal")
 def _(context):
     print("SKIP")
