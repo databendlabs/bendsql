@@ -40,3 +40,7 @@ Feature: Databend Driver
         Given A new Databend Driver Client
         When Create a test table
         Then Load file and Select should be equal
+
+    Scenario: Temp table
+        Given A new Databend Driver Client
+        Then Temp table should work with cluster
