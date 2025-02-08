@@ -67,6 +67,9 @@ impl Connection for RestAPIConnection {
         info!("exec: {}", sql);
         let mut resp = self.client.start_query(sql).await?;
         let node_id = resp.node_id.clone();
+        if let Some(node_id) = &node_id {
+            self.client.set_last_node_id(node_id.clone());
+        }
         while let Some(next_uri) = resp.next_uri {
             resp = self
                 .client
@@ -217,15 +220,15 @@ impl<'o> RestAPIConnection {
         resp: QueryResponse,
         return_on_progress: bool,
     ) -> Result<QueryResponse> {
+        let node_id = resp.node_id.clone();
+        if let Some(node_id) = &node_id {
+            self.client.set_last_node_id(node_id.clone());
+        }
         if !resp.data.is_empty()
             || !resp.schema.is_empty()
             || (return_on_progress && resp.stats.progresses.has_progress())
         {
             return Ok(resp);
-        }
-        let node_id = resp.node_id.clone();
-        if let Some(node_id) = &node_id {
-            self.client.set_last_node_id(node_id.clone());
         }
         let mut result = resp;
         // preserve schema since it is not included in the final response
