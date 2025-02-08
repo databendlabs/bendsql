@@ -188,16 +188,15 @@ def _(context):
 
 @then("Temp table should work with cluster")
 def _(context):
-    context.cursor.execute("create or replace temp table temp_1(a int)")
-    context.cursor.execute("INSERT INTO temp_1 VALUES (1),(2)")
-    context.cursor.execute("SELECT * FROM temp_1")
-    rows = context.cursor.fetchall()
-    ret = []
-    for row in rows:
-        ret.append(row.values())
-    expected = [(1), (2)]
-    assert ret == expected, f"ret: {ret}"
-    context.cursor.execute("DROP TABLE temp_1")
+    for i in range(10):
+        context.cursor.execute(f"create or replace temp table temp_{i}(a int)")
+        context.cursor.execute(f"INSERT INTO temp_{i} VALUES (1),(i)")
+        context.cursor.execute(f"SELECT * FROM temp_{i}")
+        rows = context.cursor.fetchall()
+        ret = [row.values() for row in rows]
+        expected = [(1), (i)]
+        assert ret == expected, f"ret: {ret}"
+        context.cursor.execute(f"DROP TABLE temp_{i}")
 
 
 @then("Load file and Select should be equal")
