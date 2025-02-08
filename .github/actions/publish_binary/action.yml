@@ -48,4 +48,4 @@ runs:
       id: upload
       shell: bash
       run: |
-        aws s3 cp dist/${{ steps.package.outputs.file }} s3://repo/bendsql/${{ inputs.version }}/${{ steps.package.outputs.file }} --no-progress
+        aws s3 cp dist/${{ steps.package.outputs.file }} s3://repo/bendsql/${{ inputs.version }}/${{ steps.package.outputs.file }} --no-progress --checksum-algorithm=CRC32

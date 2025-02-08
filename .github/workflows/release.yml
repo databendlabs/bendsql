@@ -97,9 +97,9 @@ jobs:
           AWS_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
         run: |
           gh api '/repos/databendlabs/bendsql/tags' > tags.json
-          aws s3 cp tags.json s3://repo/bendsql/tags.json
+          aws s3 cp tags.json s3://repo/bendsql/tags.json --checksum-algorithm=CRC32
           gh api '/repos/databendlabs/bendsql/releases' > releases.json
-          aws s3 cp releases.json s3://repo/bendsql/releases.json
+          aws s3 cp releases.json s3://repo/bendsql/releases.json --checksum-algorithm=CRC32
 
   distribution:
     needs: build_linux
