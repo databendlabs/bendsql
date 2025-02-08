@@ -296,7 +296,7 @@ Then("Load file and Select should be equal", async function () {
   assert.deepEqual(ret, expected);
 });
 
-Then("temp table should work with cluster", async function () {
+Then("Temp table should work with cluster", async function () {
   await this.conn.exec(`create or replace temp table temp_1(a int)`);
   await this.conn.exec(`INSERT INTO temp_1 VALUES (1),(2)`);
 
