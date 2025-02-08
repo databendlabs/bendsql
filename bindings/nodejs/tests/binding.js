@@ -295,3 +295,16 @@ Then("Load file and Select should be equal", async function () {
   ];
   assert.deepEqual(ret, expected);
 });
+
+Then("temp table should work with cluster", async function () {
+  await this.conn.exec(`create or replace temp table temp_1(a int)`);
+  await this.conn.exec(`INSERT INTO temp_1 VALUES (1),(2)`);
+
+  const rows = await this.conn.queryIter("SELECT * FROM temp_1");
+  const ret = [];
+  for await (const row of rows) {
+    ret.push(row.values());
+  }
+  assert.deepEqual(ret, [[1], [2]]);
+  await this.conn.exec(`drop table temp_1`);
+});
