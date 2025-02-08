@@ -190,7 +190,7 @@ def _(context):
 def _(context):
     for i in range(10):
         context.cursor.execute(f"create or replace temp table temp_{i}(a int)")
-        context.cursor.execute(f"INSERT INTO temp_{i} VALUES (1),(i)")
+        context.cursor.execute(f"INSERT INTO temp_{i} VALUES (1),({i})")
         context.cursor.execute(f"SELECT * FROM temp_{i}")
         rows = context.cursor.fetchall()
         ret = [row.values() for row in rows]
