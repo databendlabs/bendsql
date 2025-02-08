@@ -194,7 +194,7 @@ def _(context):
         context.cursor.execute(f"SELECT * FROM temp_{i}")
         rows = context.cursor.fetchall()
         ret = [row.values() for row in rows]
-        expected = [(1), (i)]
+        expected = [(1，), (i，)]
         assert ret == expected, f"ret: {ret}"
         context.cursor.execute(f"DROP TABLE temp_{i}")
 
