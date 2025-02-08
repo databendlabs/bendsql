@@ -26,6 +26,7 @@ use databend_common_ast::parser::token::TokenKind;
 use databend_common_ast::parser::token::Tokenizer;
 use databend_driver::ServerStats;
 use databend_driver::{Client, Connection};
+use log::error;
 use once_cell::sync::Lazy;
 use rustyline::config::Builder;
 use rustyline::error::ReadlineError;
@@ -367,6 +368,16 @@ impl Session {
                         println!("^C");
                     }
                     ReadlineError::Eof => {
+                        break;
+                    }
+                    #[cfg(unix)]
+                    ReadlineError::Errno(err) => {
+                        error!("Unix err: {err}");
+                        break;
+                    }
+                    #[cfg(windows)]
+                    ReadlineError::SystemError(err) => {
+                        error!("Windows err: {err}");
                         break;
                     }
                     _ => {}
