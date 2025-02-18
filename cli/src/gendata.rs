@@ -70,7 +70,10 @@ impl Session {
         let mut results = vec![];
         let schema = Arc::new(gendata_schema());
 
-        for f in std::fs::read_dir(&temp_dir)? {
+        let mut entries: Vec<_> = std::fs::read_dir(&temp_dir)?.collect();
+        entries.sort_by_key(|e| e.as_ref().unwrap().path());
+
+        for f in entries {
             let f = f?;
             let path = f.path();
 
