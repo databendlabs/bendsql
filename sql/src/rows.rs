@@ -68,6 +68,18 @@ impl ServerStats {
             self.total_bytes = self.read_bytes;
         }
     }
+
+    pub fn merge(&mut self, other: &ServerStats) {
+        self.total_rows += other.total_rows;
+        self.total_bytes += other.total_bytes;
+        self.read_rows += other.read_rows;
+        self.read_bytes += other.read_bytes;
+        self.write_rows += other.write_rows;
+        self.write_bytes += other.write_bytes;
+        self.running_time_ms += other.running_time_ms;
+        self.spill_file_nums += other.spill_file_nums;
+        self.spill_bytes += other.spill_bytes;
+    }
 }
 
 impl From<databend_client::QueryStats> for ServerStats {

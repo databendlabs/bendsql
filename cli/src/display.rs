@@ -26,10 +26,10 @@ use tokio::time::Instant;
 use tokio_stream::StreamExt;
 use unicode_segmentation::UnicodeSegmentation;
 
+use crate::ast::QueryKind;
 use crate::{
     ast::{format_query, highlight_query},
     config::{ExpandMode, OutputFormat, OutputQuoteStyle, Settings},
-    session::QueryKind,
     web::set_data,
 };
 
@@ -94,10 +94,10 @@ impl FormatDisplay<'_> {
         if self.settings.show_progress {
             let pb = self.progress.take();
             match self.kind {
-                QueryKind::Get | QueryKind::Query => {
+                QueryKind::Get(_, _) | QueryKind::Query => {
                     self.progress = Some(display_progress(pb, ss, "read"));
                 }
-                QueryKind::Put | QueryKind::Update => {
+                QueryKind::Put(_, _) | QueryKind::Update => {
                     self.progress = Some(display_progress(pb, ss, "write"));
                 }
                 _ => {}
@@ -333,21 +333,21 @@ impl FormatDisplay<'_> {
                 QueryKind::Explain => (self.rows, "rows", "explain", 0, 0),
                 QueryKind::ShowCreate => (self.rows, "rows", "showcreate", 0, 0),
                 QueryKind::Query => (self.rows, "rows", "read", stats.read_rows, stats.read_bytes),
-                QueryKind::Update | QueryKind::AlterUserPassword => (
+                QueryKind::Update | QueryKind::AlterUserPassword | QueryKind::GenData(_, _, _) => (
                     stats.write_rows,
                     "rows",
                     "written",
                     stats.write_rows,
                     stats.write_bytes,
                 ),
-                QueryKind::Get => (
+                QueryKind::Get(_, _) => (
                     stats.read_rows,
                     "files",
                     "downloaded",
                     stats.read_rows,
                     stats.read_bytes,
                 ),
-                QueryKind::Put => (
+                QueryKind::Put(_, _) => (
                     stats.write_rows,
                     "files",
                     "uploaded",
