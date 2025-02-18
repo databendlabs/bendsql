@@ -24,7 +24,9 @@ pub use databend_driver_core::error::{Error, Result};
 pub use databend_driver_core::rows::{
     Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats,
 };
-pub use databend_driver_core::schema::{DataType, DecimalSize, Field, Schema, SchemaRef};
+pub use databend_driver_core::schema::{
+    DataType, DecimalSize, Field, NumberDataType, Schema, SchemaRef,
+};
 pub use databend_driver_core::value::Interval;
 pub use databend_driver_core::value::{NumberValue, Value};
 

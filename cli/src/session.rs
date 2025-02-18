@@ -40,6 +40,8 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
+use crate::ast::replace_newline_in_box_display;
+use crate::ast::QueryKind;
 use crate::config::Settings;
 use crate::config::TimeOption;
 use crate::display::INTERRUPTED_MESSAGE;
@@ -59,16 +61,6 @@ static VERSION_SHORT: Lazy<String> = Lazy::new(|| {
         None => format!("{}-{}", version, sha),
     }
 });
-
-// alter current user's password tokens
-const ALTER_USER_PASSWORD_TOKENS: [TokenKind; 6] = [
-    TokenKind::USER,
-    TokenKind::USER,
-    TokenKind::LParen,
-    TokenKind::RParen,
-    TokenKind::IDENTIFIED,
-    TokenKind::BY,
-];
 
 pub struct Session {
     client: Client,
@@ -527,22 +519,9 @@ impl Session {
                 };
 
                 let data = match other {
-                    QueryKind::Put => {
-                        let args: Vec<String> = get_put_get_args(query);
-                        if args.len() != 3 {
-                            eprintln!("put args are invalid, must be 2 argruments");
-                            return Ok(Some(ServerStats::default()));
-                        }
-                        self.conn.put_files(&args[1], &args[2]).await?
-                    }
-                    QueryKind::Get => {
-                        let args: Vec<String> = get_put_get_args(query);
-                        if args.len() != 3 {
-                            eprintln!("put args are invalid, must be 2 argruments");
-                            return Ok(Some(ServerStats::default()));
-                        }
-                        self.conn.get_files(&args[1], &args[2]).await?
-                    }
+                    QueryKind::Put(l, r) => self.conn.put_files(&l, &r).await?,
+                    QueryKind::Get(l, r) => self.conn.get_files(&l, &r).await?,
+                    QueryKind::GenData(t, s, o) => self.gendata(t, s, o).await?,
                     _ => self.conn.query_iter_ext(query).await?,
                 };
 
@@ -675,82 +654,6 @@ fn get_history_path() -> String {
         "{}/.bendsql_history",
         std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
     )
-}
-
-#[derive(PartialEq, Eq, Debug)]
-pub enum QueryKind {
-    Query,
-    Update,
-    Explain,
-    Put,
-    Get,
-    AlterUserPassword,
-    Graphical,
-    ShowCreate,
-}
-
-impl From<&str> for QueryKind {
-    fn from(query: &str) -> Self {
-        let mut tz = Tokenizer::new(query);
-        match tz.next() {
-            Some(Ok(t)) => match t.kind {
-                TokenKind::EXPLAIN => {
-                    if query.to_lowercase().contains("graphical") {
-                        QueryKind::Graphical
-                    } else {
-                        QueryKind::Explain
-                    }
-                }
-                TokenKind::SHOW => match tz.next() {
-                    Some(Ok(t)) if t.kind == TokenKind::CREATE => QueryKind::ShowCreate,
-                    _ => QueryKind::Query,
-                },
-                TokenKind::PUT => QueryKind::Put,
-                TokenKind::GET => QueryKind::Get,
-                TokenKind::ALTER => {
-                    let mut tzs = vec![];
-                    while let Some(Ok(t)) = tz.next() {
-                        tzs.push(t.kind);
-                        if tzs.len() == ALTER_USER_PASSWORD_TOKENS.len() {
-                            break;
-                        }
-                    }
-                    if tzs == ALTER_USER_PASSWORD_TOKENS {
-                        QueryKind::AlterUserPassword
-                    } else {
-                        QueryKind::Update
-                    }
-                }
-                TokenKind::DELETE
-                | TokenKind::UPDATE
-                | TokenKind::INSERT
-                | TokenKind::CREATE
-                | TokenKind::DROP
-                | TokenKind::OPTIMIZE => QueryKind::Update,
-                _ => QueryKind::Query,
-            },
-            _ => QueryKind::Query,
-        }
-    }
-}
-
-fn get_put_get_args(query: &str) -> Vec<String> {
-    query
-        .split_ascii_whitespace()
-        .map(|x| x.to_owned())
-        .collect()
-}
-
-fn replace_newline_in_box_display(query: &str) -> bool {
-    let mut tz = Tokenizer::new(query);
-    match tz.next() {
-        Some(Ok(t)) => match t.kind {
-            TokenKind::EXPLAIN => false,
-            TokenKind::SHOW => !matches!(tz.next(), Some(Ok(t)) if t.kind == TokenKind::CREATE),
-            _ => true,
-        },
-        _ => true,
-    }
 }
 
 impl Drop for Session {

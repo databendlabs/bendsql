@@ -12,14 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod query_kind;
+pub use query_kind::replace_newline_in_box_display;
+pub use query_kind::GenType;
+pub use query_kind::QueryKind;
+
 use databend_common_ast::parser::{parse_sql, token::TokenKind, tokenize_sql, Dialect};
 use sqlformat::{FormatOptions, QueryParams};
 
-use crate::session::QueryKind;
-
 pub fn format_query(query: &str) -> String {
     let kind = QueryKind::from(query);
-    if kind == QueryKind::Put || kind == QueryKind::Get {
+    if matches!(kind, QueryKind::Get(_, _) | QueryKind::Put(_, _)) {
         return query.to_owned();
     }
 

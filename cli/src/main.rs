@@ -18,6 +18,7 @@ mod args;
 mod ast;
 mod config;
 mod display;
+mod gendata;
 mod helper;
 mod session;
 mod trace;
