@@ -87,7 +87,7 @@ impl Params {
                 return v.replace_sql(self, &stmt, sql);
             }
         }
-        return sql.to_string();
+        sql.to_string()
     }
 }
 
@@ -144,7 +144,7 @@ impl Param for serde_json::Value {
                     }
                     s.push_str(&v.as_sql_string());
                 }
-                s.push_str("]");
+                s.push(']');
                 s
             }
             serde_json::Value::Object(map) => {
@@ -367,6 +367,13 @@ mod tests {
             let sql = "SELECT b = :b, a = :a FROM table WHERE a = :a AND '?' = cj AND b = :b AND c = :c AND d = :d AND e = :e AND f = :f";
             let replaced_sql = params.replace(sql);
             assert_eq!(replaced_sql, "SELECT b = '44', a = 1 FROM table WHERE a = 1 AND '?' = cj AND b = '44' AND c = 2 AND d = 3 AND e = '55' AND f = '66'");
+        }
+
+        {
+            let params = params! {1, "44", 2, 3, "55", "66"};
+            let sql = "SELECT $3, $2, $1 FROM table WHERE a = $1 AND '?' = cj AND b = $2 AND c = $3 AND d = $4 AND e = $5 AND f = $6";
+            let replaced_sql = params.replace(sql);
+            assert_eq!(replaced_sql, "SELECT 2, '44', 1 FROM table WHERE a = 1 AND '?' = cj AND b = '44' AND c = 2 AND d = 3 AND e = '55' AND f = '66'");
         }
     }
 }
