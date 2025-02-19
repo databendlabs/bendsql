@@ -122,6 +122,20 @@ row.setOpts({ variantAsObject: true });
 console.log(row.data());
 ```
 
+Parameter binding
+
+```javascript
+const row = await this.conn.queryRow(
+  "SELECT $1, $2, $3, $4",
+  (params = [3, false, 4, "55"]),
+);
+const row = await this.conn.queryRow(
+  "SELECT :a, :b, :c, :d",
+  (params = { a: 3, b: false, c: 4, d: "55" }),
+);
+const row = await this.conn.queryRow("SELECT ?, ?, ?, ?", [3, false, 4, "55"]);
+```
+
 ## Development
 
 ```shell

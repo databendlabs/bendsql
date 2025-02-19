@@ -170,22 +170,23 @@ impl Param for serde_json::Value {
 macro_rules! params {
     // Handle named parameters
     () => {
-	Params::default()
+	    $crate::Params::default()
     };
     ($($key:ident => $value:expr),* $(,)?) => {
-        Params::NamedParams({
+        $crate::Params::NamedParams({
             let mut map = HashMap::new();
+
             $(
-                map.insert(stringify!($key).to_string(), $value.as_sql_string());
+                map.insert(stringify!($key).to_string(), $crate::Param::as_sql_string(&$value));
             )*
             map
         })
     };
     // Handle positional parameters
     ($($value:expr),* $(,)?) => {
-        Params::QuestionParams(vec![
+        $crate::Params::QuestionParams(vec![
             $(
-                $value.as_sql_string(),
+                $crate::Param::as_sql_string(&$value),
             )*
         ])
     };

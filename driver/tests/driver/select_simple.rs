@@ -16,7 +16,7 @@ use std::assert_eq;
 use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
-use databend_driver::{Client, Connection, DecimalSize, NumberValue, Value};
+use databend_driver::{params, Client, Connection, DecimalSize, NumberValue, Value};
 
 use crate::common::DEFAULT_DSN;
 
@@ -100,6 +100,42 @@ async fn select_string() {
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();
     assert_eq!(val, "hello");
+}
+
+#[tokio::test]
+async fn select_params() {
+    let conn = prepare().await;
+
+    // Test with positional parameters
+    let row = conn
+        .query_row("SELECT $1, $2, $3, $4", (3, false, 4, "55"))
+        .await
+        .unwrap();
+    assert!(row.is_some());
+    let row = row.unwrap();
+    let (v1, v2, v3, v4): (i32, bool, i32, String) = row.try_into().unwrap();
+    assert_eq!((v1, v2, v3, v4), (3, false, 4, "55".to_string()));
+
+    // Test with named parameters
+    let params = params! {a => 3, b => false, c => 4, d => "55"};
+    let row = conn
+        .query_row("SELECT :a, :b, :c, :d", params)
+        .await
+        .unwrap();
+    assert!(row.is_some());
+    let row = row.unwrap();
+    let (v1, v2, v3, v4): (i32, bool, i32, String) = row.try_into().unwrap();
+    assert_eq!((v1, v2, v3, v4), (3, false, 4, "55".to_string()));
+
+    // Test with positional parameters again
+    let row = conn
+        .query_row("SELECT ?, ?, ?, ?", (3, false, 4, "55"))
+        .await
+        .unwrap();
+    assert!(row.is_some());
+    let row = row.unwrap();
+    let (v1, v2, v3, v4): (i32, bool, i32, String) = row.try_into().unwrap();
+    assert_eq!((v1, v2, v3, v4), (3, false, 4, "55".to_string()));
 }
 
 #[tokio::test]

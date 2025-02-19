@@ -44,6 +44,26 @@ while let Some(row) = rows.next().await {
 }
 ```
 
+### Parameter bindings
+
+```rust
+let row = conn
+    .query_row("SELECT $1, $2, $3, $4", (3, false, 4, "55"))
+    .await
+    .unwrap();
+
+let params = params! {a => 3, b => false, c => 4, d => "55"};
+let row = conn
+    .query_row("SELECT :a, :b, :c, :d", params)
+    .await
+    .unwrap();
+
+let row = conn
+    .query_row("SELECT ?, ?, ?, ?", (3, false, 4, "55"))
+    .await
+    .unwrap();
+```
+
 ## Type Mapping
 
 [Databend Types](https://docs.databend.com/sql/sql-reference/data-types/)

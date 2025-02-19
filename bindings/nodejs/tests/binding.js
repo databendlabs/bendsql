@@ -41,6 +41,23 @@ Then("Select string {string} should be equal to {string}", async function (input
   assert.equal(output, value);
 });
 
+Then("Select params binding", async function () {
+  {
+    const row = await this.conn.queryRow("SELECT $1, $2, $3, $4", (params = [3, false, 4, "55"]));
+    assert.deepEqual(row.values(), [3, false, 4, "55"]);
+  }
+
+  {
+    const row = await this.conn.queryRow("SELECT :a, :b, :c, :d", (params = { a: 3, b: false, c: 4, d: "55" }));
+    assert.deepEqual(row.values(), [3, false, 4, "55"]);
+  }
+
+  {
+    const row = await this.conn.queryRow("SELECT ?, ?, ?, ?", [3, false, 4, "55"]);
+    assert.deepEqual(row.values(), [3, false, 4, "55"]);
+  }
+});
+
 Then("Select types should be expected native types", async function () {
   // BOOLEAN
   {

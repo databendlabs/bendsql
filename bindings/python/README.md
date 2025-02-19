@@ -90,6 +90,20 @@ async def main():
 asyncio.run(main())
 ```
 
+### Parameter bindings
+
+```python
+# Test with positional parameters
+row = await context.conn.query_row("SELECT ?, ?, ?, ?", (3, False, 4, "55"))
+row = await context.conn.query_row(
+    "SELECT :a, :b, :c, :d", {"a": 3, "b": False, "c": 4, "d": "55"}
+)
+row = await context.conn.query_row(
+    "SELECT ?", 3
+)
+row = await context.conn.query_row("SELECT ?, ?, ?, ?", params = (3, False, 4, "55"))
+```
+
 ## Type Mapping
 
 [Databend Types](https://docs.databend.com/sql/sql-reference/data-types/)
