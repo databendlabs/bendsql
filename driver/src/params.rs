@@ -79,28 +79,12 @@ impl Params {
 
     pub fn replace(&self, sql: &str) -> String {
         if !self.is_empty() {
-            if let Ok((stmt, _)) = databend_common_ast::parser::parse_sql(sql, Dialect::PostgreSQL)
+            let tokens = databend_common_ast::parser::tokenize_sql(sql).unwrap();
+            if let Ok((stmt, _)) =
+                databend_common_ast::parser::parse_sql(&tokens, Dialect::PostgreSQL)
             {
-                let mut sql = sql.to_string();
-                let mut positions = Vec::new();
-
-                for token in tokens {
-                    match token.kind {
-                        databend_common_ast::parser::token::TokenKind::Placeholder => {
-                            positions.push(token.span);
-                        }
-                        _ => {}
-                    }
-                }
-                let size = positions.len();
-                for (index, r) in positions.iter().rev().enumerate() {
-                    if let Some(param) = self.get_by_index(size - index) {
-                        let start = r.start as usize;
-                        let end = r.end as usize;
-                        sql.replace_range(start..end, param);
-                    }
-                }
-                return sql;
+                let mut v = super::place_holder::PlaceholderVisitor::new();
+                return v.replace_sql(self, &stmt, sql);
             }
         }
         return sql.to_string();
@@ -248,15 +232,8 @@ impl_from_tuple_for_params! { T1, T2, T3, T4, T5, T6, T7, T8, T9, T10 }
 impl From<Option<serde_json::Value>> for Params {
     fn from(value: Option<serde_json::Value>) -> Self {
         match value {
-            Some(serde_json::Value::Array(obj)) => {
-                let mut array = Vec::new();
-                for v in obj {
-                    array.push(v.as_sql_string());
-                }
-                Params::QuestionParams(array)
-            }
+            Some(v) => v.into(),
             None => Params::default(),
-            _ => unimplemented!("json value must be an array as params"),
         }
     }
 }
@@ -377,5 +354,19 @@ mod tests {
             "SELECT * FROM table WHERE a = ? AND '?' = cj AND b = ? AND c = ? AND d = ? AND e = ? AND f = ?";
         let replaced_sql = params.replace(sql);
         assert_eq!(replaced_sql, "SELECT * FROM table WHERE a = 1 AND '?' = cj AND b = '44' AND c = 2 AND d = 3 AND e = '55' AND f = '66'");
+
+        let params = params! {a => 1, b => "44", c => 2, d => 3, e => "55", f => "66"};
+
+        {
+            let sql = "SELECT * FROM table WHERE a = :a AND '?' = cj AND b = :b AND c = :c AND d = :d AND e = :e AND f = :f";
+            let replaced_sql = params.replace(sql);
+            assert_eq!(replaced_sql, "SELECT * FROM table WHERE a = 1 AND '?' = cj AND b = '44' AND c = 2 AND d = 3 AND e = '55' AND f = '66'");
+        }
+
+        {
+            let sql = "SELECT b = :b, a = :a FROM table WHERE a = :a AND '?' = cj AND b = :b AND c = :c AND d = :d AND e = :e AND f = :f";
+            let replaced_sql = params.replace(sql);
+            assert_eq!(replaced_sql, "SELECT b = '44', a = 1 FROM table WHERE a = 1 AND '?' = cj AND b = '44' AND c = 2 AND d = 3 AND e = '55' AND f = '66'");
+        }
     }
 }
