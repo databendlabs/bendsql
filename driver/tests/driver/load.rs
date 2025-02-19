@@ -47,7 +47,7 @@ async fn prepare_table(client: &Client, prefix: &str) -> String {
             publish_time TIMESTAMP NULL)",
         table
     );
-    conn.exec(&sql).await.unwrap();
+    conn.exec(&sql, ()).await.unwrap();
     table
 }
 
@@ -87,7 +87,7 @@ async fn prepare_data_with_file(table: &str, file_type: &str, client: &Client) {
 async fn check_result(table: &str, client: &Client) {
     let conn = client.get_conn().await.unwrap();
     let sql = format!("SELECT * FROM `{}`", table);
-    let rows = conn.query_iter(&sql).await.unwrap();
+    let rows = conn.query_iter(&sql, ()).await.unwrap();
     let result: Vec<(String, String, String, NaiveDateTime)> =
         rows.map(|r| r.unwrap().try_into().unwrap()).collect().await;
 
@@ -115,7 +115,7 @@ async fn check_result(table: &str, client: &Client) {
     assert_eq!(result, expected);
 
     let sql = format!("DROP TABLE `{}`;", table);
-    conn.exec(&sql).await.unwrap();
+    conn.exec(&sql, ()).await.unwrap();
 }
 
 #[tokio::test]

@@ -29,7 +29,7 @@ conn.exec(sql_insert).await.unwrap();
 ### query row
 
 ```rust
-let row = conn.query_row("SELECT * FROM books;").await.unwrap();
+let row = conn.query_row("SELECT * FROM books;", ()).await.unwrap();
 let (title,author,date): (String,String,i32) = row.unwrap().try_into().unwrap();
 println!("{} {} {}", title, author, date);
 ```
@@ -87,7 +87,7 @@ INSERT INTO example VALUES ('{"a": 1, "b": "hello"}');
 ```
 
 ```rust
-let row = conn.query_row("SELECT * FROM example limit 1;").await.unwrap();
+let row = conn.query_row("SELECT * FROM example limit 1;", ()).await.unwrap();
 let (data,): (String,) = row.unwrap().try_into().unwrap();
 let value: serde_json::Value = serde_json::from_str(&data).unwrap();
 println!("{:?}", value);

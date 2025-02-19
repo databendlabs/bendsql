@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
 use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
-use crate::utils::wait_for_future;
+use crate::utils::{to_sql_params, wait_for_future};
 
 #[pyclass(module = "databend_driver")]
 pub struct BlockingDatabendClient(databend_driver::Client);
@@ -56,7 +56,7 @@ impl BlockingDatabendClient {
 }
 
 #[pyclass(module = "databend_driver")]
-pub struct BlockingDatabendConnection(Arc<Box<dyn databend_driver::Connection>>);
+pub struct BlockingDatabendConnection(Arc<databend_driver::Connection>);
 
 #[pymethods]
 impl BlockingDatabendConnection {
@@ -75,34 +75,59 @@ impl BlockingDatabendConnection {
         Ok(ret)
     }
 
-    pub fn exec(&self, py: Python, sql: String) -> PyResult<i64> {
+    #[pyo3(signature = (sql, params=None))]
+    pub fn exec(&self, py: Python, sql: String, params: Option<Bound<PyAny>>) -> PyResult<i64> {
         let this = self.0.clone();
+        let params = to_sql_params(params);
         let ret = wait_for_future(py, async move {
-            this.exec(&sql).await.map_err(DriverError::new)
+            this.exec(&sql, params).await.map_err(DriverError::new)
         })?;
         Ok(ret)
     }
 
-    pub fn query_row(&self, py: Python, sql: String) -> PyResult<Option<Row>> {
+    #[pyo3(signature = (sql, params=None))]
+    pub fn query_row(
+        &self,
+        py: Python,
+        sql: String,
+        params: Option<Bound<PyAny>>,
+    ) -> PyResult<Option<Row>> {
         let this = self.0.clone();
+        let params = to_sql_params(params);
         let ret = wait_for_future(py, async move {
-            this.query_row(&sql).await.map_err(DriverError::new)
+            this.query_row(&sql, params).await.map_err(DriverError::new)
         })?;
         Ok(ret.map(Row::new))
     }
 
-    pub fn query_all(&self, py: Python, sql: String) -> PyResult<Vec<Row>> {
+    #[pyo3(signature = (sql, params=None))]
+    pub fn query_all(
+        &self,
+        py: Python,
+        sql: String,
+        params: Option<Bound<PyAny>>,
+    ) -> PyResult<Vec<Row>> {
         let this = self.0.clone();
+        let params = to_sql_params(params);
         let rows = wait_for_future(py, async move {
-            this.query_all(&sql).await.map_err(DriverError::new)
+            this.query_all(&sql, params).await.map_err(DriverError::new)
         })?;
         Ok(rows.into_iter().map(Row::new).collect())
     }
 
-    pub fn query_iter(&self, py: Python, sql: String) -> PyResult<RowIterator> {
+    #[pyo3(signature = (sql, params=None))]
+    pub fn query_iter(
+        &self,
+        py: Python,
+        sql: String,
+        params: Option<Bound<PyAny>>,
+    ) -> PyResult<RowIterator> {
         let this = self.0.clone();
+        let params = to_sql_params(params);
         let it = wait_for_future(py, async {
-            this.query_iter(&sql).await.map_err(DriverError::new)
+            this.query_iter(&sql, params)
+                .await
+                .map_err(DriverError::new)
         })?;
         Ok(RowIterator::new(it))
     }
@@ -159,14 +184,14 @@ impl BlockingDatabendConnection {
 /// https://peps.python.org/pep-0249/#cursor-objects
 #[pyclass(module = "databend_driver")]
 pub struct BlockingDatabendCursor {
-    conn: Arc<Box<dyn databend_driver::Connection>>,
+    conn: Arc<databend_driver::Connection>,
     rows: Option<Arc<Mutex<databend_driver::RowIterator>>>,
     // buffer is used to store only the first row after execute
     buffer: Vec<Row>,
 }
 
 impl BlockingDatabendCursor {
-    fn new(conn: Box<dyn databend_driver::Connection>) -> Self {
+    fn new(conn: databend_driver::Connection) -> Self {
         Self {
             conn: Arc::new(conn),
             rows: None,
@@ -243,7 +268,7 @@ impl BlockingDatabendCursor {
         // fetch first row after execute
         // then we could finish the query directly if there's no result
         let (first, rows) = wait_for_future(py, async move {
-            let mut rows = conn.query_iter(&operation).await?;
+            let mut rows = conn.query_iter(&operation, ()).await?;
             let first = rows.next().await.transpose()?;
             Ok::<_, databend_driver::Error>((first, rows))
         })

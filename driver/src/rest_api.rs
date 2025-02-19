@@ -34,7 +34,7 @@ use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
 use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
 use databend_driver_core::schema::{Schema, SchemaRef};
 
-use crate::conn::{Connection, ConnectionInfo, Reader};
+use crate::conn::{ConnectionInfo, IConnection, Reader};
 
 #[derive(Clone)]
 pub struct RestAPIConnection {
@@ -42,7 +42,7 @@ pub struct RestAPIConnection {
 }
 
 #[async_trait]
-impl Connection for RestAPIConnection {
+impl IConnection for RestAPIConnection {
     async fn info(&self) -> ConnectionInfo {
         ConnectionInfo {
             handler: "RestAPI".to_string(),

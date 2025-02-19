@@ -15,15 +15,12 @@
 use databend_common_ast::parser::token::{TokenKind, Tokenizer};
 
 use nom::branch::alt;
+use nom::bytes::complete::tag_no_case;
 use nom::character::complete::multispace0;
-use nom::multi::separated_list1;
+use nom::multi::separated_list0;
 use nom::number::float;
 use nom::Parser;
-use nom::{
-    bytes::complete::{tag, take_while},
-    character::complete::char,
-    IResult,
-};
+use nom::{bytes::complete::take_while, character::complete::char, IResult};
 
 // alter current user's password tokens
 const ALTER_USER_PASSWORD_TOKENS: [TokenKind; 6] = [
@@ -139,8 +136,8 @@ pub fn replace_newline_in_box_display(query: &str) -> bool {
 
 // Define the parser for the GenType
 fn gen_type(input: &str) -> IResult<&str, GenType> {
-    let (input, gen_type_str) = alt((tag("tpch"), tag("tpcds"))).parse(input)?;
-    let gen_type = match gen_type_str {
+    let (input, gen_type_str) = alt((tag_no_case("tpch"), tag_no_case("tpcds"))).parse(input)?;
+    let gen_type = match gen_type_str.to_ascii_lowercase().as_str() {
         "tpch" => GenType::TPCH,
         "tpcds" => GenType::TPCDS,
         _ => {
@@ -166,7 +163,7 @@ fn key_value(input: &str) -> IResult<&str, (&str, f32)> {
 
 // Define the parser for the entire gendata function
 fn gendata_parser(input: &str) -> IResult<&str, QueryKind> {
-    let (input, _) = tag("gendata")(input)?;
+    let (input, _) = tag_no_case("gendata")(input)?;
     let (input, _) = multispace0(input)?;
     let (input, _) = char('(')(input)?;
     let (input, _) = multispace0(input)?;
@@ -178,7 +175,7 @@ fn gendata_parser(input: &str) -> IResult<&str, QueryKind> {
     let (input, _) = multispace0(input)?;
 
     // Parse the key-value pairs
-    let (input, key_values) = separated_list1(char(','), key_value).parse(input)?;
+    let (input, key_values) = separated_list0(char(','), key_value).parse(input)?;
 
     let (input, _) = multispace0(input)?;
     let (input, _) = char(')')(input)?;
@@ -187,7 +184,7 @@ fn gendata_parser(input: &str) -> IResult<&str, QueryKind> {
     let mut scale = 0f32;
     let mut override_val = false;
     for (key, value) in key_values {
-        match key {
+        match key.to_ascii_lowercase().as_str() {
             "sf" | "scale" => scale = value,
             "override" => override_val = value > 0.0,
             _ => {}

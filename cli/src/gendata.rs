@@ -102,16 +102,17 @@ impl Session {
 
             let _ = self
                 .conn
-                .exec(&format!(
-                    "{create} TABLE {table_name} as SELECT * FROM '{stage}' limit 0",
-                ))
+                .exec(
+                    &format!("{create} TABLE {table_name} as SELECT * FROM '{stage}' limit 0",),
+                    (),
+                )
                 .await?;
 
             let _ = self
                 .conn
                 .exec(&format!(
                     "COPY INTO {table_name} FROM (SELECT * FROM '{stage}')  force = true purge = true",
-                ))
+                ),())
                 .await?;
 
             results.push(Ok(RowWithStats::Row(Row::from_vec(

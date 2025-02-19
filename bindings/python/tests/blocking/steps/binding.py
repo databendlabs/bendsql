@@ -66,7 +66,7 @@ async def _(context):
     assert row.values() == (timedelta(microseconds=1),), f"Interval: {row.values()}"
 
     # Decimal
-    row = context.conn.query_row("SELECT 15.7563::Decimal(8,4), 2.0+3.0")
+    row = context.conn.query_row("SELECT 15.7563::Decimal(?,?), 2.0+3.0", params = [8, 4])
     assert row.values() == (
         Decimal("15.7563"),
         Decimal("5.0"),

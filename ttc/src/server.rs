@@ -84,7 +84,7 @@ async fn process(mut socket: TcpStream, config: &Config) -> Result<(), Box<dyn s
         }
 
         while let Some((frame, size)) = decode_frame(&buf) {
-            execute_command(&frame, &mut socket, conn.as_mut()).await?;
+            execute_command(&frame, &mut socket, &mut conn).await?;
             buf.advance(size);
         }
     }
@@ -114,7 +114,7 @@ fn decode_frame(buf: &BytesMut) -> Option<(Vec<u8>, usize)> {
 async fn execute_command(
     command: &[u8],
     socket: &mut TcpStream,
-    conn: &mut dyn Connection,
+    conn: &mut Connection,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let command_str = String::from_utf8_lossy(command);
 

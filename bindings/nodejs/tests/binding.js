@@ -74,7 +74,7 @@ Then("Select types should be expected native types", async function () {
 
   // FLOAT
   {
-    const row = await this.conn.queryRow("SELECT 1.11::FLOAT, 2.22::FLOAT");
+    const row = await this.conn.queryRow("SELECT ?::FLOAT, ?::FLOAT", params = [1.11, 2.22]);
     assert.deepEqual(
       row.values().map((v) => v.toFixed(2)),
       [1.11, 2.22],
@@ -165,6 +165,21 @@ Then("Select types should be expected native types", async function () {
         { name: "T-shirt", price: 19.99 },
       ],
     });
+  }
+
+  // Variant as param
+  {
+    const value =
+      [3, '15', { aa: 3 }];
+    const row = await this.conn.queryRow(`SELECT ?, ?, ?`, params = value);
+    row.setOpts({ variantAsObject: true });
+    assert.deepEqual(row.values(), [
+      3,
+      '15',
+      {
+        aa: 3,
+      }
+    ]);
   }
 });
 

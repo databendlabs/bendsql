@@ -34,15 +34,15 @@ export declare class Connection {
   /** Get the databend version. */
   version(): Promise<string>
   /** Execute a SQL query, return the number of affected rows. */
-  exec(sql: string): Promise<number>
+  exec(sql: string, params?: Params | undefined | null): Promise<number>
   /** Execute a SQL query, and only return the first row. */
-  queryRow(sql: string): Promise<Row | null>
+  queryRow(sql: string, params?: Params | undefined | null): Promise<Row | null>
   /** Execute a SQL query and fetch all data into the result */
-  queryAll(sql: string): Promise<Array<Row>>
+  queryAll(sql: string, params?: Params | undefined | null): Promise<Array<Row>>
   /** Execute a SQL query, and return all rows. */
-  queryIter(sql: string): Promise<RowIterator>
+  queryIter(sql: string, params?: Params | undefined | null): Promise<RowIterator>
   /** Execute a SQL query, and return all rows with schema and stats. */
-  queryIterExt(sql: string): Promise<RowIteratorExt>
+  queryIterExt(sql: string, params?: Params | undefined | null): Promise<RowIteratorExt>
   /**
    * Load data with stage attachment.
    * The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
@@ -52,7 +52,7 @@ export declare class Connection {
    * Load file with stage attachment.
    * The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
    */
-  loadFile(sql: string, file: string, formatOptions: Record<string, string>, copyOptions?: Record<string, string> | undefined | null): Promise<ServerStats>
+  loadFile(sql: string, file: string, formatOptions?: Record<string, string> | undefined | null, copyOptions?: Record<string, string> | undefined | null): Promise<ServerStats>
 }
 export declare class ConnectionInfo {
   get handler(): string
@@ -108,5 +108,6 @@ export declare class ServerStats {
   get readBytes(): bigint
   get writeRows(): bigint
   get writeBytes(): bigint
+  get spillFileNums(): bigint
   get runningTimeMs(): number
 }
