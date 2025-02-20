@@ -48,6 +48,29 @@ def _(context):
     )
 
 
+@then("Select params binding")
+def _(context):
+    context.cursor.execute("SELECT ?, ?, ?, ?", (3, False, 4, "55"))
+    row = context.cursor.fetchone()
+    assert row.values() == (3, False, 4, "55"), f"output: {row.values()}"
+
+    # Test with named parameters
+    context.cursor.execute(
+        "SELECT :a, :b, :c, :d", {"a": 3, "b": False, "c": 4, "d": "55"}
+    )
+    row = context.cursor.fetchone()
+    assert row.values() == (3, False, 4, "55"), f"output: {row.values()}"
+
+    context.cursor.execute("SELECT ?", 4)
+    row = context.cursor.fetchone()
+    assert row.values() == (4,), f"output: {row.values()}"
+
+    # Test with positional parameters again
+    context.cursor.execute("SELECT ?, ?, ?, ?", (3, False, 4, "55"))
+    row = context.cursor.fetchone()
+    assert row.values() == (3, False, 4, "55"), f"output: {row.values()}"
+
+
 @then("Select string {input} should be equal to {output}")
 def _(context, input, output):
     context.cursor.execute(f"SELECT '{input}'")

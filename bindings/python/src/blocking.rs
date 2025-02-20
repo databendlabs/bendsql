@@ -252,23 +252,25 @@ impl BlockingDatabendCursor {
 
     /// Only `INSERT` and `REPLACE` statements are supported if parameters provided.
     /// Parameters will be translated into CSV format, and then loaded as stage attachment.
-    #[pyo3(signature = (operation, parameters=None))]
+    #[pyo3(signature = (operation, params=None, values=None))]
     pub fn execute<'p>(
         &'p mut self,
         py: Python<'p>,
         operation: String,
-        parameters: Option<Bound<'p, PyAny>>,
+        params: Option<Bound<'p, PyAny>>,
+        values: Option<Bound<'p, PyAny>>,
     ) -> PyResult<PyObject> {
-        if let Some(param) = parameters {
-            return self.executemany(py, operation, [param].to_vec());
+        if let Some(values) = values {
+            return self.executemany(py, operation, [values].to_vec());
         }
 
         self.reset();
         let conn = self.conn.clone();
         // fetch first row after execute
         // then we could finish the query directly if there's no result
+        let params = to_sql_params(params);
         let (first, rows) = wait_for_future(py, async move {
-            let mut rows = conn.query_iter(&operation, ()).await?;
+            let mut rows = conn.query_iter(&operation, params).await?;
             let first = rows.next().await.transpose()?;
             Ok::<_, databend_driver::Error>((first, rows))
         })
