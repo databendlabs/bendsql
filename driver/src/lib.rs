@@ -17,7 +17,7 @@ pub mod conn;
 #[cfg(feature = "flight-sql")]
 mod flight_sql;
 mod params;
-mod place_holder;
+mod placeholder;
 pub mod rest_api;
 
 pub use client::Client;

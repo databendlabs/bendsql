@@ -83,7 +83,7 @@ impl Params {
             if let Ok((stmt, _)) =
                 databend_common_ast::parser::parse_sql(&tokens, Dialect::PostgreSQL)
             {
-                let mut v = super::place_holder::PlaceholderVisitor::new();
+                let mut v = super::placeholder::PlaceholderVisitor::new();
                 return v.replace_sql(self, &stmt, sql);
             }
         }
