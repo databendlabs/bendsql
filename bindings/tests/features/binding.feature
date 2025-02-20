@@ -18,6 +18,10 @@ Feature: Databend Driver
         Given A new Databend Driver Client
         Then Select string "Hello, Databend!" should be equal to "Hello, Databend!"
 
+    Scenario: Select params
+        Given A new Databend Driver Client
+        Then Select params binding
+
     Scenario: Select Types
         Given A new Databend Driver Client
         Then Select types should be expected native types

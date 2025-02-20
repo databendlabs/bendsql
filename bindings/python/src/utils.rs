@@ -12,7 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pyo3::prelude::*;
+use std::collections::HashMap;
+
+use databend_driver::Param;
+use databend_driver::Params;
+use pyo3::exceptions::PyAttributeError;
+use pyo3::types::PyTuple;
+use pyo3::{
+    prelude::*,
+    types::{PyDict, PyList},
+};
 
 #[ctor::ctor]
 pub(crate) static RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
@@ -27,4 +36,60 @@ where
     F::Output: Send,
 {
     py.allow_threads(|| RUNTIME.block_on(f))
+}
+
+//  params: Option<Bound<'p, PyAny>>
+pub(crate) fn to_sql_params(v: Option<Bound<PyAny>>) -> Params {
+    match v {
+        Some(v) => {
+            if let Ok(v) = v.downcast::<PyDict>() {
+                let mut params = HashMap::new();
+                for (k, v) in v.iter() {
+                    let k = k.extract::<String>().unwrap();
+                    let v = to_sql_string(v).unwrap();
+                    params.insert(k, v);
+                }
+                Params::NamedParams(params)
+            } else if let Ok(v) = v.downcast::<PyList>() {
+                let mut params = vec![];
+                for v in v.iter() {
+                    let v = to_sql_string(v).unwrap();
+                    params.push(v);
+                }
+                Params::QuestionParams(params)
+            } else if let Ok(v) = v.downcast::<PyTuple>() {
+                let mut params = vec![];
+                for v in v.iter() {
+                    let v = to_sql_string(v).unwrap();
+                    params.push(v);
+                }
+                Params::QuestionParams(params)
+            } else {
+                Params::QuestionParams(vec![to_sql_string(v).unwrap()])
+            }
+        }
+        None => Params::default(),
+    }
+}
+
+fn to_sql_string(v: Bound<PyAny>) -> PyResult<String> {
+    match v.downcast::<PyAny>() {
+        Ok(v) => {
+            if let Ok(v) = v.extract::<String>() {
+                Ok(v.as_sql_string())
+            } else if let Ok(v) = v.extract::<bool>() {
+                Ok(v.as_sql_string())
+            } else if let Ok(v) = v.extract::<i64>() {
+                Ok(v.as_sql_string())
+            } else if let Ok(v) = v.extract::<f64>() {
+                Ok(v.as_sql_string())
+            } else {
+                Err(PyAttributeError::new_err(format!(
+                    "Invalid parameter type for: {:?}, expected str, bool, int or float",
+                    v
+                )))
+            }
+        }
+        Err(e) => Err(e.into()),
+    }
 }

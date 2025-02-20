@@ -19,7 +19,10 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3_async_runtimes::tokio::future_into_py;
 
-use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
+use crate::{
+    types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION},
+    utils::to_sql_params,
+};
 
 #[pyclass(module = "databend_driver")]
 pub struct AsyncDatabendClient(databend_driver::Client);
@@ -44,7 +47,7 @@ impl AsyncDatabendClient {
 }
 
 #[pyclass(module = "databend_driver")]
-pub struct AsyncDatabendConnection(Arc<Box<dyn databend_driver::Connection>>);
+pub struct AsyncDatabendConnection(Arc<databend_driver::Connection>);
 
 #[pymethods]
 impl AsyncDatabendConnection {
@@ -64,27 +67,63 @@ impl AsyncDatabendConnection {
         })
     }
 
-    pub fn exec<'p>(&'p self, py: Python<'p>, sql: String) -> PyResult<Bound<'p, PyAny>> {
+    #[pyo3(signature = (sql, params=None))]
+    pub fn format_sql(
+        &self,
+        _py: Python,
+        sql: String,
+        params: Option<Bound<PyAny>>,
+    ) -> PyResult<String> {
         let this = self.0.clone();
+        let params = to_sql_params(params);
+        Ok(this.format_sql(&sql, params))
+    }
+
+    #[pyo3(signature = (sql, params=None))]
+    pub fn exec<'p>(
+        &'p self,
+        py: Python<'p>,
+        sql: String,
+        params: Option<Bound<'p, PyAny>>,
+    ) -> PyResult<Bound<'p, PyAny>> {
+        let this = self.0.clone();
+        let params = to_sql_params(params);
         future_into_py(py, async move {
-            let res = this.exec(&sql).await.map_err(DriverError::new)?;
+            let res = this.exec(&sql, params).await.map_err(DriverError::new)?;
             Ok(res)
         })
     }
 
-    pub fn query_row<'p>(&'p self, py: Python<'p>, sql: String) -> PyResult<Bound<'p, PyAny>> {
+    #[pyo3(signature = (sql, params=None))]
+    pub fn query_row<'p>(
+        &'p self,
+        py: Python<'p>,
+        sql: String,
+        params: Option<Bound<'p, PyAny>>,
+    ) -> PyResult<Bound<'p, PyAny>> {
         let this = self.0.clone();
+        let params = to_sql_params(params);
         future_into_py(py, async move {
-            let row = this.query_row(&sql).await.map_err(DriverError::new)?;
+            let row = this
+                .query_row(&sql, params)
+                .await
+                .map_err(DriverError::new)?;
             Ok(row.map(Row::new))
         })
     }
 
-    pub fn query_all<'p>(&'p self, py: Python<'p>, sql: String) -> PyResult<Bound<'p, PyAny>> {
+    #[pyo3(signature = (sql, params=None))]
+    pub fn query_all<'p>(
+        &'p self,
+        py: Python<'p>,
+        sql: String,
+        params: Option<Bound<'p, PyAny>>,
+    ) -> PyResult<Bound<'p, PyAny>> {
         let this = self.0.clone();
+        let params = to_sql_params(params);
         future_into_py(py, async move {
             let rows: Vec<Row> = this
-                .query_all(&sql)
+                .query_all(&sql, params)
                 .await
                 .map_err(DriverError::new)?
                 .into_iter()
@@ -94,10 +133,21 @@ impl AsyncDatabendConnection {
         })
     }
 
-    pub fn query_iter<'p>(&'p self, py: Python<'p>, sql: String) -> PyResult<Bound<'p, PyAny>> {
+    #[pyo3(signature = (sql, params=None))]
+    pub fn query_iter<'p>(
+        &'p self,
+        py: Python<'p>,
+        sql: String,
+        params: Option<Bound<'p, PyAny>>,
+    ) -> PyResult<Bound<'p, PyAny>> {
         let this = self.0.clone();
+        let params = to_sql_params(params);
+
         future_into_py(py, async move {
-            let streamer = this.query_iter(&sql).await.map_err(DriverError::new)?;
+            let streamer = this
+                .query_iter(&sql, params)
+                .await
+                .map_err(DriverError::new)?;
             Ok(RowIterator::new(streamer))
         })
     }

@@ -97,6 +97,26 @@ create stage s_temp;
 put fs:///tmp/a*.txt @s_temp/abc;
 ```
 
+### Generate TPCH/TPCDS datasets
+
+```sql
+root@localhost:8000/test> gendata(tpch, sf = 0.01, override = 1);
+
+┌─────────────────────────────┐
+│   table  │ status │   size  │
+│  String  │ String │  UInt64 │
+├──────────┼────────┼─────────┤
+│ customer │ OK     │  130089 │
+│ lineitem │ OK     │ 2551994 │
+│ nation   │ OK     │    2195 │
+│ orders   │ OK     │  598190 │
+│ part     │ OK     │   77400 │
+│ partsupp │ OK     │  437252 │
+│ region   │ OK     │    1018 │
+│ supplier │ OK     │   10653 │
+└─────────────────────────────┘
+```
+
 ## Features
 
 - basic keywords highlight
