@@ -103,6 +103,11 @@ impl Connection {
         self.inner.version().await
     }
 
+    pub fn format_sql<P: Into<Params> + Send>(&self, sql: &str, params: P) -> String {
+        let params = params.into();
+        params.replace(sql)
+    }
+
     pub async fn kill_query(&self, query_id: &str) -> Result<()> {
         self.inner.kill_query(query_id).await
     }

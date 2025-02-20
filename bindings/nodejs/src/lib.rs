@@ -103,6 +103,11 @@ impl Connection {
         self.inner.version().await.map_err(format_napi_error)
     }
 
+    #[napi]
+    pub fn format_sql(&self, sql: String, params: Option<Params>) -> Result<String> {
+        Ok(self.inner.format_sql(&sql, params))
+    }
+
     /// Execute a SQL query, return the number of affected rows.
     #[napi]
     pub async fn exec(&self, sql: String, params: Option<Params>) -> Result<i64> {

@@ -33,6 +33,7 @@ export declare class Connection {
   info(): Promise<ConnectionInfo>
   /** Get the databend version. */
   version(): Promise<string>
+  formatSql(sql: string, params?: Params | undefined | null): string
   /** Execute a SQL query, return the number of affected rows. */
   exec(sql: string, params?: Params | undefined | null): Promise<number>
   /** Execute a SQL query, and only return the first row. */

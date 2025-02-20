@@ -68,6 +68,18 @@ impl AsyncDatabendConnection {
     }
 
     #[pyo3(signature = (sql, params=None))]
+    pub fn format_sql(
+        &self,
+        _py: Python,
+        sql: String,
+        params: Option<Bound<PyAny>>,
+    ) -> PyResult<String> {
+        let this = self.0.clone();
+        let params = to_sql_params(params);
+        Ok(this.format_sql(&sql, params))
+    }
+
+    #[pyo3(signature = (sql, params=None))]
     pub fn exec<'p>(
         &'p self,
         py: Python<'p>,
