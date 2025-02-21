@@ -91,7 +91,7 @@ impl Session {
             let path = f.path();
 
             // Skip if the path is a directory or if it does not end with .parquet
-            if path.is_dir() || path.extension().map_or(true, |ext| ext != "parquet") {
+            if path.is_dir() || path.extension().is_none_or(|ext| ext != "parquet") {
                 continue;
             }
             let table_name = path.file_stem().unwrap().to_str().unwrap().to_string();
