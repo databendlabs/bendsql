@@ -47,7 +47,7 @@ pub struct SettingsConfig {
     pub max_width: Option<usize>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum ExpandMode {
     On,
     Off,

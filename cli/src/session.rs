@@ -42,6 +42,7 @@ use tokio_stream::StreamExt;
 
 use crate::ast::replace_newline_in_box_display;
 use crate::ast::QueryKind;
+use crate::config::ExpandMode;
 use crate::config::Settings;
 use crate::config::TimeOption;
 use crate::display::INTERRUPTED_MESSAGE;
@@ -459,10 +460,19 @@ impl Session {
         'Parser: loop {
             let mut is_valid = true;
             let tokenizer = Tokenizer::new(&self.query);
+            let mut previous_token_backslash = false;
             for token in tokenizer {
                 match token {
                     Ok(token) => {
-                        if let TokenKind::SemiColon = token.kind {
+                        // SQL end with `;` or `\G` in repl
+                        let is_end_query = matches!(token.kind, TokenKind::SemiColon);
+                        let is_slash_g = self.is_repl
+                            && (previous_token_backslash
+                                && token.kind == TokenKind::Ident
+                                && token.text() == "G")
+                            || (token.text().ends_with("\\G"));
+
+                        if is_end_query || is_slash_g {
                             // push to current and continue the tokenizer
                             let (sql, remain) = self.query.split_at(token.span.end as usize);
                             if is_valid && !sql.is_empty() {
@@ -471,6 +481,7 @@ impl Session {
                             self.query = remain.to_string();
                             continue 'Parser;
                         }
+                        previous_token_backslash = matches!(token.kind, TokenKind::Backslash);
                     }
                     Err(_) => {
                         // ignore current query if have invalid token.
@@ -491,15 +502,20 @@ impl Session {
         is_repl: bool,
         query: &str,
     ) -> Result<Option<ServerStats>> {
-        let query = query.trim_end_matches(';').trim();
-
+        let mut query = query.trim_end_matches(';').trim();
+        let mut expand = None;
         self.interrupted.store(false, Ordering::SeqCst);
+
         if is_repl {
             if query.starts_with('!') {
                 return self.handle_commands(query).await;
             }
             if query == "exit" || query == "quit" {
                 return Ok(None);
+            }
+            if query.ends_with("\\G") {
+                query = query.trim_end_matches("\\G");
+                expand = Some(ExpandMode::On);
             }
         }
 
@@ -534,7 +550,7 @@ impl Session {
                     data,
                     self.interrupted.clone(),
                 );
-                let stats = displayer.display().await?;
+                let stats = displayer.display(expand).await?;
                 Ok(Some(stats))
             }
         }

@@ -11,9 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
-use std::sync::Arc;
-
 use crate::{ast::GenType, session::Session};
 use anyhow::anyhow;
 use anyhow::Result;
@@ -26,13 +23,19 @@ use databend_driver::RowStatsIterator;
 use databend_driver::RowWithStats;
 use databend_driver::Schema;
 
-use databend_driver::Value;
-use duckdb::params;
-use duckdb::Connection;
-use tempfile::tempdir;
-use tokio::fs::File;
-use tokio::io::BufReader;
+#[cfg(not(target_arch = "x86_64"))]
+impl Session {
+    pub(crate) async fn gendata(
+        &self,
+        _t: GenType,
+        _scale: f32,
+        _drop_override: bool,
+    ) -> Result<RowStatsIterator> {
+        Err(anyhow!("gendata is not supported on this platform"))
+    }
+}
 
+#[cfg(target_arch = "x86_64")]
 impl Session {
     pub(crate) async fn gendata(
         &self,
@@ -40,6 +43,15 @@ impl Session {
         scale: f32,
         drop_override: bool,
     ) -> Result<RowStatsIterator> {
+        use std::sync::Arc;
+
+        use databend_driver::Value;
+        use duckdb::params;
+        use duckdb::Connection;
+        use tempfile::tempdir;
+        use tokio::fs::File;
+        use tokio::io::BufReader;
+
         let temp_dir = tempdir()?;
         // use duckdb to generate tpch/tpcds data in memory and upload it via upload api
         let conn = Connection::open_in_memory().map_err(|err| anyhow!("{}", err))?;
