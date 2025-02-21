@@ -37,7 +37,7 @@ pub(crate) const INTERRUPTED_MESSAGE: &str = "Interrupted by Ctrl+C";
 
 #[async_trait::async_trait]
 pub trait ChunkDisplay {
-    async fn display(&mut self) -> Result<ServerStats>;
+    async fn display(&mut self, expand: Option<ExpandMode>) -> Result<ServerStats>;
 }
 
 pub struct FormatDisplay<'a> {
@@ -131,7 +131,7 @@ impl FormatDisplay<'_> {
         Ok(())
     }
 
-    async fn display_table(&mut self) -> Result<()> {
+    async fn display_table(&mut self, expand: Option<ExpandMode>) -> Result<()> {
         if self.settings.display_pretty_sql {
             let format_sql = format_query(self.query);
             let format_sql = highlight_query(&format_sql);
@@ -187,7 +187,8 @@ impl FormatDisplay<'_> {
             return Ok(());
         }
 
-        match self.settings.expand {
+        let expand = expand.unwrap_or(self.settings.expand);
+        match expand {
             ExpandMode::On => {
                 print_expanded(schema, &rows)?;
             }
@@ -383,14 +384,14 @@ impl FormatDisplay<'_> {
 
 #[async_trait::async_trait]
 impl ChunkDisplay for FormatDisplay<'_> {
-    async fn display(&mut self) -> Result<ServerStats> {
+    async fn display(&mut self, expand: Option<ExpandMode>) -> Result<ServerStats> {
         if self.interrupted.load(Ordering::SeqCst) {
             return Err(anyhow!(INTERRUPTED_MESSAGE));
         }
 
         match self.settings.output_format {
             OutputFormat::Table => {
-                self.display_table().await?;
+                self.display_table(expand).await?;
             }
             OutputFormat::CSV => {
                 self.display_csv().await?;
@@ -834,7 +835,10 @@ fn print_expanded(schema: SchemaRef, results: &[Row]) -> Result<()> {
         }
     }
     for (row, result) in results.iter().enumerate() {
-        println!("-[ RECORD {} ]-----------------------------------", row + 1);
+        println!(
+            "*************************** {}. row ***************************",
+            row + 1
+        );
         for (idx, field) in schema.fields().iter().enumerate() {
             println!("{: >head_width$}: {}", field.name, result.values()[idx]);
         }
