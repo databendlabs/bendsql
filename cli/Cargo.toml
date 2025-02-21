@@ -10,7 +10,10 @@ license = { workspace = true }
 authors = { workspace = true }
 repository = { workspace = true }
 
-[target.'cfg(target_arch = "x86_64")'.dependencies]
+[target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
+duckdb = { version = "0.10.2", features = ["bundled"]}
+
+[target.'cfg(all(target_arch = "aarch64", target_os = "macos"))'.dependencies]
 duckdb = { version = "0.10.2", features = ["bundled"]}
 
 [dependencies]
