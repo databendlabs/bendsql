@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use databend_driver::SchemaRef;
 use pyo3::exceptions::{PyAttributeError, PyException, PyStopIteration};
 use pyo3::types::{PyList, PyTuple};
 use pyo3::{prelude::*, IntoPyObjectExt};
@@ -200,6 +201,7 @@ pub struct BlockingDatabendCursor {
     rows: Option<Arc<Mutex<databend_driver::RowIterator>>>,
     // buffer is used to store only the first row after execute
     buffer: Vec<Row>,
+    schema: Option<SchemaRef>,
 }
 
 impl BlockingDatabendCursor {
@@ -208,6 +210,7 @@ impl BlockingDatabendCursor {
             conn: Arc::new(conn),
             rows: None,
             buffer: Vec::new(),
+            schema: None,
         }
     }
 }
@@ -216,6 +219,7 @@ impl BlockingDatabendCursor {
     fn reset(&mut self) {
         self.rows = None;
         self.buffer.clear();
+        self.schema = None;
     }
 }
 
@@ -223,28 +227,33 @@ impl BlockingDatabendCursor {
 impl BlockingDatabendCursor {
     #[getter]
     pub fn description<'p>(&'p self, py: Python<'p>) -> PyResult<PyObject> {
-        match self.rows {
-            None => Ok(py.None()),
-            Some(ref rows) => {
-                let schema = wait_for_future(py, async move {
-                    let rows = rows.lock().await;
-                    rows.schema()
-                });
-                let mut fields = vec![];
-                for field in schema.fields() {
-                    let field = (
-                        field.name.clone(),          // name
-                        field.data_type.to_string(), // type_code
-                        None::<i64>,                 // display_size
-                        None::<i64>,                 // internal_size
-                        None::<i64>,                 // precision
-                        None::<i64>,                 // scale
-                        None::<bool>,                // null_ok
-                    );
-                    fields.push(field.into_pyobject(py)?);
-                }
-                PyList::new(py, fields)?.into_py_any(py)
+        if let Some(ref schema) = self.schema {
+            let mut fields = vec![];
+            for field in schema.fields() {
+                let field = (
+                    field.name.clone(),          // name
+                    field.data_type.to_string(), // type_code
+                    None::<i64>,                 // display_size
+                    None::<i64>,                 // internal_size
+                    None::<i64>,                 // precision
+                    None::<i64>,                 // scale
+                    None::<bool>,                // null_ok
+                );
+                fields.push(field.into_pyobject(py)?);
             }
+            PyList::new(py, fields)?.into_py_any(py)
+        } else {
+            Ok(py.None())
+        }
+    }
+
+    fn set_schema(&mut self, py: Python) {
+        if let Some(ref rows) = self.rows {
+            let schema = wait_for_future(py, async move {
+                let rows = rows.lock().await;
+                rows.schema()
+            });
+            self.schema = Some(schema)
         }
     }
 
@@ -291,6 +300,7 @@ impl BlockingDatabendCursor {
             self.buffer.push(Row::new(first));
         }
         self.rows = Some(Arc::new(Mutex::new(rows)));
+        self.set_schema(py);
         Ok(py.None())
     }
 
