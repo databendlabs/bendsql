@@ -170,6 +170,9 @@ def _(context):
         ret.append(row.values())
     assert ret == expected, f"ret: {ret}"
 
+    desc = context.cursor.description
+    assert desc != None
+
     # fetchmany
     context.cursor.execute("SELECT * FROM test")
     rows = context.cursor.fetchmany(3)
