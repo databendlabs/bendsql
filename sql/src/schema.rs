@@ -101,7 +101,7 @@ pub enum DataType {
 impl DataType {
     pub fn is_numeric(&self) -> bool {
         match self {
-            DataType::Number(_) => true,
+            DataType::Number(_) | DataType::Decimal(_) => true,
             DataType::Nullable(inner) => inner.is_numeric(),
             _ => false,
         }
