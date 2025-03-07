@@ -1,5 +1,5 @@
 version = 1
-requires-python = ">=3.7, <3.14"
+requires-python = ">=3.8, <3.14"
 
 [[package]]
 name = "behave"
@@ -17,7 +17,7 @@ wheels = [
 
 [[package]]
 name = "databend-driver"
-version = "0.25.0"
+version = "0.25.6"
 source = { editable = "." }
 
 [package.dev-dependencies]
