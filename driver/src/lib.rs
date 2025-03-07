@@ -12,19 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod client;
 pub mod conn;
 #[cfg(feature = "flight-sql")]
 mod flight_sql;
+mod params;
+mod placeholder;
 pub mod rest_api;
 
-pub use conn::{Client, Connection, ConnectionInfo};
+pub use client::Client;
+pub use client::Connection;
+pub use conn::ConnectionInfo;
+pub use params::Param;
+pub use params::Params;
 
 // pub use for convenience
 pub use databend_driver_core::error::{Error, Result};
 pub use databend_driver_core::rows::{
     Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats,
 };
-pub use databend_driver_core::schema::{DataType, DecimalSize, Field, Schema, SchemaRef};
+pub use databend_driver_core::schema::{
+    DataType, DecimalSize, Field, NumberDataType, Schema, SchemaRef,
+};
 pub use databend_driver_core::value::Interval;
 pub use databend_driver_core::value::{NumberValue, Value};
 

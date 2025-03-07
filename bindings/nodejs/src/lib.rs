@@ -77,12 +77,14 @@ impl Client {
 
 #[napi]
 pub struct Connection {
-    inner: Box<dyn databend_driver::Connection>,
+    inner: databend_driver::Connection,
     opts: ValueOptions,
 }
 
+pub type Params = serde_json::Value;
+
 impl Connection {
-    pub fn new(inner: Box<dyn databend_driver::Connection>, opts: ValueOptions) -> Self {
+    pub fn new(inner: databend_driver::Connection, opts: ValueOptions) -> Self {
         Self { inner, opts }
     }
 }
@@ -101,18 +103,26 @@ impl Connection {
         self.inner.version().await.map_err(format_napi_error)
     }
 
+    #[napi]
+    pub fn format_sql(&self, sql: String, params: Option<Params>) -> Result<String> {
+        Ok(self.inner.format_sql(&sql, params))
+    }
+
     /// Execute a SQL query, return the number of affected rows.
     #[napi]
-    pub async fn exec(&self, sql: String) -> Result<i64> {
-        self.inner.exec(&sql).await.map_err(format_napi_error)
+    pub async fn exec(&self, sql: String, params: Option<Params>) -> Result<i64> {
+        self.inner
+            .exec(&sql, params)
+            .await
+            .map_err(format_napi_error)
     }
 
     /// Execute a SQL query, and only return the first row.
     #[napi]
-    pub async fn query_row(&self, sql: String) -> Result<Option<Row>> {
+    pub async fn query_row(&self, sql: String, params: Option<Params>) -> Result<Option<Row>> {
         let ret = self
             .inner
-            .query_row(&sql)
+            .query_row(&sql, params)
             .await
             .map_err(format_napi_error)?;
         let row = ret.map(|r| Row::new(r, self.opts.clone()));
@@ -121,10 +131,10 @@ impl Connection {
 
     /// Execute a SQL query and fetch all data into the result
     #[napi]
-    pub async fn query_all(&self, sql: String) -> Result<Vec<Row>> {
+    pub async fn query_all(&self, sql: String, params: Option<Params>) -> Result<Vec<Row>> {
         Ok(self
             .inner
-            .query_all(&sql)
+            .query_all(&sql, params)
             .await
             .map_err(format_napi_error)?
             .into_iter()
@@ -134,10 +144,10 @@ impl Connection {
 
     /// Execute a SQL query, and return all rows.
     #[napi]
-    pub async fn query_iter(&self, sql: String) -> Result<RowIterator> {
+    pub async fn query_iter(&self, sql: String, params: Option<Params>) -> Result<RowIterator> {
         let iterator = self
             .inner
-            .query_iter(&sql)
+            .query_iter(&sql, params)
             .await
             .map_err(format_napi_error)?;
         Ok(RowIterator::new(iterator, self.opts.clone()))
@@ -145,10 +155,14 @@ impl Connection {
 
     /// Execute a SQL query, and return all rows with schema and stats.
     #[napi]
-    pub async fn query_iter_ext(&self, sql: String) -> Result<RowIteratorExt> {
+    pub async fn query_iter_ext(
+        &self,
+        sql: String,
+        params: Option<Params>,
+    ) -> Result<RowIteratorExt> {
         let iterator = self
             .inner
-            .query_iter_ext(&sql)
+            .query_iter_ext(&sql, params)
             .await
             .map_err(format_napi_error)?;
         Ok(RowIteratorExt::new(iterator, self.opts.clone()))

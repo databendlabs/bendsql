@@ -40,6 +40,9 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
+use crate::ast::replace_newline_in_box_display;
+use crate::ast::QueryKind;
+use crate::config::ExpandMode;
 use crate::config::Settings;
 use crate::config::TimeOption;
 use crate::display::INTERRUPTED_MESSAGE;
@@ -60,19 +63,9 @@ static VERSION_SHORT: Lazy<String> = Lazy::new(|| {
     }
 });
 
-// alter current user's password tokens
-const ALTER_USER_PASSWORD_TOKENS: [TokenKind; 6] = [
-    TokenKind::USER,
-    TokenKind::USER,
-    TokenKind::LParen,
-    TokenKind::RParen,
-    TokenKind::IDENTIFIED,
-    TokenKind::BY,
-];
-
 pub struct Session {
     client: Client,
-    pub conn: Box<dyn Connection>,
+    pub conn: Connection,
     is_repl: bool,
 
     settings: Settings,
@@ -140,7 +133,8 @@ impl Session {
             let db = config.open()?;
             // ast keywords
             {
-                let keywords = all_reserved_keywords();
+                let mut keywords = all_reserved_keywords();
+                keywords.push("GENDATA".to_string());
                 let mut batch = sled::Batch::default();
                 for word in keywords {
                     batch.insert(word.to_ascii_lowercase().as_str(), "k")
@@ -149,7 +143,7 @@ impl Session {
             }
             // server keywords
             if !settings.no_auto_complete {
-                let rows = conn.query_iter(PROMPT_SQL).await;
+                let rows = conn.query_iter(PROMPT_SQL, ()).await;
                 match rows {
                     Ok(mut rows) => {
                         let mut count = 0;
@@ -264,7 +258,7 @@ impl Session {
         }
 
         // license info
-        match self.conn.query_iter("call admin$license_info()").await {
+        match self.conn.query_iter("call admin$license_info()", ()).await {
             Ok(mut rows) => {
                 let row = rows.next().await.unwrap()?;
                 let linfo: (String, String, String, NaiveDateTime, NaiveDateTime, String) = row
@@ -466,10 +460,19 @@ impl Session {
         'Parser: loop {
             let mut is_valid = true;
             let tokenizer = Tokenizer::new(&self.query);
+            let mut previous_token_backslash = false;
             for token in tokenizer {
                 match token {
                     Ok(token) => {
-                        if let TokenKind::SemiColon = token.kind {
+                        // SQL end with `;` or `\G` in repl
+                        let is_end_query = matches!(token.kind, TokenKind::SemiColon);
+                        let is_slash_g = self.is_repl
+                            && (previous_token_backslash
+                                && token.kind == TokenKind::Ident
+                                && token.text() == "G")
+                            || (token.text().ends_with("\\G"));
+
+                        if is_end_query || is_slash_g {
                             // push to current and continue the tokenizer
                             let (sql, remain) = self.query.split_at(token.span.end as usize);
                             if is_valid && !sql.is_empty() {
@@ -478,6 +481,7 @@ impl Session {
                             self.query = remain.to_string();
                             continue 'Parser;
                         }
+                        previous_token_backslash = matches!(token.kind, TokenKind::Backslash);
                     }
                     Err(_) => {
                         // ignore current query if have invalid token.
@@ -498,15 +502,20 @@ impl Session {
         is_repl: bool,
         query: &str,
     ) -> Result<Option<ServerStats>> {
-        let query = query.trim_end_matches(';').trim();
-
+        let mut query = query.trim_end_matches(';').trim();
+        let mut expand = None;
         self.interrupted.store(false, Ordering::SeqCst);
+
         if is_repl {
             if query.starts_with('!') {
                 return self.handle_commands(query).await;
             }
             if query == "exit" || query == "quit" {
                 return Ok(None);
+            }
+            if query.ends_with("\\G") {
+                query = query.trim_end_matches("\\G");
+                expand = Some(ExpandMode::On);
             }
         }
 
@@ -516,7 +525,7 @@ impl Session {
             QueryKind::AlterUserPassword => {
                 // When changing the current user's password,
                 // exit the client and login again with the new password.
-                let _ = self.conn.exec(query).await?;
+                let _ = self.conn.exec(query, ()).await?;
                 Ok(None)
             }
             other => {
@@ -527,23 +536,10 @@ impl Session {
                 };
 
                 let data = match other {
-                    QueryKind::Put => {
-                        let args: Vec<String> = get_put_get_args(query);
-                        if args.len() != 3 {
-                            eprintln!("put args are invalid, must be 2 argruments");
-                            return Ok(Some(ServerStats::default()));
-                        }
-                        self.conn.put_files(&args[1], &args[2]).await?
-                    }
-                    QueryKind::Get => {
-                        let args: Vec<String> = get_put_get_args(query);
-                        if args.len() != 3 {
-                            eprintln!("put args are invalid, must be 2 argruments");
-                            return Ok(Some(ServerStats::default()));
-                        }
-                        self.conn.get_files(&args[1], &args[2]).await?
-                    }
-                    _ => self.conn.query_iter_ext(query).await?,
+                    QueryKind::Put(l, r) => self.conn.put_files(&l, &r).await?,
+                    QueryKind::Get(l, r) => self.conn.get_files(&l, &r).await?,
+                    QueryKind::GenData(t, s, o) => self.gendata(t, s, o).await?,
+                    _ => self.conn.query_iter_ext(query, ()).await?,
                 };
 
                 let mut displayer = FormatDisplay::new(
@@ -554,7 +550,7 @@ impl Session {
                     data,
                     self.interrupted.clone(),
                 );
-                let stats = displayer.display().await?;
+                let stats = displayer.display(expand).await?;
                 Ok(Some(stats))
             }
         }
@@ -675,82 +671,6 @@ fn get_history_path() -> String {
         "{}/.bendsql_history",
         std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
     )
-}
-
-#[derive(PartialEq, Eq, Debug)]
-pub enum QueryKind {
-    Query,
-    Update,
-    Explain,
-    Put,
-    Get,
-    AlterUserPassword,
-    Graphical,
-    ShowCreate,
-}
-
-impl From<&str> for QueryKind {
-    fn from(query: &str) -> Self {
-        let mut tz = Tokenizer::new(query);
-        match tz.next() {
-            Some(Ok(t)) => match t.kind {
-                TokenKind::EXPLAIN => {
-                    if query.to_lowercase().contains("graphical") {
-                        QueryKind::Graphical
-                    } else {
-                        QueryKind::Explain
-                    }
-                }
-                TokenKind::SHOW => match tz.next() {
-                    Some(Ok(t)) if t.kind == TokenKind::CREATE => QueryKind::ShowCreate,
-                    _ => QueryKind::Query,
-                },
-                TokenKind::PUT => QueryKind::Put,
-                TokenKind::GET => QueryKind::Get,
-                TokenKind::ALTER => {
-                    let mut tzs = vec![];
-                    while let Some(Ok(t)) = tz.next() {
-                        tzs.push(t.kind);
-                        if tzs.len() == ALTER_USER_PASSWORD_TOKENS.len() {
-                            break;
-                        }
-                    }
-                    if tzs == ALTER_USER_PASSWORD_TOKENS {
-                        QueryKind::AlterUserPassword
-                    } else {
-                        QueryKind::Update
-                    }
-                }
-                TokenKind::DELETE
-                | TokenKind::UPDATE
-                | TokenKind::INSERT
-                | TokenKind::CREATE
-                | TokenKind::DROP
-                | TokenKind::OPTIMIZE => QueryKind::Update,
-                _ => QueryKind::Query,
-            },
-            _ => QueryKind::Query,
-        }
-    }
-}
-
-fn get_put_get_args(query: &str) -> Vec<String> {
-    query
-        .split_ascii_whitespace()
-        .map(|x| x.to_owned())
-        .collect()
-}
-
-fn replace_newline_in_box_display(query: &str) -> bool {
-    let mut tz = Tokenizer::new(query);
-    match tz.next() {
-        Some(Ok(t)) => match t.kind {
-            TokenKind::EXPLAIN => false,
-            TokenKind::SHOW => !matches!(tz.next(), Some(Ok(t)) if t.kind == TokenKind::CREATE),
-            _ => true,
-        },
-        _ => true,
-    }
 }
 
 impl Drop for Session {

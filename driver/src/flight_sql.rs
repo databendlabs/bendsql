@@ -39,7 +39,7 @@ use databend_driver_core::rows::{
 };
 use databend_driver_core::schema::Schema;
 
-use crate::conn::{Connection, ConnectionInfo, Reader};
+use crate::conn::{ConnectionInfo, IConnection, Reader};
 
 #[derive(Clone)]
 pub struct FlightSQLConnection {
@@ -49,7 +49,7 @@ pub struct FlightSQLConnection {
 }
 
 #[async_trait]
-impl Connection for FlightSQLConnection {
+impl IConnection for FlightSQLConnection {
     async fn info(&self) -> ConnectionInfo {
         ConnectionInfo {
             handler: "FlightSQL".to_string(),

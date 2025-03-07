@@ -29,7 +29,7 @@ conn.exec(sql_insert).await.unwrap();
 ### query row
 
 ```rust
-let row = conn.query_row("SELECT * FROM books;").await.unwrap();
+let row = conn.query_row("SELECT * FROM books;", ()).await.unwrap();
 let (title,author,date): (String,String,i32) = row.unwrap().try_into().unwrap();
 println!("{} {} {}", title, author, date);
 ```
@@ -42,6 +42,26 @@ while let Some(row) = rows.next().await {
     let (title,author,date): (String,String,chrono::NaiveDate) = row.unwrap().try_into().unwrap();
     println!("{} {} {}", title, author, date);
 }
+```
+
+### Parameter bindings
+
+```rust
+let row = conn
+    .query_row("SELECT $1, $2, $3, $4", (3, false, 4, "55"))
+    .await
+    .unwrap();
+
+let params = params! {a => 3, b => false, c => 4, d => "55"};
+let row = conn
+    .query_row("SELECT :a, :b, :c, :d", params)
+    .await
+    .unwrap();
+
+let row = conn
+    .query_row("SELECT ?, ?, ?, ?", (3, false, 4, "55"))
+    .await
+    .unwrap();
 ```
 
 ## Type Mapping
@@ -87,7 +107,7 @@ INSERT INTO example VALUES ('{"a": 1, "b": "hello"}');
 ```
 
 ```rust
-let row = conn.query_row("SELECT * FROM example limit 1;").await.unwrap();
+let row = conn.query_row("SELECT * FROM example limit 1;", ()).await.unwrap();
 let (data,): (String,) = row.unwrap().try_into().unwrap();
 let value: serde_json::Value = serde_json::from_str(&data).unwrap();
 println!("{:?}", value);

@@ -54,16 +54,42 @@ async def _(context):
 @then("Select string {input} should be equal to {output}")
 @async_run_until_complete
 async def _(context, input, output):
-    row = await context.conn.query_row(f"SELECT '{input}'")
+    row = await context.conn.query_row("SELECT ?", input)
     value = row.values()[0]
     assert output == value, f"output: {output}"
+
+
+@then("Select params binding")
+@async_run_until_complete
+async def _(context):
+    # Test with positional parameters
+    row = await context.conn.query_row("SELECT ?, ?, ?, ?", (3, False, 4, "55"))
+    assert row.values() == (3, False, 4, "55"), f"output: {row.values()}"
+
+    # Test with named parameters
+    row = await context.conn.query_row(
+        "SELECT :a, :b, :c, :d", {"a": 3, "b": False, "c": 4, "d": "55"}
+    )
+    assert row.values() == (3, False, 4, "55"), f"output: {row.values()}"
+
+    # Test with positional parameters again
+    row = await context.conn.query_row("SELECT ?, ?, ?, ?", (3, False, 4, "55"))
+    assert row.values() == (3, False, 4, "55"), f"output: {row.values()}"
 
 
 @then("Select types should be expected native types")
 @async_run_until_complete
 async def _(context):
     # Binary
-    row = await context.conn.query_row("select to_binary('xyz')")
+    row = await context.conn.query_row("select to_binary(?)", "xyz")
+    assert row.values() == (b"xyz",), f"Binary: {row.values()}"
+
+    # Array
+    row = await context.conn.query_row("select to_binary(?)", ["xyz"])
+    assert row.values() == (b"xyz",), f"Binary: {row.values()}"
+
+    # Tuple
+    row = await context.conn.query_row("select to_binary(?)", params=("xyz"))
     assert row.values() == (b"xyz",), f"Binary: {row.values()}"
 
     # Interval

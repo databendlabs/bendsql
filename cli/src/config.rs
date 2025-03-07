@@ -47,7 +47,7 @@ pub struct SettingsConfig {
     pub max_width: Option<usize>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum ExpandMode {
     On,
     Off,
@@ -155,7 +155,7 @@ impl Settings {
         self.expand = cfg
             .expand
             .map(|expand| expand.as_str().into())
-            .unwrap_or_else(|| self.expand.clone());
+            .unwrap_or_else(|| self.expand);
         self.replace_newline = cfg.replace_newline.unwrap_or(self.replace_newline);
         self.max_width = cfg.max_width.unwrap_or(self.max_width);
         self.max_col_width = cfg.max_col_width.unwrap_or(self.max_col_width);

@@ -25,14 +25,14 @@ async fn trait_with_clone() {
     let conn = client.get_conn().await.unwrap();
     let conn = Arc::new(conn);
 
-    let row = conn.query_row("select 'hello'").await.unwrap();
+    let row = conn.query_row("select 'hello'", ()).await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();
     assert_eq!(val, "hello");
 
     let conn2 = conn.clone();
-    let row = conn2.query_row("select 'world'").await.unwrap();
+    let row = conn2.query_row("select 'world'", ()).await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();

@@ -713,10 +713,10 @@ impl APIClient {
     fn need_logout(&self) -> bool {
         (self.session_token_info.is_some()
             || self.session_state.lock().need_keep_alive.unwrap_or(false))
-            && !self
+            && self
                 .closed
                 .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                .unwrap()
+                .is_ok()
     }
 
     async fn refresh_session_token(

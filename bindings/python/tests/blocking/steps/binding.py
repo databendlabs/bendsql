@@ -55,6 +55,26 @@ def _(context, input, output):
     assert output == value, f"output: {output}"
 
 
+@then("Select params binding")
+def _(context):
+    # Test with positional parameters
+    row = context.conn.query_row("SELECT ?, ?, ?, ?", (3, False, 4, "55"))
+    assert row.values() == (3, False, 4, "55"), f"output: {row.values()}"
+
+    # Test with named parameters
+    row = context.conn.query_row(
+        "SELECT :a, :b, :c, :d", {"a": 3, "b": False, "c": 4, "d": "55"}
+    )
+    assert row.values() == (3, False, 4, "55"), f"output: {row.values()}"
+
+    row = context.conn.query_row("SELECT ?", 4)
+    assert row.values() == (4,), f"output: {row.values()}"
+
+    # Test with positional parameters again
+    row = context.conn.query_row("SELECT ?, ?, ?, ?", (3, False, 4, "55"))
+    assert row.values() == (3, False, 4, "55"), f"output: {row.values()}"
+
+
 @then("Select types should be expected native types")
 async def _(context):
     # Binary
@@ -66,7 +86,7 @@ async def _(context):
     assert row.values() == (timedelta(microseconds=1),), f"Interval: {row.values()}"
 
     # Decimal
-    row = context.conn.query_row("SELECT 15.7563::Decimal(8,4), 2.0+3.0")
+    row = context.conn.query_row("SELECT 15.7563::Decimal(?,?), 2.0+3.0", params=[8, 4])
     assert row.values() == (
         Decimal("15.7563"),
         Decimal("5.0"),

@@ -18,7 +18,7 @@ use databend_driver::{Client, Connection};
 
 use crate::common::DEFAULT_DSN;
 
-async fn prepare(name: &str) -> (Box<dyn Connection>, String) {
+async fn prepare(name: &str) -> (Connection, String) {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let table = format!("{}_{}", name, chrono::Utc::now().timestamp());
     let client = Client::new(dsn.to_string());
@@ -26,7 +26,7 @@ async fn prepare(name: &str) -> (Box<dyn Connection>, String) {
     (conn, table)
 }
 
-async fn prepare_data(name: &str) -> (Box<dyn Connection>, String) {
+async fn prepare_data(name: &str) -> (Connection, String) {
     let (conn, table) = prepare(name).await;
     let sql_create = format!(
         "CREATE TABLE `{}` (
@@ -40,7 +40,7 @@ async fn prepare_data(name: &str) -> (Box<dyn Connection>, String) {
     );",
         table
     );
-    conn.exec(&sql_create).await.unwrap();
+    conn.inner().exec(&sql_create).await.unwrap();
     let sql_insert = format!(
         "INSERT INTO `{}` VALUES
         (-1, 1, 1.0, '1', '1', '2011-03-06', '2011-03-06 06:20:00'),
@@ -48,7 +48,7 @@ async fn prepare_data(name: &str) -> (Box<dyn Connection>, String) {
         (-3, 3, 3.0, '3', '2', '2016-04-04', '2016-04-04 11:30:00')",
         table
     );
-    conn.exec(&sql_insert).await.unwrap();
+    conn.inner().exec(&sql_insert).await.unwrap();
     (conn, table)
 }
 
@@ -101,7 +101,7 @@ async fn select_iter_tuple() {
         ),
     ];
     let sql_select = format!("SELECT * FROM `{}`", table);
-    let mut rows = conn.query_iter(&sql_select).await.unwrap();
+    let mut rows = conn.inner().query_iter(&sql_select).await.unwrap();
     let mut row_count = 0;
     while let Some(row) = rows.next().await {
         let v: RowResult = row.unwrap().try_into().unwrap();
@@ -111,7 +111,7 @@ async fn select_iter_tuple() {
     assert_eq!(row_count, 3);
 
     let sql_drop = format!("DROP TABLE `{}`", table);
-    conn.exec(&sql_drop).await.unwrap();
+    conn.inner().exec(&sql_drop).await.unwrap();
 }
 
 #[tokio::test]
@@ -167,7 +167,7 @@ async fn select_iter_struct() {
     ];
 
     let sql_select = format!("SELECT * FROM `{}`", table);
-    let rows = conn.query_iter(&sql_select).await.unwrap();
+    let rows = conn.inner().query_iter(&sql_select).await.unwrap();
     let results = rows.try_collect::<RowResult>().await.unwrap();
     for (idx, v) in results.iter().enumerate() {
         let expected_row = &expected[idx];
@@ -181,13 +181,17 @@ async fn select_iter_struct() {
     }
 
     let sql_drop = format!("DROP TABLE `{}`", table);
-    conn.exec(&sql_drop).await.unwrap();
+    conn.inner().exec(&sql_drop).await.unwrap();
 }
 
 #[tokio::test]
 async fn select_numbers() {
     let (conn, _) = prepare("select_numbers").await;
-    let rows = conn.query_iter("select * from NUMBERS(5)").await.unwrap();
+    let rows = conn
+        .inner()
+        .query_iter("select * from NUMBERS(5)")
+        .await
+        .unwrap();
     let ret: Vec<u64> = rows
         .map(|r| r.unwrap().try_into().unwrap())
         .collect::<Vec<(u64,)>>()
@@ -204,7 +208,7 @@ async fn select_multi_page() {
     // default page size is 10000
     let n = 46000;
     let sql = format!("select * from NUMBERS({n}) order by number");
-    let rows = conn.query_iter(&sql).await.unwrap();
+    let rows = conn.inner().query_iter(&sql).await.unwrap();
     let ret: Vec<u64> = rows
         .map(|r| r.unwrap().try_into().unwrap())
         .collect::<Vec<(u64,)>>()
@@ -218,7 +222,7 @@ async fn select_multi_page() {
 #[tokio::test]
 async fn select_sleep() {
     let (conn, _) = prepare("select_sleep").await;
-    let mut rows = conn.query_iter("select SLEEP(2);").await.unwrap();
+    let mut rows = conn.inner().query_iter("select SLEEP(2);").await.unwrap();
     let mut result = vec![];
     while let Some(row) = rows.next().await {
         let row: (u8,) = row.unwrap().try_into().unwrap();

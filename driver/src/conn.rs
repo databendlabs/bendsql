@@ -17,15 +17,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use tokio::fs::File;
 use tokio::io::AsyncRead;
 use tokio::io::BufReader;
 use tokio_stream::StreamExt;
-use url::Url;
-
-#[cfg(feature = "flight-sql")]
-use crate::flight_sql::FlightSQLConnection;
 
 use databend_client::StageLocation;
 use databend_client::{presign_download_from_stage, PresignedResponse};
@@ -34,50 +29,6 @@ use databend_driver_core::raw_rows::{RawRow, RawRowIterator};
 use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
 use databend_driver_core::schema::{DataType, Field, NumberDataType, Schema};
 use databend_driver_core::value::{NumberValue, Value};
-
-use crate::rest_api::RestAPIConnection;
-
-static VERSION: Lazy<String> = Lazy::new(|| {
-    let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
-    version.to_string()
-});
-
-#[derive(Clone)]
-pub struct Client {
-    dsn: String,
-    name: String,
-}
-
-impl Client {
-    pub fn new(dsn: String) -> Self {
-        let name = format!("databend-driver-rust/{}", VERSION.as_str());
-        Self { dsn, name }
-    }
-
-    pub fn with_name(mut self, name: String) -> Self {
-        self.name = name;
-        self
-    }
-
-    pub async fn get_conn(&self) -> Result<Box<dyn Connection>> {
-        let u = Url::parse(&self.dsn)?;
-        match u.scheme() {
-            "databend" | "databend+http" | "databend+https" => {
-                let conn = RestAPIConnection::try_create(&self.dsn, self.name.clone()).await?;
-                Ok(Box::new(conn))
-            }
-            #[cfg(feature = "flight-sql")]
-            "databend+flight" | "databend+grpc" => {
-                let conn = FlightSQLConnection::try_create(&self.dsn, self.name.clone()).await?;
-                Ok(Box::new(conn))
-            }
-            _ => Err(Error::Parsing(format!(
-                "Unsupported scheme: {}",
-                u.scheme()
-            ))),
-        }
-    }
-}
 
 pub struct ConnectionInfo {
     pub handler: String,
@@ -91,7 +42,7 @@ pub struct ConnectionInfo {
 pub type Reader = Box<dyn AsyncRead + Send + Sync + Unpin + 'static>;
 
 #[async_trait]
-pub trait Connection: Send + Sync {
+pub trait IConnection: Send + Sync {
     async fn info(&self) -> ConnectionInfo;
     async fn close(&self) -> Result<()> {
         Ok(())
