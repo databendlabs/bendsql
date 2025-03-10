@@ -35,6 +35,7 @@ pub struct ConnectionInfo {
     pub host: String,
     pub port: u16,
     pub user: String,
+    pub catalog: Option<String>,
     pub database: Option<String>,
     pub warehouse: Option<String>,
 }

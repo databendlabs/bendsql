@@ -18,6 +18,8 @@ use std::collections::{BTreeMap, HashMap};
 #[derive(Deserialize, Serialize, Debug, Default, Clone)]
 pub struct SessionState {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub database: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settings: Option<BTreeMap<String, String>>,
