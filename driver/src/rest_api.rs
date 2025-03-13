@@ -49,6 +49,7 @@ impl IConnection for RestAPIConnection {
             host: self.client.host().to_string(),
             port: self.client.port(),
             user: self.client.username(),
+            catalog: self.client.current_catalog(),
             database: self.client.current_database(),
             warehouse: self.client.current_warehouse(),
         }

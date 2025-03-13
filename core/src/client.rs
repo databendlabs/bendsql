@@ -297,6 +297,11 @@ impl APIClient {
         guard.clone()
     }
 
+    pub fn current_catalog(&self) -> Option<String> {
+        let guard = self.session_state.lock();
+        guard.catalog.clone()
+    }
+
     pub fn current_database(&self) -> Option<String> {
         let guard = self.session_state.lock();
         guard.database.clone()

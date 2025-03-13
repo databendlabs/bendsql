@@ -257,7 +257,7 @@ impl Default for Settings {
         Settings {
             display_pretty_sql: true,
             progress_color: "cyan".to_string(),
-            prompt: "{user}@{warehouse}/{database}> ".to_string(),
+            prompt: "{user}@{warehouse}/{catalog}/{database}> ".to_string(),
             no_auto_complete: false,
             output_format: OutputFormat::Table,
             quote_style: OutputQuoteStyle::Necessary,

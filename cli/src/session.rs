@@ -214,6 +214,11 @@ impl Session {
             prompt = prompt.replace("{host}", &info.host);
             prompt = prompt.replace("{user}", &info.user);
             prompt = prompt.replace("{port}", &info.port.to_string());
+            if let Some(catalog) = &info.catalog {
+                prompt = prompt.replace("{catalog}", catalog);
+            } else {
+                prompt = prompt.replace("{catalog}", "default");
+            }
             if let Some(database) = &info.database {
                 prompt = prompt.replace("{database}", database);
             } else {

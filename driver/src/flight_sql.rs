@@ -56,6 +56,7 @@ impl IConnection for FlightSQLConnection {
             host: self.args.host.clone(),
             port: self.args.port,
             user: self.args.user.clone(),
+            catalog: None,
             database: self.args.database.clone(),
             warehouse: self.args.warehouse.clone(),
         }
