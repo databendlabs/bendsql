@@ -383,11 +383,14 @@ impl Session {
                 },
             }
         }
+        error!("break");
+        let _ = rl.save_history(&get_history_path());
         if let Err(e) = self.conn.close().await {
+            error!("close err: {e}");
             println!("got error when closing session: {}", e);
         }
+        error!("bye");
         println!("Bye~");
-        let _ = rl.save_history(&get_history_path());
     }
 
     pub async fn handle_reader<R: BufRead>(&mut self, r: R) -> Result<()> {
