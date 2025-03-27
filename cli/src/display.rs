@@ -542,7 +542,6 @@ fn create_table(
         // so hiding rows makes no sense if we are only slightly over the limit
         // if we are 1 row over the limit hiding rows will actually increase the number of lines we display!
         // in this case render all the rows
-        // 	rows_to_render = value_rows_count;
         rows_to_render = value_rows_count;
     }
 
