@@ -175,8 +175,6 @@ impl TryFrom<(&DataType, String)> for Value {
     type Error = Error;
 
     fn try_from((t, v): (&DataType, String)) -> Result<Self> {
-        //println!("t={:?}", t);
-        //println!("v={:?}", v);
         match t {
             DataType::Null => Ok(Self::Null),
             DataType::EmptyArray => Ok(Self::EmptyArray),
@@ -228,7 +226,8 @@ impl TryFrom<(&DataType, String)> for Value {
                     .timestamp_micros(),
             )),
             DataType::Date => Ok(Self::Date(
-                NaiveDate::parse_from_str(v.as_str(), "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE,
+                NaiveDate::parse_from_str(v.as_str(), "%Y-%m-%d")?.num_days_from_ce()
+                    - DAYS_FROM_CE,
             )),
             DataType::Bitmap => Ok(Self::Bitmap(v)),
             DataType::Variant => Ok(Self::Variant(v)),

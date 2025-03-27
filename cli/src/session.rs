@@ -383,13 +383,11 @@ impl Session {
                 },
             }
         }
-        error!("break");
+        // first save history to avoid loss data.
         let _ = rl.save_history(&get_history_path());
         if let Err(e) = self.conn.close().await {
-            error!("close err: {e}");
             println!("got error when closing session: {}", e);
         }
-        error!("bye");
         println!("Bye~");
     }
 

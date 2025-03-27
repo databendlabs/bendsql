@@ -355,7 +355,13 @@ impl FormatDisplay<'_> {
                 QueryKind::Graphical => (self.rows_count, "rows", "graphical", 0, 0),
                 QueryKind::Explain => (self.rows_count, "rows", "explain", 0, 0),
                 QueryKind::ShowCreate => (self.rows_count, "rows", "showcreate", 0, 0),
-                QueryKind::Query => (self.rows_count, "rows", "read", stats.read_rows, stats.read_bytes),
+                QueryKind::Query => (
+                    self.rows_count,
+                    "rows",
+                    "read",
+                    stats.read_rows,
+                    stats.read_bytes,
+                ),
                 QueryKind::Update | QueryKind::AlterUserPassword | QueryKind::GenData(_, _, _) => (
                     stats.write_rows,
                     "rows",
@@ -527,21 +533,21 @@ fn create_table(
         return Ok(table);
     }
 
-    let row_count: usize = results.len();
-    let mut rows_to_render = row_count.min(max_rows);
+    let value_rows_count: usize = results.len();
+    let mut rows_to_render = value_rows_count.min(max_rows);
     if !replace_newline {
-        rows_to_render = row_count;
-    } else if row_count <= max_rows + 3 {
+        rows_to_render = value_rows_count;
+    } else if value_rows_count <= max_rows + 3 {
         // hiding rows adds 3 extra rows
         // so hiding rows makes no sense if we are only slightly over the limit
         // if we are 1 row over the limit hiding rows will actually increase the number of lines we display!
         // in this case render all the rows
-        // 	rows_to_render = row_count;
-        rows_to_render = row_count;
+        // 	rows_to_render = value_rows_count;
+        rows_to_render = value_rows_count;
     }
 
-    let (top_rows, bottom_rows) = if rows_to_render == row_count {
-        (row_count, 0usize)
+    let (top_rows, bottom_rows) = if rows_to_render == value_rows_count {
+        (value_rows_count, 0usize)
     } else {
         let top_rows = rows_to_render / 2 + (rows_to_render % 2 != 0) as usize;
         (top_rows, rows_to_render - top_rows)
@@ -568,7 +574,7 @@ fn create_table(
         });
 
     if bottom_rows != 0 {
-        for row in results.iter().skip(row_count - bottom_rows) {
+        for row in results.iter().skip(value_rows_count - bottom_rows) {
             let values = row.values();
             let mut v = vec![];
             for value in values {
@@ -618,9 +624,9 @@ fn create_table(
             table.add_row(cells);
         }
 
-        let row_count_str = format!("{} rows", rows_count);
+        let rows_count_str = format!("{} rows", rows_count);
         let show_count_str = format!("({} shown)", top_rows + bottom_rows);
-        table.add_row(vec![Cell::new(row_count_str).set_alignment(aligns[0])]);
+        table.add_row(vec![Cell::new(rows_count_str).set_alignment(aligns[0])]);
         table.add_row(vec![Cell::new(show_count_str).set_alignment(aligns[0])]);
     }
 
