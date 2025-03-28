@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::VecDeque;
 use std::env;
 use std::fmt::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,7 +52,7 @@ pub struct FormatDisplay<'a> {
     replace_newline: bool,
     data: RowStatsIterator,
 
-    rows: usize,
+    rows_count: usize,
     progress: Option<ProgressBar>,
     start: Instant,
     stats: Option<ServerStats>,
@@ -73,7 +74,7 @@ impl<'a> FormatDisplay<'a> {
             kind: QueryKind::from(query),
             replace_newline,
             data,
-            rows: 0,
+            rows_count: 0,
             progress: None,
             start,
             stats: None,
@@ -139,7 +140,10 @@ impl FormatDisplay<'_> {
             let format_sql = highlight_query(&format_sql);
             println!("\n{}\n", format_sql);
         }
+
+        let max_display_rows_count = self.settings.max_display_rows / 2 + 2;
         let mut rows = Vec::new();
+        let mut bottom_rows = VecDeque::new();
         let mut error = None;
         while let Some(line) = self.data.next().await {
             if self.interrupted.load(Ordering::SeqCst) {
@@ -147,8 +151,17 @@ impl FormatDisplay<'_> {
             }
             match line {
                 Ok(RowWithStats::Row(row)) => {
-                    self.rows += 1;
-                    rows.push(row);
+                    if self.rows_count < max_display_rows_count {
+                        rows.push(row);
+                    } else {
+                        bottom_rows.push_back(row);
+                        // Since bendsql only displays the maximum number of rows,
+                        // we can discard some rows to avoid data occupying too much memory.
+                        if bottom_rows.len() > max_display_rows_count {
+                            bottom_rows.pop_front();
+                        }
+                    }
+                    self.rows_count += 1;
                 }
                 Ok(RowWithStats::Stats(ss)) => {
                     self.display_progress(&ss).await;
@@ -160,6 +173,11 @@ impl FormatDisplay<'_> {
                 }
             }
         }
+        // collect bottom rows
+        while let Some(row) = bottom_rows.pop_front() {
+            rows.push(row);
+        }
+
         if let Some(pb) = self.progress.take() {
             pb.finish_and_clear();
         }
@@ -204,6 +222,7 @@ impl FormatDisplay<'_> {
                         self.settings.max_display_rows,
                         self.settings.max_width,
                         self.settings.max_col_width,
+                        self.rows_count
                     )?
                 );
             }
@@ -217,7 +236,8 @@ impl FormatDisplay<'_> {
                         self.replace_newline,
                         self.settings.max_display_rows,
                         self.settings.max_width,
-                        self.settings.max_col_width
+                        self.settings.max_col_width,
+                        self.rows_count
                     )?
                 );
             }
@@ -242,7 +262,7 @@ impl FormatDisplay<'_> {
             }
             match line {
                 Ok(RowWithStats::Row(row)) => {
-                    self.rows += 1;
+                    self.rows_count += 1;
                     let record = row.into_iter().map(|v| v.to_string()).collect::<Vec<_>>();
                     wtr.write_record(record)?;
                 }
@@ -275,7 +295,7 @@ impl FormatDisplay<'_> {
             }
             match line {
                 Ok(RowWithStats::Row(row)) => {
-                    self.rows += 1;
+                    self.rows_count += 1;
                     let record = row.into_iter().map(|v| v.to_string()).collect::<Vec<_>>();
                     wtr.write_record(record)?;
                 }
@@ -298,7 +318,7 @@ impl FormatDisplay<'_> {
             }
             match line {
                 Ok(RowWithStats::Row(_)) => {
-                    self.rows += 1;
+                    self.rows_count += 1;
                 }
                 Ok(RowWithStats::Stats(ss)) => {
                     self.display_progress(&ss).await;
@@ -316,7 +336,7 @@ impl FormatDisplay<'_> {
         if let Some(err) = error {
             return Err(anyhow!(
                 "error happens after fetched {} rows: {}",
-                self.rows,
+                self.rows_count,
                 err
             ));
         }
@@ -332,10 +352,16 @@ impl FormatDisplay<'_> {
             stats.normalize();
 
             let (rows, mut rows_str, kind, total_rows, total_bytes) = match self.kind {
-                QueryKind::Graphical => (self.rows, "rows", "graphical", 0, 0),
-                QueryKind::Explain => (self.rows, "rows", "explain", 0, 0),
-                QueryKind::ShowCreate => (self.rows, "rows", "showcreate", 0, 0),
-                QueryKind::Query => (self.rows, "rows", "read", stats.read_rows, stats.read_bytes),
+                QueryKind::Graphical => (self.rows_count, "rows", "graphical", 0, 0),
+                QueryKind::Explain => (self.rows_count, "rows", "explain", 0, 0),
+                QueryKind::ShowCreate => (self.rows_count, "rows", "showcreate", 0, 0),
+                QueryKind::Query => (
+                    self.rows_count,
+                    "rows",
+                    "read",
+                    stats.read_rows,
+                    stats.read_bytes,
+                ),
                 QueryKind::Update | QueryKind::AlterUserPassword | QueryKind::GenData(_, _, _) => (
                     stats.write_rows,
                     "rows",
@@ -484,6 +510,7 @@ fn create_table(
     max_rows: usize,
     max_width: usize,
     max_col_width: usize,
+    rows_count: usize,
 ) -> Result<Table> {
     let mut table = Table::new();
     table
@@ -506,21 +533,20 @@ fn create_table(
         return Ok(table);
     }
 
-    let row_count: usize = results.len();
-    let mut rows_to_render = row_count.min(max_rows);
+    let value_rows_count: usize = results.len();
+    let mut rows_to_render = value_rows_count.min(max_rows);
     if !replace_newline {
-        rows_to_render = row_count;
-    } else if row_count <= max_rows + 3 {
+        rows_to_render = value_rows_count;
+    } else if value_rows_count <= max_rows + 3 {
         // hiding rows adds 3 extra rows
         // so hiding rows makes no sense if we are only slightly over the limit
         // if we are 1 row over the limit hiding rows will actually increase the number of lines we display!
         // in this case render all the rows
-        // 	rows_to_render = row_count;
-        rows_to_render = row_count;
+        rows_to_render = value_rows_count;
     }
 
-    let (top_rows, bottom_rows) = if rows_to_render == row_count {
-        (row_count, 0usize)
+    let (top_rows, bottom_rows) = if rows_to_render == value_rows_count {
+        (value_rows_count, 0usize)
     } else {
         let top_rows = rows_to_render / 2 + (rows_to_render % 2 != 0) as usize;
         (top_rows, rows_to_render - top_rows)
@@ -547,7 +573,7 @@ fn create_table(
         });
 
     if bottom_rows != 0 {
-        for row in results.iter().skip(row_count - bottom_rows) {
+        for row in results.iter().skip(value_rows_count - bottom_rows) {
             let values = row.values();
             let mut v = vec![];
             for value in values {
@@ -597,9 +623,9 @@ fn create_table(
             table.add_row(cells);
         }
 
-        let row_count_str = format!("{} rows", row_count);
+        let rows_count_str = format!("{} rows", rows_count);
         let show_count_str = format!("({} shown)", top_rows + bottom_rows);
-        table.add_row(vec![Cell::new(row_count_str).set_alignment(aligns[0])]);
+        table.add_row(vec![Cell::new(rows_count_str).set_alignment(aligns[0])]);
         table.add_row(vec![Cell::new(show_count_str).set_alignment(aligns[0])]);
     }
 

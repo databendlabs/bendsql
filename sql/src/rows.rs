@@ -139,9 +139,8 @@ impl TryFrom<(SchemaRef, Vec<Option<String>>)> for Row {
     type Error = Error;
 
     fn try_from((schema, data): (SchemaRef, Vec<Option<String>>)) -> Result<Self> {
-        let mut values: Vec<Value> = Vec::new();
-        for (i, field) in schema.fields().iter().enumerate() {
-            let val: Option<&str> = data.get(i).and_then(|v| v.as_deref());
+        let mut values: Vec<Value> = Vec::with_capacity(data.len());
+        for (field, val) in schema.fields().iter().zip(data.into_iter()) {
             values.push(Value::try_from((&field.data_type, val))?);
         }
         Ok(Self::new(schema, values))

@@ -154,10 +154,10 @@ impl Value {
     }
 }
 
-impl TryFrom<(&DataType, Option<&str>)> for Value {
+impl TryFrom<(&DataType, Option<String>)> for Value {
     type Error = Error;
 
-    fn try_from((t, v): (&DataType, Option<&str>)) -> Result<Self> {
+    fn try_from((t, v): (&DataType, Option<String>)) -> Result<Self> {
         match v {
             Some(v) => Self::try_from((t, v)),
             None => match t {
@@ -171,17 +171,17 @@ impl TryFrom<(&DataType, Option<&str>)> for Value {
     }
 }
 
-impl TryFrom<(&DataType, &str)> for Value {
+impl TryFrom<(&DataType, String)> for Value {
     type Error = Error;
 
-    fn try_from((t, v): (&DataType, &str)) -> Result<Self> {
+    fn try_from((t, v): (&DataType, String)) -> Result<Self> {
         match t {
             DataType::Null => Ok(Self::Null),
             DataType::EmptyArray => Ok(Self::EmptyArray),
             DataType::EmptyMap => Ok(Self::EmptyMap),
             DataType::Boolean => Ok(Self::Boolean(v == "1")),
             DataType::Binary => Ok(Self::Binary(hex::decode(v)?)),
-            DataType::String => Ok(Self::String(v.to_string())),
+            DataType::String => Ok(Self::String(v)),
             DataType::Number(NumberDataType::Int8) => {
                 Ok(Self::Number(NumberValue::Int8(v.parse()?)))
             }
@@ -213,28 +213,29 @@ impl TryFrom<(&DataType, &str)> for Value {
                 Ok(Self::Number(NumberValue::Float64(v.parse()?)))
             }
             DataType::Decimal(DecimalDataType::Decimal128(size)) => {
-                let d = parse_decimal(v, *size)?;
+                let d = parse_decimal(v.as_str(), *size)?;
                 Ok(Self::Number(d))
             }
             DataType::Decimal(DecimalDataType::Decimal256(size)) => {
-                let d = parse_decimal(v, *size)?;
+                let d = parse_decimal(v.as_str(), *size)?;
                 Ok(Self::Number(d))
             }
             DataType::Timestamp => Ok(Self::Timestamp(
-                NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.6f")?
+                NaiveDateTime::parse_from_str(v.as_str(), "%Y-%m-%d %H:%M:%S%.6f")?
                     .and_utc()
                     .timestamp_micros(),
             )),
             DataType::Date => Ok(Self::Date(
-                NaiveDate::parse_from_str(v, "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE,
+                NaiveDate::parse_from_str(v.as_str(), "%Y-%m-%d")?.num_days_from_ce()
+                    - DAYS_FROM_CE,
             )),
-            DataType::Bitmap => Ok(Self::Bitmap(v.to_string())),
-            DataType::Variant => Ok(Self::Variant(v.to_string())),
-            DataType::Geometry => Ok(Self::Geometry(v.to_string())),
-            DataType::Geography => Ok(Self::Geography(v.to_string())),
-            DataType::Interval => Ok(Self::Interval(v.to_string())),
+            DataType::Bitmap => Ok(Self::Bitmap(v)),
+            DataType::Variant => Ok(Self::Variant(v)),
+            DataType::Geometry => Ok(Self::Geometry(v)),
+            DataType::Geography => Ok(Self::Geography(v)),
+            DataType::Interval => Ok(Self::Interval(v)),
             DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) => {
-                let mut reader = Cursor::new(v);
+                let mut reader = Cursor::new(v.as_str());
                 let decoder = ValueDecoder {};
                 decoder.read_field(t, &mut reader)
             }
