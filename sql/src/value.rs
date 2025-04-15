@@ -19,6 +19,7 @@ use std::io::Cursor;
 
 use arrow::datatypes::{i256, ArrowNativeTypeOp};
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
+use jsonb::RawJsonb;
 
 use crate::cursor_ext::{
     collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
@@ -270,7 +271,9 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                         return Ok(Value::Null);
                     }
                     match array.as_any().downcast_ref::<LargeBinaryArray>() {
-                        Some(array) => Ok(Value::Variant(jsonb::to_string(array.value(seq)))),
+                        Some(array) => {
+                            Ok(Value::Variant(RawJsonb::new(array.value(seq)).to_string()))
+                        }
                         None => Err(ConvertError::new("variant", format!("{:?}", array)).into()),
                     }
                 }
