@@ -84,7 +84,7 @@ impl Hinter for CliHelper {
     fn hint(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> Option<Self::Hint> {
         let last_word = line
             .split(|p: char| p.is_whitespace() || p == '.')
-            .last()
+            .next_back()
             .unwrap_or(line);
 
         if last_word.is_empty() {
@@ -142,7 +142,7 @@ impl KeyWordCompleter {
     fn complete(s: &str, pos: usize, db: &sled::Db) -> (usize, Vec<Pair>) {
         let hint = s
             .split(|p: char| p.is_whitespace() || p == '.')
-            .last()
+            .next_back()
             .unwrap_or(s)
             .to_ascii_lowercase();
 

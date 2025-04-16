@@ -183,18 +183,12 @@ impl AsyncDatabendConnection {
     ) -> PyResult<Bound<'p, PyAny>> {
         let this = self.0.clone();
         future_into_py(py, async move {
-            let format_options = match format_options {
-                None => None,
-                Some(ref opts) => {
-                    Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
-                }
-            };
-            let copy_options = match copy_options {
-                None => None,
-                Some(ref opts) => {
-                    Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
-                }
-            };
+            let format_options = format_options
+                .as_ref()
+                .map(|opts| opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect());
+            let copy_options = copy_options
+                .as_ref()
+                .map(|opts| opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect());
             let ss = this
                 .load_file(&sql, Path::new(&fp), format_options, copy_options)
                 .await
