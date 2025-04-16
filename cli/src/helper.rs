@@ -19,6 +19,7 @@ use rustyline::completion::Completer;
 use rustyline::completion::FilenameCompleter;
 use rustyline::completion::Pair;
 use rustyline::error::ReadlineError;
+use rustyline::highlight::CmdKind;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
 use rustyline::validate::ValidationContext;
@@ -72,7 +73,7 @@ impl Highlighter for CliHelper {
         std::borrow::Cow::Borrowed(candidate)
     }
 
-    fn highlight_char(&self, line: &str, _pos: usize) -> bool {
+    fn highlight_char(&self, line: &str, _pos: usize, _kind: CmdKind) -> bool {
         !line.is_empty()
     }
 }
