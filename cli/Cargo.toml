@@ -62,7 +62,7 @@ url = { version = "2.5", default-features = false }
 webbrowser = "1.0.1"
 
 [build-dependencies]
-vergen = { version = "8.2", features = ["build", "git", "gix"] }
+vergen-gix = { version = "1.0.9", features = ["build"] }
 
 [[bin]]
 name = "bendsql"
