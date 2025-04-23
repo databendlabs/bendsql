@@ -26,7 +26,6 @@ use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_stream::Stream;
 
-use databend_client::PresignedResponse;
 use databend_client::QueryResponse;
 use databend_client::{APIClient, SchemaField};
 use databend_driver_core::error::{Error, Result};
@@ -107,22 +106,6 @@ impl IConnection for RestAPIConnection {
         let (schema, rows) =
             RestAPIRows::<RawRowWithStats>::from_response(self.client.clone(), resp)?;
         Ok(RawRowIterator::new(Arc::new(schema), Box::pin(rows)))
-    }
-
-    async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse> {
-        info!("get presigned url: {} {}", operation, stage);
-        let sql = format!("PRESIGN {} {}", operation, stage);
-        let row = self.query_row(&sql).await?.ok_or_else(|| {
-            Error::InvalidResponse("Empty response from server for presigned request".to_string())
-        })?;
-        let (method, headers, url): (String, String, String) =
-            row.try_into().map_err(Error::Parsing)?;
-        let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
-        Ok(PresignedResponse {
-            method,
-            headers,
-            url,
-        })
     }
 
     async fn upload_to_stage(&self, stage: &str, data: Reader, size: u64) -> Result<()> {
