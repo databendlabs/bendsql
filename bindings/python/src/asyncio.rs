@@ -21,7 +21,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 
 use crate::{
     types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION},
-    utils::to_sql_params,
+    utils::{options_as_ref, to_sql_params},
 };
 
 #[pyclass(module = "databend_driver")]
@@ -183,18 +183,8 @@ impl AsyncDatabendConnection {
     ) -> PyResult<Bound<'p, PyAny>> {
         let this = self.0.clone();
         future_into_py(py, async move {
-            let format_options = match format_options {
-                None => None,
-                Some(ref opts) => {
-                    Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
-                }
-            };
-            let copy_options = match copy_options {
-                None => None,
-                Some(ref opts) => {
-                    Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
-                }
-            };
+            let format_options = options_as_ref(&format_options);
+            let copy_options = options_as_ref(&copy_options);
             let ss = this
                 .load_file(&sql, Path::new(&fp), format_options, copy_options)
                 .await

@@ -84,7 +84,7 @@ impl<'py> IntoPyObject<'py> for Value {
                 d.into_bound_py_any(py)?
             }
             databend_driver::Value::Array(inner) => {
-                let list = PyList::new(py, inner.into_iter().map(|v| Value(v)))?;
+                let list = PyList::new(py, inner.into_iter().map(Value))?;
                 list.into_bound_py_any(py)?
             }
             databend_driver::Value::Map(inner) => {
@@ -95,7 +95,7 @@ impl<'py> IntoPyObject<'py> for Value {
                 dict.into_bound_py_any(py)?
             }
             databend_driver::Value::Tuple(inner) => {
-                let tuple = PyTuple::new(py, inner.into_iter().map(|v| Value(v)))?;
+                let tuple = PyTuple::new(py, inner.into_iter().map(Value))?;
                 tuple.into_bound_py_any(py)?
             }
             databend_driver::Value::Bitmap(s) => s.into_bound_py_any(py)?,
