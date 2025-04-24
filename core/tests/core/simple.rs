@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use databend_client::APIClient;
+use tokio_stream::StreamExt;
 
 use crate::common::DEFAULT_DSN;
 
@@ -20,6 +21,7 @@ use crate::common::DEFAULT_DSN;
 async fn select_simple() {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let client = APIClient::new(dsn, None).await.unwrap();
-    let resp = client.start_query("select 15532").await.unwrap();
-    assert_eq!(resp.data, [[Some("15532".to_string())]]);
+    let mut pages = client.start_query("select 15532", true).await.unwrap();
+    let page = pages.next().await.unwrap().unwrap();
+    assert_eq!(page.data, [[Some("15532".to_string())]]);
 }

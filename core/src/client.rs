@@ -31,9 +31,12 @@ use crate::{
     request::{PaginationConfig, QueryRequest, StageAttachmentConfig},
     response::QueryResponse,
     session::SessionState,
+    QueryStats,
 };
+use crate::{Page, Pages};
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use percent_encoding::percent_decode_str;
 use reqwest::cookie::CookieStore;
 use reqwest::header::{HeaderMap, HeaderValue};
@@ -42,6 +45,7 @@ use reqwest::{Body, Client as HttpClient, Request, RequestBuilder, Response, Sta
 use serde::Deserialize;
 use tokio::time::sleep;
 use tokio_retry::strategy::jitter;
+use tokio_stream::StreamExt;
 use tokio_util::io::ReaderStream;
 use url::Url;
 
@@ -58,7 +62,6 @@ static VERSION: Lazy<String> = Lazy::new(|| {
     version.to_string()
 });
 
-#[derive(Clone)]
 pub struct APIClient {
     cli: HttpClient,
     scheme: String,
@@ -70,15 +73,15 @@ pub struct APIClient {
     auth: Arc<dyn Auth>,
 
     tenant: Option<String>,
-    warehouse: Arc<parking_lot::Mutex<Option<String>>>,
-    session_state: Arc<parking_lot::Mutex<SessionState>>,
-    route_hint: Arc<RouteHintGenerator>,
+    warehouse: Mutex<Option<String>>,
+    session_state: Mutex<SessionState>,
+    route_hint: RouteHintGenerator,
 
     disable_login: bool,
     disable_session_token: bool,
     session_token_info: Option<Arc<parking_lot::Mutex<(SessionTokenInfo, Instant)>>>,
 
-    closed: Arc<AtomicBool>,
+    closed: AtomicBool,
 
     server_version: Option<String>,
 
@@ -91,20 +94,28 @@ pub struct APIClient {
 
     tls_ca_file: Option<String>,
 
-    presign: PresignMode,
-    last_node_id: Arc<parking_lot::Mutex<Option<String>>>,
-    last_query_id: Arc<parking_lot::Mutex<Option<String>>>,
+    presign: Mutex<PresignMode>,
+    last_node_id: Mutex<Option<String>>,
+    last_query_id: Mutex<Option<String>>,
 }
 
 impl APIClient {
-    pub async fn new(dsn: &str, name: Option<String>) -> Result<Self> {
+    pub async fn new(dsn: &str, name: Option<String>) -> Result<Arc<Self>> {
         let mut client = Self::from_dsn(dsn).await?;
         client.build_client(name).await?;
-        client.check_presign().await?;
         if !client.disable_login {
             client.login().await?;
         }
+        let client = Arc::new(client);
+        client.check_presign().await?;
         Ok(client)
+    }
+
+    fn set_presign_mode(&self, mode: PresignMode) {
+        *self.presign.lock() = mode
+    }
+    fn get_presign_mode(&self) -> PresignMode {
+        *self.presign.lock()
     }
 
     async fn from_dsn(dsn: &str) -> Result<Self> {
@@ -145,7 +156,7 @@ impl APIClient {
                     };
                 }
                 "presign" => {
-                    client.presign = match v.as_ref() {
+                    let presign_mode = match v.as_ref() {
                         "auto" => PresignMode::Auto,
                         "detect" => PresignMode::Detect,
                         "on" => PresignMode::On,
@@ -156,13 +167,14 @@ impl APIClient {
                             v
                         )))
                         }
-                    }
+                    };
+                    client.set_presign_mode(presign_mode);
                 }
                 "tenant" => {
                     client.tenant = Some(v.to_string());
                 }
                 "warehouse" => {
-                    client.warehouse = Arc::new(parking_lot::Mutex::new(Some(v.to_string())));
+                    client.warehouse = Mutex::new(Some(v.to_string()));
                 }
                 "role" => role = Some(v.to_string()),
                 "sslmode" => match v.as_ref() {
@@ -224,12 +236,12 @@ impl APIClient {
         client.scheme = scheme.to_string();
 
         client.endpoint = Url::parse(&format!("{}://{}:{}", scheme, client.host, client.port))?;
-        client.session_state = Arc::new(parking_lot::Mutex::new(
+        client.session_state = Mutex::new(
             SessionState::default()
                 .with_settings(Some(session_settings))
                 .with_role(role)
                 .with_database(database),
-        ));
+        );
 
         Ok(client)
     }
@@ -271,24 +283,25 @@ impl APIClient {
         Ok(())
     }
 
-    async fn check_presign(&mut self) -> Result<()> {
-        match self.presign {
+    async fn check_presign(self: &Arc<Self>) -> Result<()> {
+        let mode = match self.get_presign_mode() {
             PresignMode::Auto => {
                 if self.host.ends_with(".databend.com") || self.host.ends_with(".databend.cn") {
-                    self.presign = PresignMode::On;
+                    PresignMode::On
                 } else {
-                    self.presign = PresignMode::Off;
+                    PresignMode::Off
                 }
             }
             PresignMode::Detect => match self.get_presigned_upload_url("@~/.bendsql/check").await {
-                Ok(_) => self.presign = PresignMode::On,
+                Ok(_) => PresignMode::On,
                 Err(e) => {
                     warn!("presign mode off with error detected: {}", e);
-                    self.presign = PresignMode::Off;
+                    PresignMode::Off
                 }
             },
-            _ => {}
-        }
+            mode => mode,
+        };
+        self.set_presign_mode(mode);
         Ok(())
     }
 
@@ -374,9 +387,11 @@ impl APIClient {
         }
     }
 
-    pub async fn start_query(&self, sql: &str) -> Result<QueryResponse> {
+    pub async fn start_query(self: &Arc<Self>, sql: &str, need_progress: bool) -> Result<Pages> {
         info!("start query: {}", sql);
-        self.start_query_inner(sql, None).await
+        let resp = self.start_query_inner(sql, None).await?;
+        let pages = Pages::new(self.clone(), resp, need_progress);
+        Ok(pages)
     }
 
     fn wrap_auth_or_session_token(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
@@ -430,6 +445,9 @@ impl APIClient {
 
         self.set_last_query_id(Some(query_id));
         self.handle_warnings(&result);
+        if let Some(node_id) = &result.node_id {
+            self.set_last_node_id(node_id.clone());
+        }
         Ok(result)
     }
 
@@ -485,32 +503,13 @@ impl APIClient {
         Ok(())
     }
 
-    async fn wait_for_query(&self, resp: QueryResponse) -> Result<QueryResponse> {
-        info!("wait for query: {}", resp.id);
-        let node_id = resp.node_id.clone();
-        if let Some(node_id) = self.last_node_id() {
-            self.set_last_node_id(node_id.clone());
+    pub async fn query_all(self: &Arc<Self>, sql: &str) -> Result<Page> {
+        let mut pages = self.start_query(sql, false).await?;
+        let mut all = Page::default();
+        while let Some(page) = pages.next().await {
+            all.update(page?);
         }
-
-        if let Some(next_uri) = &resp.next_uri {
-            let schema = resp.schema;
-            let mut data = resp.data;
-            let mut resp = self.query_page(&resp.id, next_uri, &node_id).await?;
-            while let Some(next_uri) = &resp.next_uri {
-                resp = self.query_page(&resp.id, next_uri, &node_id).await?;
-                data.append(&mut resp.data);
-            }
-            resp.schema = schema;
-            resp.data = data;
-            Ok(resp)
-        } else {
-            Ok(resp)
-        }
-    }
-
-    pub async fn query(&self, sql: &str) -> Result<QueryResponse> {
-        let resp = self.start_query(sql).await?;
-        self.wait_for_query(resp).await
+        Ok(all)
     }
 
     fn session_state(&self) -> SessionState {
@@ -559,12 +558,12 @@ impl APIClient {
     }
 
     pub async fn insert_with_stage(
-        &self,
+        self: &Arc<Self>,
         sql: &str,
         stage: &str,
         file_format_options: BTreeMap<&str, &str>,
         copy_options: BTreeMap<&str, &str>,
-    ) -> Result<QueryResponse> {
+    ) -> Result<QueryStats> {
         info!(
             "insert with stage: {}, format: {:?}, copy: {:?}",
             sql, file_format_options, copy_options
@@ -575,14 +574,18 @@ impl APIClient {
             copy_options: Some(copy_options),
         });
         let resp = self.start_query_inner(sql, stage_attachment).await?;
-        let resp = self.wait_for_query(resp).await?;
-        Ok(resp)
+        let mut pages = Pages::new(self.clone(), resp, false);
+        let mut all = Page::default();
+        while let Some(page) = pages.next().await {
+            all.update(page?);
+        }
+        Ok(all.stats)
     }
 
-    async fn get_presigned_upload_url(&self, stage: &str) -> Result<PresignedResponse> {
+    async fn get_presigned_upload_url(self: &Arc<Self>, stage: &str) -> Result<PresignedResponse> {
         info!("get presigned upload url: {}", stage);
         let sql = format!("PRESIGN UPLOAD {}", stage);
-        let resp = self.query(&sql).await?;
+        let resp = self.query_all(&sql).await?;
         if resp.data.len() != 1 {
             return Err(Error::Decode(
                 "Empty response from server for presigned request".to_string(),
@@ -611,8 +614,13 @@ impl APIClient {
         })
     }
 
-    pub async fn upload_to_stage(&self, stage: &str, data: Reader, size: u64) -> Result<()> {
-        match self.presign {
+    pub async fn upload_to_stage(
+        self: &Arc<Self>,
+        stage: &str,
+        data: Reader,
+        size: u64,
+    ) -> Result<()> {
+        match self.get_presign_mode() {
             PresignMode::Off => self.upload_to_stage_with_stream(stage, data, size).await,
             PresignMode::On => {
                 let presigned = self.get_presigned_upload_url(stage).await?;
@@ -688,8 +696,7 @@ impl APIClient {
                 self.server_version = Some(info.version.clone());
                 if let Some(tokens) = info.tokens {
                     info!("login success with session token");
-                    self.session_token_info =
-                        Some(Arc::new(parking_lot::Mutex::new((tokens, Instant::now()))))
+                    self.session_token_info = Some(Arc::new(Mutex::new((tokens, Instant::now()))))
                 }
                 info!("login success without session token");
             }
@@ -775,9 +782,7 @@ impl APIClient {
         Ok(())
     }
 
-    async fn need_pre_refresh_session(
-        &self,
-    ) -> Option<Arc<parking_lot::Mutex<(SessionTokenInfo, Instant)>>> {
+    async fn need_pre_refresh_session(&self) -> Option<Arc<Mutex<(SessionTokenInfo, Instant)>>> {
         if let Some(info) = &self.session_token_info {
             let (start, ttl) = {
                 let guard = info.lock();
@@ -957,23 +962,23 @@ impl Default for APIClient {
             host: "localhost".to_string(),
             port: 8000,
             tenant: None,
-            warehouse: Arc::new(parking_lot::Mutex::new(None)),
+            warehouse: Mutex::new(None),
             auth: Arc::new(BasicAuth::new("root", "")) as Arc<dyn Auth>,
-            session_state: Arc::new(parking_lot::Mutex::new(SessionState::default())),
+            session_state: Mutex::new(SessionState::default()),
             wait_time_secs: None,
             max_rows_in_buffer: None,
             max_rows_per_page: None,
             connect_timeout: Duration::from_secs(10),
             page_request_timeout: Duration::from_secs(30),
             tls_ca_file: None,
-            presign: PresignMode::Auto,
-            route_hint: Arc::new(RouteHintGenerator::new()),
-            last_node_id: Arc::new(Default::default()),
+            presign: Mutex::new(PresignMode::Auto),
+            route_hint: RouteHintGenerator::new(),
+            last_node_id: Default::default(),
             disable_session_token: true,
             disable_login: false,
             session_token_info: None,
-            closed: Arc::new(Default::default()),
-            last_query_id: Arc::new(Default::default()),
+            closed: Default::default(),
+            last_query_id: Default::default(),
             server_version: None,
         }
     }

@@ -17,6 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use log::info;
 use tokio::fs::File;
 use tokio::io::AsyncRead;
 use tokio::io::BufReader;
@@ -94,7 +95,21 @@ pub trait IConnection: Send + Sync {
 
     /// Get presigned url for a given operation and stage location.
     /// The operation can be "UPLOAD" or "DOWNLOAD".
-    async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse>;
+    async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse> {
+        info!("get presigned url: {} {}", operation, stage);
+        let sql = format!("PRESIGN {} {}", operation, stage);
+        let row = self.query_row(&sql).await?.ok_or_else(|| {
+            Error::InvalidResponse("Empty response from server for presigned request".to_string())
+        })?;
+        let (method, headers, url): (String, String, String) =
+            row.try_into().map_err(Error::Parsing)?;
+        let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
+        Ok(PresignedResponse {
+            method,
+            headers,
+            url,
+        })
+    }
 
     async fn upload_to_stage(&self, stage: &str, data: Reader, size: u64) -> Result<()>;
 

@@ -190,14 +190,12 @@ impl Connection {
         format_options: Option<BTreeMap<String, String>>,
         copy_options: Option<BTreeMap<String, String>>,
     ) -> Result<ServerStats> {
-        let format_options = match format_options {
-            None => None,
-            Some(ref opts) => Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()),
-        };
-        let copy_options = match copy_options {
-            None => None,
-            Some(ref opts) => Some(opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()),
-        };
+        let format_options = format_options
+            .as_ref()
+            .map(|opts| opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect());
+        let copy_options = copy_options
+            .as_ref()
+            .map(|opts| opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect());
         let ss = self
             .inner
             .load_file(&sql, Path::new(&file), format_options, copy_options)
@@ -254,7 +252,7 @@ impl<'v> Value<'v> {
     }
 }
 
-impl<'v> ToNapiValue for Value<'v> {
+impl ToNapiValue for Value<'_> {
     unsafe fn to_napi_value(env: sys::napi_env, val: Self) -> Result<sys::napi_value> {
         let ctx = Env::from(env);
         match val.inner {
@@ -290,21 +288,21 @@ impl<'v> ToNapiValue for Value<'v> {
             }
             databend_driver::Value::Array(inner) => {
                 let mut arr = ctx.create_array(inner.len() as u32)?;
-                for (i, v) in inner.into_iter().enumerate() {
+                for (i, v) in inner.iter().enumerate() {
                     arr.set(i as u32, Value::new(v, val.opts))?;
                 }
                 Array::to_napi_value(env, arr)
             }
             databend_driver::Value::Map(inner) => {
                 let mut obj = ctx.create_object()?;
-                for (k, v) in inner.into_iter() {
+                for (k, v) in inner.iter() {
                     obj.set(k.to_string(), Value::new(v, val.opts))?;
                 }
                 Object::to_napi_value(env, obj)
             }
             databend_driver::Value::Tuple(inner) => {
                 let mut arr = ctx.create_array(inner.len() as u32)?;
-                for (i, v) in inner.into_iter().enumerate() {
+                for (i, v) in inner.iter().enumerate() {
                     arr.set(i as u32, Value::new(v, val.opts))?;
                 }
                 Array::to_napi_value(env, arr)
@@ -412,7 +410,7 @@ impl RowIterator {
     /// Return a Readable Stream for the query result.
     /// Should be used with `ObjectMode` set to `true`.
     #[napi(ts_return_type = "import('stream').Readable")]
-    pub fn stream(&self) -> () {
+    pub fn stream(&self) {
         unreachable!()
     }
 }

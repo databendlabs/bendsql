@@ -31,8 +31,8 @@ use tokio_stream::{Stream, StreamExt};
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use url::Url;
 
+use databend_client::presign_upload_to_stage;
 use databend_client::SensitiveString;
-use databend_client::{presign_upload_to_stage, PresignedResponse};
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::rows::{
     Row, RowIterator, RowStatsIterator, RowWithStats, Rows, ServerStats,
@@ -96,21 +96,6 @@ impl IConnection for FlightSQLConnection {
         let flight_data = client.do_get(ticket.clone()).await?.into_inner();
         let (schema, rows) = FlightSQLRows::try_from_flight_data(flight_data).await?;
         Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
-    }
-
-    async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse> {
-        let sql = format!("PRESIGN {} {}", operation, stage);
-        let row = self.query_row(&sql).await?.ok_or_else(|| {
-            Error::InvalidResponse("Empty response from server for presigned request".to_string())
-        })?;
-        let (method, headers, url): (String, String, String) =
-            row.try_into().map_err(Error::Parsing)?;
-        let headers: BTreeMap<String, String> = serde_json::from_str(&headers)?;
-        Ok(PresignedResponse {
-            method,
-            headers,
-            url,
-        })
     }
 
     /// Always use presigned url to upload stage for FlightSQL

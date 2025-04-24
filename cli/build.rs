@@ -13,19 +13,18 @@
 // limitations under the License.
 
 use std::{env, error::Error};
-use vergen::EmitBuilder;
+use vergen_gix::{BuildBuilder, Emitter, GixBuilder};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    EmitBuilder::builder()
+    let gix = GixBuilder::default().sha(false).build()?;
+    let build = BuildBuilder::default().build_timestamp(true).build()?;
+    Emitter::default()
         .fail_on_error()
-        .build_timestamp()
-        .git_sha(true)
+        .add_instructions(&gix)?
+        .add_instructions(&build)?
         .emit()
         .unwrap_or_else(|_| {
-            let info = match env::var("BENDSQL_BUILD_INFO") {
-                Ok(info) => info,
-                Err(_) => "unknown".to_string(),
-            };
+            let info = env::var("BENDSQL_BUILD_INFO").unwrap_or_else(|_| "unknown".to_string());
             println!("cargo:rustc-env=BENDSQL_BUILD_INFO={}", info);
         });
 

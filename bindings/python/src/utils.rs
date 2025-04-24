@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 use databend_driver::Param;
@@ -92,4 +93,12 @@ fn to_sql_string(v: Bound<PyAny>) -> PyResult<String> {
         }
         Err(e) => Err(e.into()),
     }
+}
+
+pub(super) fn options_as_ref(
+    format_options: &Option<BTreeMap<String, String>>,
+) -> Option<BTreeMap<&str, &str>> {
+    format_options
+        .as_ref()
+        .map(|opts| opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
 }
