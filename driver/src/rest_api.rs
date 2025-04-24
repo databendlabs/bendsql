@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::future::Future;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::pin::Pin;
@@ -26,8 +25,8 @@ use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_stream::Stream;
 
-use databend_client::QueryResponse;
-use databend_client::{APIClient, SchemaField};
+use databend_client::APIClient;
+use databend_client::Pages;
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
 use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
@@ -65,18 +64,8 @@ impl IConnection for RestAPIConnection {
 
     async fn exec(&self, sql: &str) -> Result<i64> {
         info!("exec: {}", sql);
-        let mut resp = self.client.start_query(sql).await?;
-        let node_id = resp.node_id.clone();
-        if let Some(node_id) = &node_id {
-            self.client.set_last_node_id(node_id.clone());
-        }
-        while let Some(next_uri) = resp.next_uri {
-            resp = self
-                .client
-                .query_page(&resp.id, &next_uri, &node_id)
-                .await?;
-        }
-        Ok(resp.stats.progresses.write_progress.rows as i64)
+        let page = self.client.query_all(sql).await?;
+        Ok(page.stats.progresses.write_progress.rows as i64)
     }
 
     async fn kill_query(&self, query_id: &str) -> Result<()> {
@@ -92,19 +81,16 @@ impl IConnection for RestAPIConnection {
 
     async fn query_iter_ext(&self, sql: &str) -> Result<RowStatsIterator> {
         info!("query iter ext: {}", sql);
-        let resp = self.client.start_query(sql).await?;
-        let resp = self.wait_for_schema(resp, true).await?;
-        let (schema, rows) = RestAPIRows::<RowWithStats>::from_response(self.client.clone(), resp)?;
+        let pages = self.client.start_query(sql, true).await?;
+        let (schema, rows) = RestAPIRows::<RowWithStats>::from_pages(pages).await?;
         Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
     }
 
     // raw data response query, only for test
     async fn query_raw_iter(&self, sql: &str) -> Result<RawRowIterator> {
         info!("query raw iter: {}", sql);
-        let resp = self.client.start_query(sql).await?;
-        let resp = self.wait_for_schema(resp, true).await?;
-        let (schema, rows) =
-            RestAPIRows::<RawRowWithStats>::from_response(self.client.clone(), resp)?;
+        let pages = self.client.start_query(sql, true).await?;
+        let (schema, rows) = RestAPIRows::<RawRowWithStats>::from_pages(pages).await?;
         Ok(RawRowIterator::new(Arc::new(schema), Box::pin(rows)))
     }
 
@@ -135,11 +121,11 @@ impl IConnection for RestAPIConnection {
         let copy_options = copy_options.unwrap_or_else(Self::default_copy_options);
 
         self.upload_to_stage(&stage, data, size).await?;
-        let resp = self
+        let stats = self
             .client
             .insert_with_stage(sql, &stage, file_format_options, copy_options)
             .await?;
-        Ok(ServerStats::from(resp.stats))
+        Ok(ServerStats::from(stats))
     }
 
     async fn load_file(
@@ -194,42 +180,7 @@ impl IConnection for RestAPIConnection {
 impl<'o> RestAPIConnection {
     pub async fn try_create(dsn: &str, name: String) -> Result<Self> {
         let client = APIClient::new(dsn, Some(name)).await?;
-        Ok(Self {
-            client: Arc::new(client),
-        })
-    }
-
-    async fn wait_for_schema(
-        &self,
-        resp: QueryResponse,
-        return_on_progress: bool,
-    ) -> Result<QueryResponse> {
-        let node_id = resp.node_id.clone();
-        if let Some(node_id) = &node_id {
-            self.client.set_last_node_id(node_id.clone());
-        }
-        if !resp.data.is_empty()
-            || !resp.schema.is_empty()
-            || (return_on_progress && resp.stats.progresses.has_progress())
-        {
-            return Ok(resp);
-        }
-        let mut result = resp;
-        // preserve schema since it is not included in the final response
-        while let Some(next_uri) = result.next_uri {
-            result = self
-                .client
-                .query_page(&result.id, &next_uri, &node_id)
-                .await?;
-
-            if !result.data.is_empty()
-                || !result.schema.is_empty()
-                || (return_on_progress && result.stats.progresses.has_progress())
-            {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(Self { client })
     }
 
     fn default_file_format_options() -> BTreeMap<&'o str, &'o str> {
@@ -246,40 +197,27 @@ impl<'o> RestAPIConnection {
     fn default_copy_options() -> BTreeMap<&'o str, &'o str> {
         vec![("purge", "true")].into_iter().collect()
     }
-
-    pub async fn query_row_batch(&self, sql: &str) -> Result<RowBatch> {
-        let resp = self.client.start_query(sql).await?;
-        let resp = self.wait_for_schema(resp, false).await?;
-        RowBatch::from_response(self.client.clone(), resp)
-    }
 }
 
-type PageFut = Pin<Box<dyn Future<Output = Result<QueryResponse>> + Send>>;
-
 pub struct RestAPIRows<T> {
-    client: Arc<APIClient>,
+    pages: Pages,
+
     schema: SchemaRef,
     data: VecDeque<Vec<Option<String>>>,
     stats: Option<ServerStats>,
-    query_id: String,
-    node_id: Option<String>,
-    next_uri: Option<String>,
-    next_page: Option<PageFut>,
+
     _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T> RestAPIRows<T> {
-    fn from_response(client: Arc<APIClient>, resp: QueryResponse) -> Result<(Schema, Self)> {
-        let schema: Schema = resp.schema.try_into()?;
+    async fn from_pages(pages: Pages) -> Result<(Schema, Self)> {
+        let (pages, schema) = pages.wait_for_schema(true).await?;
+        let schema: Schema = schema.try_into()?;
         let rows = Self {
-            client,
-            query_id: resp.id,
-            node_id: resp.node_id,
-            next_uri: resp.next_uri,
+            pages,
             schema: Arc::new(schema.clone()),
-            data: resp.data.into(),
-            stats: Some(ServerStats::from(resp.stats)),
-            next_page: None,
+            data: Default::default(),
+            stats: None,
             _phantom: PhantomData,
         };
         Ok((schema, rows))
@@ -294,53 +232,32 @@ impl<T: FromRowStats + std::marker::Unpin> Stream for RestAPIRows<T> {
             return Poll::Ready(Some(Ok(T::from_stats(ss))));
         }
         // Skip to fetch next page if there is only one row left in buffer.
-        // Therefore we could guarantee the `/final` called before the last row.
+        // Therefore, we could guarantee the `/final` called before the last row.
         if self.data.len() > 1 {
             if let Some(row) = self.data.pop_front() {
                 let row = T::try_from_row(row, self.schema.clone())?;
                 return Poll::Ready(Some(Ok(row)));
             }
         }
-        match self.next_page {
-            Some(ref mut next_page) => match Pin::new(next_page).poll(cx) {
-                Poll::Ready(Ok(resp)) => {
-                    if self.schema.fields().is_empty() {
-                        self.schema = Arc::new(resp.schema.try_into()?);
-                    }
-                    self.next_uri = resp.next_uri;
-                    self.next_page = None;
-                    let mut new_data = resp.data.into();
-                    self.data.append(&mut new_data);
-                    Poll::Ready(Some(Ok(T::from_stats(resp.stats.into()))))
+
+        match Pin::new(&mut self.pages).poll_next(cx) {
+            Poll::Ready(Some(Ok(page))) => {
+                if self.schema.fields().is_empty() {
+                    self.schema = Arc::new(page.schema.try_into()?);
                 }
-                Poll::Ready(Err(e)) => {
-                    self.next_page = None;
-                    Poll::Ready(Some(Err(e)))
+                let mut new_data = page.data.into();
+                self.data.append(&mut new_data);
+                Poll::Ready(Some(Ok(T::from_stats(page.stats.into()))))
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
+            Poll::Ready(None) => match self.data.pop_front() {
+                Some(row) => {
+                    let row = T::try_from_row(row, self.schema.clone())?;
+                    Poll::Ready(Some(Ok(row)))
                 }
-                Poll::Pending => Poll::Pending,
+                None => Poll::Ready(None),
             },
-            None => match self.next_uri {
-                Some(ref next_uri) => {
-                    let client = self.client.clone();
-                    let next_uri = next_uri.clone();
-                    let query_id = self.query_id.clone();
-                    let node_id = self.node_id.clone();
-                    self.next_page = Some(Box::pin(async move {
-                        client
-                            .query_page(&query_id, &next_uri, &node_id)
-                            .await
-                            .map_err(|e| e.into())
-                    }));
-                    self.poll_next(cx)
-                }
-                None => match self.data.pop_front() {
-                    Some(row) => {
-                        let row = T::try_from_row(row, self.schema.clone())?;
-                        Poll::Ready(Some(Ok(row)))
-                    }
-                    None => Poll::Ready(None),
-                },
-            },
+            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -368,50 +285,5 @@ impl FromRowStats for RawRowWithStats {
     fn try_from_row(row: Vec<Option<String>>, schema: SchemaRef) -> Result<Self> {
         let rows = Row::try_from((schema, row.clone()))?;
         Ok(RawRowWithStats::Row(RawRow::new(rows, row)))
-    }
-}
-
-pub struct RowBatch {
-    schema: Vec<SchemaField>,
-    client: Arc<APIClient>,
-    query_id: String,
-    node_id: Option<String>,
-
-    next_uri: Option<String>,
-    data: Vec<Vec<Option<String>>>,
-}
-
-impl RowBatch {
-    pub fn schema(&self) -> Vec<SchemaField> {
-        self.schema.clone()
-    }
-
-    fn from_response(client: Arc<APIClient>, mut resp: QueryResponse) -> Result<Self> {
-        Ok(Self {
-            schema: std::mem::take(&mut resp.schema),
-            client,
-            query_id: resp.id,
-            node_id: resp.node_id,
-            next_uri: resp.next_uri,
-            data: resp.data,
-        })
-    }
-
-    pub async fn fetch_next_page(&mut self) -> Result<Vec<Vec<Option<String>>>> {
-        if !self.data.is_empty() {
-            return Ok(std::mem::take(&mut self.data));
-        }
-        while let Some(next_uri) = &self.next_uri {
-            let resp = self
-                .client
-                .query_page(&self.query_id, next_uri, &self.node_id)
-                .await?;
-
-            self.next_uri = resp.next_uri;
-            if !resp.data.is_empty() {
-                return Ok(resp.data);
-            }
-        }
-        Ok(vec![])
     }
 }

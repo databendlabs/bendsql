@@ -16,14 +16,14 @@ use crate::error_code::ErrorCode;
 use crate::session::SessionState;
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub struct QueryStats {
     #[serde(flatten)]
     pub progresses: Progresses,
     pub running_time_ms: f64,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 pub struct Progresses {
     pub scan_progress: ProgressValues,
     pub write_progress: ProgressValues,
@@ -49,7 +49,7 @@ impl Progresses {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ProgressValues {
     pub rows: usize,
     pub bytes: usize,
