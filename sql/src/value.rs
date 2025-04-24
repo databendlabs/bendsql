@@ -17,7 +17,7 @@ use std::hash::Hash;
 use std::io::BufRead;
 use std::io::Cursor;
 
-use arrow::datatypes::{i256, ArrowNativeTypeOp};
+use arrow_buffer::i256;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
 
 use crate::cursor_ext::{
@@ -934,7 +934,7 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
     if scale == 0 {
         write!(buf, "{}", num).unwrap();
     } else {
-        let pow_scale = i256::from_i128(10i128).pow_wrapping(scale as u32);
+        let pow_scale = i256::from_i128(10i128).wrapping_pow(scale as u32);
         let width = scale as usize;
         // -1/10 = 0
         let (int_part, neg) = if num >= i256::ZERO {
@@ -959,7 +959,7 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
             None => {
                 // fractional part is too big for display,
                 // split it into two parts.
-                let pow = i256::from_i128(10i128).pow_wrapping(38);
+                let pow = i256::from_i128(10i128).wrapping_pow(38);
                 let frac_high_part = frac_part / pow;
                 let frac_low_part = frac_part % pow;
                 let frac_width = (scale - 38) as usize;
