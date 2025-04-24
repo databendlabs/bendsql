@@ -50,8 +50,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-20.04 }
-          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-20.04 }
+          - { target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-22.04 }
           - { target: x86_64-unknown-linux-musl, runner: ubuntu-latest }
           - { target: aarch64-unknown-linux-musl, runner: ubuntu-latest }
           # resolve it after: https://github.com/actions/setup-node/issues/1222
