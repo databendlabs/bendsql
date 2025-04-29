@@ -1,7 +1,7 @@
 #!/bin/bash
 
 cat <<SQL | ${BENDSQL}
-CREATE DATABASE test;
+CREATE or replace DATABASE test;
 use test;
 
 select '==========TPCH=========';
