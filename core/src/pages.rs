@@ -121,6 +121,7 @@ impl Stream for Pages {
                 }
                 Poll::Ready(Err(e)) => {
                     self.next_page_future = None;
+                    self.next_uri = None;
                     Poll::Ready(Some(Err(e)))
                 }
                 Poll::Pending => Poll::Pending,
