@@ -39,7 +39,7 @@ impl Session {
     }
 }
 
-#[cfg(any(all(target_arch = "x86_64", target_os = "linux"),))]
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 impl Session {
     pub(crate) async fn gendata(
         &self,
