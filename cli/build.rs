@@ -19,7 +19,7 @@ use vergen_gix::GixBuilder;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let builder = BuildBuilder::default().build_timestamp(true).build()?;
-    let gix_builder = GixBuilder::default().sha(true).build()?;
+    let gix_builder = GixBuilder::default().sha(false).build()?;
 
     Emitter::new()
         .fail_on_error()
@@ -27,10 +27,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .add_instructions(&gix_builder)?
         .emit()
         .unwrap_or_else(|_| {
-            let info = match env::var("BENDSQL_BUILD_INFO") {
-                Ok(info) => info,
-                Err(_) => "unknown".to_string(),
-            };
+            let info = env::var("BENDSQL_BUILD_INFO").unwrap_or_else(|_| "unknown".to_string());
             println!("cargo:rustc-env=BENDSQL_BUILD_INFO={}", info);
         });
 

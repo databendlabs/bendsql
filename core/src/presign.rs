@@ -25,7 +25,7 @@ use crate::error::{Error, Result};
 
 pub type Reader = Box<dyn AsyncRead + Send + Sync + Unpin + 'static>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum PresignMode {
     Auto,
     Detect,

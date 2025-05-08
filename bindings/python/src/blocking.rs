@@ -24,7 +24,7 @@ use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
 use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
-use crate::utils::{to_sql_params, wait_for_future};
+use crate::utils::{options_as_ref, to_sql_params, wait_for_future};
 
 #[pyclass(module = "databend_driver")]
 pub struct BlockingDatabendClient(databend_driver::Client);
@@ -173,12 +173,8 @@ impl BlockingDatabendConnection {
     ) -> PyResult<ServerStats> {
         let this = self.0.clone();
         let ret = wait_for_future(py, async move {
-            let format_options = format_options
-                .as_ref()
-                .map(|opts| opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect());
-            let copy_options = copy_options
-                .as_ref()
-                .map(|opts| opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect());
+            let format_options = options_as_ref(&format_options);
+            let copy_options = options_as_ref(&copy_options);
             this.load_file(&sql, Path::new(&fp), format_options, copy_options)
                 .await
                 .map_err(DriverError::new)
