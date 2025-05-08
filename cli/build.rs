@@ -13,18 +13,15 @@
 // limitations under the License.
 
 use std::{env, error::Error};
-use vergen_gix::BuildBuilder;
-use vergen_gix::Emitter;
-use vergen_gix::GixBuilder;
+use vergen_gix::{BuildBuilder, Emitter, GixBuilder};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let builder = BuildBuilder::default().build_timestamp(true).build()?;
-    let gix_builder = GixBuilder::default().sha(false).build()?;
-
-    Emitter::new()
+    let gix = GixBuilder::default().sha(false).build()?;
+    let build = BuildBuilder::default().build_timestamp(true).build()?;
+    Emitter::default()
         .fail_on_error()
-        .add_instructions(&builder)?
-        .add_instructions(&gix_builder)?
+        .add_instructions(&gix)?
+        .add_instructions(&build)?
         .emit()
         .unwrap_or_else(|_| {
             let info = env::var("BENDSQL_BUILD_INFO").unwrap_or_else(|_| "unknown".to_string());
