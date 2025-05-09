@@ -23,7 +23,6 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
 use geozero::wkb::FromWkb;
 use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
-use jsonb::RawJsonb;
 
 use crate::cursor_ext::{
     collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
@@ -47,6 +46,7 @@ use {
         UInt64Array, UInt8Array,
     },
     arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
+    jsonb::RawJsonb,
     std::sync::Arc,
 };
 
