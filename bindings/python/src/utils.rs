@@ -24,7 +24,6 @@ use pyo3::{
     types::{PyDict, PyList},
 };
 
-#[ctor::ctor]
 pub(crate) static RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new_multi_thread()
     .enable_all()
     .build()
