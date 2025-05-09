@@ -25,14 +25,12 @@ use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
 use jsonb::RawJsonb;
 
-use crate::{
-    cursor_ext::{
-        collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt,
-        ReadCheckPointExt, ReadNumberExt,
-    },
-    error::{ConvertError, Error, Result},
-    schema::{DataType, DecimalDataType, DecimalSize, NumberDataType},
+use crate::cursor_ext::{
+    collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
+    ReadNumberExt,
 };
+use crate::error::{ConvertError, Error, Result};
+use crate::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 
 #[cfg(feature = "flight-sql")]
 use {
