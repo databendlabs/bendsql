@@ -14,6 +14,10 @@
 
 use std::sync::Arc;
 
+use databend_client::SchemaField as APISchemaField;
+
+use crate::error::{Error, Result};
+
 #[cfg(feature = "flight-sql")]
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, SchemaRef as ArrowSchemaRef};
 
@@ -34,10 +38,6 @@ pub(crate) const ARROW_EXT_TYPE_GEOMETRY: &str = "Geometry";
 pub(crate) const ARROW_EXT_TYPE_GEOGRAPHY: &str = "Geography";
 #[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_INTERVAL: &str = "Interval";
-
-use databend_client::SchemaField as APISchemaField;
-
-use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumberDataType {

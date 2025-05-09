@@ -13,35 +13,23 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter, Write};
 use std::hash::Hash;
 use std::io::BufRead;
 use std::io::Cursor;
 
 use arrow_buffer::i256;
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
-use jsonb::RawJsonb;
+use geozero::wkb::FromWkb;
+use geozero::wkb::WkbDialect;
+use geozero::wkt::Ewkt;
 
 use crate::cursor_ext::{
     collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
     ReadNumberExt,
 };
-
-use crate::{
-    error::{ConvertError, Error, Result},
-    schema::{DecimalDataType, DecimalSize},
-};
-
-use geozero::wkb::FromWkb;
-use geozero::wkb::WkbDialect;
-use geozero::wkt::Ewkt;
-use std::fmt::{Display, Formatter, Write};
-
-// Thu 1970-01-01 is R.D. 719163
-const DAYS_FROM_CE: i32 = 719_163;
-const NULL_VALUE: &str = "NULL";
-const TRUE_VALUE: &str = "1";
-const FALSE_VALUE: &str = "0";
-const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.6f";
+use crate::error::{ConvertError, Error, Result};
+use crate::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 
 #[cfg(feature = "flight-sql")]
 use {
@@ -58,10 +46,16 @@ use {
         UInt64Array, UInt8Array,
     },
     arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
+    jsonb::RawJsonb,
     std::sync::Arc,
 };
 
-use crate::schema::{DataType, NumberDataType};
+// Thu 1970-01-01 is R.D. 719163
+const DAYS_FROM_CE: i32 = 719_163;
+const NULL_VALUE: &str = "NULL";
+const TRUE_VALUE: &str = "1";
+const FALSE_VALUE: &str = "0";
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.6f";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NumberValue {
