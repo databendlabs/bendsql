@@ -262,19 +262,35 @@ impl Session {
             println!("Server version: {}", version);
         }
 
+        #[derive(TryFromRow)]
+        struct LicenseInfo {
+            license_issuer: String,
+            license_type: String,
+            organization: String,
+            issued_at: NaiveDateTime,
+            expire_at: NaiveDateTime,
+            available_time_until_expiry: String,
+            features: String,
+        }
+
         // license info
         match self.conn.query_iter("call admin$license_info()", ()).await {
             Ok(mut rows) => {
                 let row = rows.next().await.unwrap()?;
-                let linfo: (String, String, String, NaiveDateTime, NaiveDateTime, String) = row
+                let linfo: LicenseInfo = row
                     .try_into()
                     .map_err(|e| anyhow!("parse license info failed: {}", e))?;
-                if chrono::Utc::now().naive_utc() > linfo.4 {
-                    eprintln!("-> WARN: License expired at {}", linfo.4);
+                if chrono::Utc::now().naive_utc() > linfo.expire_at {
+                    eprintln!("-> WARN: License expired at {}", linfo.expire_at);
                 } else {
                     println!(
-                        "License({}) issued by {} for {} from {} to {}",
-                        linfo.1, linfo.0, linfo.2, linfo.3, linfo.4
+                        "License({}) issued by {} for {} from {} to {}, features: {}",
+                        linfo.license_type,
+                        linfo.license_issuer,
+                        linfo.organization,
+                        linfo.issued_at,
+                        linfo.expire_at,
+                        linfo.features
                     );
                 }
             }
