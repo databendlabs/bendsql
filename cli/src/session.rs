@@ -268,7 +268,7 @@ impl Session {
             organization: String,
             issued_at: NaiveDateTime,
             expire_at: NaiveDateTime,
-            // available_time_until_expiry: String,
+            available_time_until_expiry: String,
             features: String,
         }
 
@@ -283,13 +283,15 @@ impl Session {
                     eprintln!("-> WARN: License expired at {}", linfo.expire_at);
                 } else {
                     println!(
-                        "License({}) issued by {} for {} from {} to {}, features: {}",
-                        linfo.license_type,
-                        linfo.license_issuer,
-                        linfo.organization,
-                        linfo.issued_at,
-                        linfo.expire_at,
-                        linfo.features
+                        "License({}) issued by [{}] for [{}]",
+                        linfo.license_type, linfo.license_issuer, linfo.organization,
+                    );
+                    println!("  Issued at: {}", linfo.issued_at);
+                    println!("  Expire at: {}", linfo.expire_at);
+                    println!("  Features: {}", linfo.features);
+                    println!(
+                        "  Available time until expiry: {}",
+                        linfo.available_time_until_expiry
                     );
                 }
             }
