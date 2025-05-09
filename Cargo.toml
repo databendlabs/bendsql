@@ -28,7 +28,7 @@ databend-driver-core = { path = "sql", version = "0.27.1" }
 databend-driver-macros = { path = "macros", version = "0.27.1" }
 
 tokio-stream = "0.1"
-chrono = { version = "=0.4.40", default-features = false, features = ["clock"] }
+chrono = { version = "0.4.40", default-features = false, features = ["clock"] }
 arrow = { version = "55.0" }
 arrow-array = { version = "55.0" }
 arrow-buffer = { version = "55.0" }

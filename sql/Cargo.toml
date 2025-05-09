@@ -14,15 +14,15 @@ repository = { workspace = true }
 flight-sql = ["dep:arrow", "dep:arrow-array", "dep:arrow-schema", "dep:tonic", "dep:jsonb"]
 
 [dependencies]
-arrow = { workspace = true , optional = true}
-arrow-array = { workspace = true, optional = true}
+arrow = { workspace = true, optional = true }
+arrow-array = { workspace = true, optional = true }
 arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true, optional = true }
+chrono = { workspace = true }
 databend-client = { workspace = true }
 tokio-stream = { workspace = true }
 tonic = { workspace = true, optional = true }
 
-chrono = { version = "=0.4.40", default-features = false }
 geozero = { version = "0.14.0", features = ["with-wkb"] }
 glob = "0.3"
 hex = "0.4.3"
