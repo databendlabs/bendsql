@@ -24,8 +24,7 @@ use chrono::NaiveDateTime;
 use databend_common_ast::parser::all_reserved_keywords;
 use databend_common_ast::parser::token::TokenKind;
 use databend_common_ast::parser::token::Tokenizer;
-use databend_driver::ServerStats;
-use databend_driver::{Client, Connection};
+use databend_driver::{Client, Connection, ServerStats, TryFromRow};
 use log::error;
 use once_cell::sync::Lazy;
 use rustyline::config::Builder;
@@ -269,7 +268,7 @@ impl Session {
             organization: String,
             issued_at: NaiveDateTime,
             expire_at: NaiveDateTime,
-            available_time_until_expiry: String,
+            // available_time_until_expiry: String,
             features: String,
         }
 
