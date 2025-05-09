@@ -272,7 +272,7 @@ impl Default for Settings {
             replace_newline: true,
             auto_open_browser: false,
             bind_address: "127.0.0.1".to_string(),
-            bind_port: 8080,
+            bind_port: 0,
         }
     }
 }
@@ -294,7 +294,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             bind_address: "127.0.0.1".to_string(),
-            bind_port: 8080,
+            bind_port: 0,
             auto_open_browser: true,
         }
     }

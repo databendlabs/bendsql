@@ -14,6 +14,7 @@
 
 use std::collections::BTreeMap;
 use std::io::BufRead;
+use std::net::TcpListener;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -47,7 +48,6 @@ use crate::config::TimeOption;
 use crate::display::INTERRUPTED_MESSAGE;
 use crate::display::{format_write_progress, ChunkDisplay, FormatDisplay};
 use crate::helper::CliHelper;
-use crate::web::find_available_port;
 use crate::web::start_server;
 use crate::VERSION;
 
@@ -71,12 +71,14 @@ pub struct Session {
     query: String,
 
     server_handle: Option<JoinHandle<std::io::Result<()>>>,
+    server_addr: Option<String>,
+
     keywords: Option<Arc<sled::Db>>,
     interrupted: Arc<AtomicBool>,
 }
 
 impl Session {
-    pub async fn try_new(dsn: String, mut settings: Settings, is_repl: bool) -> Result<Self> {
+    pub async fn try_new(dsn: String, settings: Settings, is_repl: bool) -> Result<Self> {
         let client = Client::new(dsn).with_name(format!("bendsql/{}", VERSION_SHORT.as_str()));
         let conn = client.get_conn().await?;
         let info = conn.info().await;
@@ -167,16 +169,17 @@ impl Session {
             keywords = Some(Arc::new(db));
         }
 
-        let server_handle = if is_repl {
-            let port = find_available_port(settings.bind_port).await;
-            let addr = settings.bind_address.clone();
-
-            let server_handle = tokio::spawn(async move { start_server(&addr, port).await });
-            println!("Started web server at {}:{}", settings.bind_address, port);
-            settings.bind_port = port;
-            Some(server_handle)
-        } else {
-            None
+        let mut server_handle = None;
+        let mut server_addr = None;
+        if is_repl {
+            let listener =
+                TcpListener::bind(format!("{}:{}", settings.bind_address, settings.bind_port))
+                    .unwrap();
+            let addr = listener.local_addr().unwrap();
+            let handle = tokio::spawn(async move { start_server(listener).await });
+            println!("Started web server at {}", addr);
+            server_addr = Some(addr.to_string());
+            server_handle = Some(handle);
         };
 
         let interrupted = Arc::new(AtomicBool::new(false));
@@ -200,6 +203,7 @@ impl Session {
             query: String::new(),
             keywords,
             server_handle,
+            server_addr,
             interrupted,
         })
     }
@@ -572,6 +576,7 @@ impl Session {
                     start,
                     data,
                     self.interrupted.clone(),
+                    self.server_addr.clone(),
                 );
                 let stats = displayer.display(expand).await?;
                 Ok(Some(stats))

@@ -57,6 +57,7 @@ pub struct FormatDisplay<'a> {
     start: Instant,
     stats: Option<ServerStats>,
     interrupted: Arc<AtomicBool>,
+    server_addr: Option<String>,
 }
 
 impl<'a> FormatDisplay<'a> {
@@ -67,6 +68,7 @@ impl<'a> FormatDisplay<'a> {
         start: Instant,
         data: RowStatsIterator,
         interrupted: Arc<AtomicBool>,
+        server_addr: Option<String>,
     ) -> Self {
         Self {
             settings,
@@ -79,6 +81,7 @@ impl<'a> FormatDisplay<'a> {
             start,
             stats: None,
             interrupted,
+            server_addr,
         }
     }
 }
@@ -109,6 +112,11 @@ impl FormatDisplay<'_> {
     }
 
     async fn display_graphical(&mut self, rows: &[Row]) -> Result<()> {
+        let addr = self
+            .server_addr
+            .clone()
+            .ok_or(anyhow!("Server not started"))?;
+
         let mut result = String::new();
         for row in rows {
             result.push_str(&row.values()[0].to_string());
@@ -116,10 +124,7 @@ impl FormatDisplay<'_> {
 
         let perf_id = set_data(result);
 
-        let url = format!(
-            "http://{}:{}?perf_id={}",
-            self.settings.bind_address, self.settings.bind_port, perf_id
-        );
+        let url = format!("http://{}?perf_id={}", addr, perf_id);
 
         // Open the browser in a separate task if not in ssh mode
         let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
