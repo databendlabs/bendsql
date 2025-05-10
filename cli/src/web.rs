@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::net::TcpListener;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
@@ -24,7 +25,6 @@ use mime_guess::from_path;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
-use tokio::net::TcpListener;
 
 #[derive(RustEmbed)]
 #[folder = "frontend/build/"]
@@ -86,24 +86,14 @@ async fn get_message(query: Query<MessageQuery>) -> impl Responder {
         })
 }
 
-pub fn start_server(addr: &str, port: u16) -> Server {
+pub fn start_server(listener: TcpListener) -> Server {
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
             .service(get_message)
             .route("/{filename:.*}", web::get().to(embed_file))
     })
-    .bind((addr, port))
-    .expect("Cannot bind to port")
+    .listen(listener)
+    .unwrap_or_else(|e| panic!("Cannot listen to address: {}", e))
     .run()
-}
-
-pub async fn find_available_port(start: u16) -> u16 {
-    let mut port = start;
-    loop {
-        if TcpListener::bind(("127.0.0.1", port)).await.is_ok() {
-            return port;
-        }
-        port += 1;
-    }
 }
