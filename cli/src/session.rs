@@ -502,7 +502,7 @@ impl Session {
                         if is_end_query || is_slash_g {
                             // push to current and continue the tokenizer
                             let (sql, remain) = self.query.split_at(token.span.end as usize);
-                            if is_valid && !sql.is_empty() {
+                            if is_valid && !sql.is_empty() && sql.trim() != ";" {
                                 queries.push(sql.to_string());
                             }
                             self.query = remain.to_string();
