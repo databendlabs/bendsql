@@ -129,6 +129,18 @@ impl Param for &str {
     }
 }
 
+impl<T> Param for Option<T>
+where
+    T: Param,
+{
+    fn as_sql_string(&self) -> String {
+        match self {
+            Some(s) => s.as_sql_string(),
+            None => "NULL".to_string(),
+        }
+    }
+}
+
 impl Param for serde_json::Value {
     fn as_sql_string(&self) -> String {
         match self {
