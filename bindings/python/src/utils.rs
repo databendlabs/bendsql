@@ -39,7 +39,6 @@ where
     py.allow_threads(|| RUNTIME.block_on(f))
 }
 
-//  params: Option<Bound<'p, PyAny>>
 pub(crate) fn to_sql_params(v: Option<Bound<PyAny>>) -> Params {
     match v {
         Some(v) => {
