@@ -70,6 +70,11 @@ def _(context):
     row = context.cursor.fetchone()
     assert row.values() == (3, False, 4, "55"), f"output: {row.values()}"
 
+    # Test with None
+    context.cursor.execute("SELECT ?", None)
+    row = context.cursor.fetchone()
+    assert row.values() == (None,), f"output: {row.values()}"
+
 
 @then("Select string {input} should be equal to {output}")
 def _(context, input, output):
