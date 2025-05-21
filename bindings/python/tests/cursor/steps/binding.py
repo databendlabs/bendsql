@@ -171,7 +171,7 @@ def _(context):
     assert ret == expected, f"ret: {ret}"
 
     desc = context.cursor.description
-    assert desc != None
+    assert desc is not None
 
     # fetchmany
     context.cursor.execute("SELECT * FROM test")
