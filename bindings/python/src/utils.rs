@@ -39,7 +39,6 @@ where
     py.allow_threads(|| RUNTIME.block_on(f))
 }
 
-//  params: Option<Bound<'p, PyAny>>
 pub(crate) fn to_sql_params(v: Option<Bound<PyAny>>) -> Params {
     match v {
         Some(v) => {
@@ -74,6 +73,9 @@ pub(crate) fn to_sql_params(v: Option<Bound<PyAny>>) -> Params {
 }
 
 fn to_sql_string(v: Bound<PyAny>) -> PyResult<String> {
+    if v.is_none() {
+        return Ok("NULL".to_string());
+    }
     match v.downcast::<PyAny>() {
         Ok(v) => {
             if let Ok(v) = v.extract::<String>() {

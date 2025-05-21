@@ -743,11 +743,7 @@ fn format_table_style(value: &Value, max_col_width: usize, replace_newline: bool
         value
     };
     if value.len() + 3 > max_col_width {
-        let element_size = if max_col_width >= 6 {
-            max_col_width - 6
-        } else {
-            0
-        };
+        let element_size = max_col_width.saturating_sub(6);
         value = String::from_utf8(
             value
                 .graphemes(true)
