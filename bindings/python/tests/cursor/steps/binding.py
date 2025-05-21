@@ -50,7 +50,7 @@ def _(context):
 
 @then("Select params binding")
 def _(context):
-    context.cursor.execute("SELECT ?, ?, ?, ?", (3, False, 4, "55", None))
+    context.cursor.execute("SELECT ?, ?, ?, ?, ?", (3, False, 4, "55", None))
     row = context.cursor.fetchone()
     assert row.values() == (3, False, 4, "55", None), f"output: {row.values()}"
 
@@ -67,7 +67,7 @@ def _(context):
     assert row.values() == (4,), f"output: {row.values()}"
 
     # Test with positional parameters again
-    context.cursor.execute("SELECT ?, ?, ?, ?", (3, False, 4, "55", None))
+    context.cursor.execute("SELECT ?, ?, ?, ?, ?", (3, False, 4, "55", None))
     row = context.cursor.fetchone()
     assert row.values() == (3, False, 4, "55", None), f"output: {row.values()}"
 
