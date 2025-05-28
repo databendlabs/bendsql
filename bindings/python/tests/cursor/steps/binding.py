@@ -193,9 +193,9 @@ def _(context):
 @then("Stream load and Select should be equal")
 def _(context):
     values = [
-        [-1, 1, 1.0, "1", "1", "2011-03-06", "2011-03-06T06:20:00Z"],
-        (-2, "2", 2.0, "2", "2", "2012-05-31", "2012-05-31T11:20:00Z"),
-        ["-3", 3, 3.0, "3", "2", "2016-04-04", "2016-04-04T11:30:00Z"],
+        [-1, 1, 1.0, "1", None, "2011-03-06", "2011-03-06T06:20:00Z"],
+        (-2, "2", 2.0, "2", None, "2012-05-31", "2012-05-31T11:20:00Z"),
+        ["-3", 3, 3.0, "3", None, "2016-04-04", "2016-04-04T11:30:00Z"],
     ]
     count = context.cursor.executemany("INSERT INTO test VALUES", values)
     assert count == 3, f"count: {count}"
@@ -206,9 +206,9 @@ def _(context):
     for row in rows:
         ret.append(row.values())
     expected = [
-        (-1, 1, 1.0, "1", "1", date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (-1, 1, 1.0, "1", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
+        (-2, 2, 2.0, "2", None, date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
+        (-3, 3, 3.0, "3", None, date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
     assert ret == expected, f"ret: {ret}"
 
