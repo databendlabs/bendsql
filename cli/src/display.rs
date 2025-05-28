@@ -736,6 +736,7 @@ pub fn humanize_count(num: f64) -> String {
 }
 
 fn format_table_style(value: &Value, max_col_width: usize, replace_newline: bool) -> String {
+    let quote = matches!(value, Value::String(_));
     let mut value = value.to_string();
     value = if replace_newline {
         value.replace('\n', "\\n")
@@ -754,6 +755,9 @@ fn format_table_style(value: &Value, max_col_width: usize, replace_newline: bool
                 .collect::<Vec<u8>>(),
         )
         .unwrap();
+    }
+    if quote {
+        value = format!("'{}'", value);
     }
     value
 }
