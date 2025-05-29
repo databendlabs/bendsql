@@ -172,12 +172,7 @@ impl IConnection for RestAPIConnection {
         let bytes = wtr.into_inner().map_err(|e| Error::IO(e.to_string()))?;
         let size = bytes.len() as u64;
         let reader = Box::new(std::io::Cursor::new(bytes));
-        let mut format_options = BTreeMap::new();
-        format_options.insert("type", "CSV");
-        format_options.insert("empty_field_as", "string");
-        let stats = self
-            .load_data(sql, reader, size, Some(format_options), None)
-            .await?;
+        let stats = self.load_data(sql, reader, size, None, None).await?;
         Ok(stats)
     }
 }

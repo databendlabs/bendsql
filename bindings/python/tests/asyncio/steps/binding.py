@@ -168,7 +168,7 @@ async def _(context):
     ret = [row.values() for row in rows]
     expected = [
         (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, '"', "", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
+        (-2, 2, 2.0, '"', None, date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
         (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
     assert ret == expected, f"ret: {ret}"
@@ -179,7 +179,7 @@ async def _(context):
     progress = await context.conn.load_file(
         "INSERT INTO test VALUES",
         "tests/data/test.csv",
-        {"type": "CSV", "empty_field_as": "string"},
+        {"type": "CSV"},
     )
     assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
     assert progress.write_bytes == 194, f"progress.write_bytes: {progress.write_bytes}"
@@ -188,7 +188,7 @@ async def _(context):
     ret = [row.values() for row in rows]
     expected = [
         (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, '"', "", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
+        (-2, 2, 2.0, '"', None, date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
         (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
     assert ret == expected, f"ret: {ret}"
