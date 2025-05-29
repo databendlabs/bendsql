@@ -310,6 +310,7 @@ impl BlockingDatabendCursor {
                 let size = bytes.len() as u64;
                 let reader = Box::new(std::io::Cursor::new(bytes));
                 let mut format_options = BTreeMap::new();
+                format_options.insert("type", "CSV");
                 format_options.insert("empty_field_as", "string");
                 let stats = wait_for_future(py, async move {
                     conn.load_data(&operation, reader, size, Some(format_options), None)
