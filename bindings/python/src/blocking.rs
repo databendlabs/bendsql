@@ -309,8 +309,10 @@ impl BlockingDatabendCursor {
                 let bytes = format_csv(seq_of_parameters)?;
                 let size = bytes.len() as u64;
                 let reader = Box::new(std::io::Cursor::new(bytes));
+                let mut format_options = BTreeMap::new();
+                format_options.insert("empty_field_as", "string");
                 let stats = wait_for_future(py, async move {
-                    conn.load_data(&operation, reader, size, None, None)
+                    conn.load_data(&operation, reader, size, Some(format_options), None)
                         .await
                         .map_err(DriverError::new)
                 })?;
@@ -421,7 +423,7 @@ fn format_csv(parameters: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<u8>> {
 
 fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
     if v.is_none() {
-        return Ok("".to_string());
+        return Ok("\\N".to_string());
     }
     match v.downcast::<PyAny>() {
         Ok(v) => {
