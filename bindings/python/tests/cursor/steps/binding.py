@@ -24,7 +24,7 @@ import databend_driver
 def _(context):
     dsn = os.getenv(
         "TEST_DATABEND_DSN",
-        "databend://root:root@localhost:8000/?sslmode=disable&format_null_as_str=0",
+        "databend://root:root@localhost:8000/?sslmode=disable",
     )
     client = databend_driver.BlockingDatabendClient(dsn)
     context.cursor = client.cursor()
