@@ -741,9 +741,6 @@ fn format_table_style(value: &Value, max_col_width: usize, replace_newline: bool
     if replace_newline {
         value = value.replace('\n', "\\n");
     }
-    if quote {
-        value = format!("'{}'", value.replace("\\", "\\\\").replace("'", "\\'"));
-    }
     if value.len() + 3 > max_col_width {
         let element_size = max_col_width.saturating_sub(6);
         value = String::from_utf8(
@@ -757,6 +754,9 @@ fn format_table_style(value: &Value, max_col_width: usize, replace_newline: bool
         )
         .unwrap();
     }
-
+    if quote {
+        value = value.replace("\\", "\\\\").replace("'", "\\'");
+        value = format!("'{}'", value);
+    }
     value
 }
