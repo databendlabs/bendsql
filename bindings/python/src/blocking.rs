@@ -428,7 +428,7 @@ fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
     match v.downcast::<PyAny>() {
         Ok(v) => {
             if let Ok(v) = v.extract::<String>() {
-                Ok(v)
+                Ok(format!("'{}'", v))
             } else if let Ok(v) = v.extract::<bool>() {
                 Ok(v.to_string())
             } else if let Ok(v) = v.extract::<i64>() {
