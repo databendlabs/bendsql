@@ -135,7 +135,7 @@ async def _(context):
 @async_run_until_complete
 async def _(context):
     await context.conn.exec(
-        """
+        r"""
         INSERT INTO test VALUES
             (-1, 1, 1.0, '\'', NULL, '2011-03-06', '2011-03-06 06:20:00'),
             (-2, 2, 2.0, '"', '', '2012-05-31', '2012-05-31 11:20:00'),
