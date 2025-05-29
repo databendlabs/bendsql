@@ -126,9 +126,7 @@ async def _(context):
 @async_run_until_complete
 async def _(context):
     rows = await context.conn.query_iter("SELECT number FROM numbers(5)")
-    ret = []
-    async for row in rows:
-        ret.append(row.values()[0])
+    ret = [row.values()[0] for row in rows]
     expected = [0, 1, 2, 3, 4]
     assert ret == expected, f"ret: {ret}"
 
@@ -145,9 +143,7 @@ async def _(context):
         """
     )
     rows = await context.conn.query_iter("SELECT * FROM test")
-    ret = []
-    async for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     expected = [
         (-1, 1, 1.0, "1", "1", date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
         (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
@@ -169,9 +165,7 @@ async def _(context):
     assert progress.write_bytes == 193, f"progress.write_bytes: {progress.write_bytes}"
 
     rows = await context.conn.query_iter("SELECT * FROM test")
-    ret = []
-    async for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     expected = [
         (-1, 1, 1.0, "1", "1", date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
         (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
@@ -191,9 +185,7 @@ async def _(context):
     assert progress.write_bytes == 194, f"progress.write_bytes: {progress.write_bytes}"
 
     rows = await context.conn.query_iter("SELECT * FROM test")
-    ret = []
-    for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     expected = [
         (-1, 1, 1.0, "1", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
         (-2, 2, 2.0, "2", "", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
@@ -207,9 +199,7 @@ async def _(context):
     await context.conn.exec("create or replace temp table temp_1(a int)")
     await context.conn.exec("INSERT INTO temp_1 VALUES (1),(2)")
     rows = await context.conn.query_iter("SELECT * FROM temp_1")
-    ret = []
-    for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     expected = [(1), (2)]
     assert ret == expected, f"ret: {ret}"
     await context.conn.exec("DROP TABLE temp_1")
