@@ -757,7 +757,7 @@ fn format_table_style(value: &Value, max_col_width: usize, replace_newline: bool
         .unwrap();
     }
     if quote {
-        value = format!("'{}'", value);
+        value = format!("'{}'", value.replace("\\", "\\\\").replace("'", "\\'"));
     }
     value
 }
