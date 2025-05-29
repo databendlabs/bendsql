@@ -294,7 +294,7 @@ Then("Stream load and Select should be equal", async function () {
   ];
   const progress = await this.conn.streamLoad(`INSERT INTO test VALUES`, values);
   assert.equal(progress.writeRows, 3);
-  assert.equal(progress.writeBytes, 4);
+  assert.equal(progress.writeBytes, 193);
 
   const rows = await this.conn.queryIter("SELECT * FROM test");
   const ret = [];
