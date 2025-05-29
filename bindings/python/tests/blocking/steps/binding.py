@@ -169,7 +169,9 @@ def _(context):
 @then("Load file and Select should be equal")
 def _(context):
     progress = context.conn.load_file(
-        "INSERT INTO test VALUES", "tests/data/test.csv", {"type": "CSV"}
+        "INSERT INTO test VALUES",
+        "tests/data/test.csv",
+        {"type": "CSV", "empty_field_as": "string"},
     )
     assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
     assert progress.write_bytes == 194, f"progress.write_bytes: {progress.write_bytes}"
