@@ -133,16 +133,12 @@ def _(context):
     context.cursor.execute("SELECT number FROM numbers(5)")
 
     rows = context.cursor.fetchmany(3)
-    ret = []
-    for row in rows:
-        ret.append(row[0])
+    ret = [row[0] for row in rows]
     expected = [0, 1, 2]
     assert ret == expected, f"ret: {ret}"
 
     rows = context.cursor.fetchmany(3)
-    ret = []
-    for row in rows:
-        ret.append(row[0])
+    ret = [row[0] for row in rows]
     expected = [3, 4]
     assert ret == expected, f"ret: {ret}"
 
@@ -166,9 +162,7 @@ def _(context):
     # fetchall
     context.cursor.execute("SELECT * FROM test")
     rows = context.cursor.fetchall()
-    ret = []
-    for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     assert ret == expected, f"ret: {ret}"
 
     desc = context.cursor.description
@@ -177,16 +171,12 @@ def _(context):
     # fetchmany
     context.cursor.execute("SELECT * FROM test")
     rows = context.cursor.fetchmany(3)
-    ret = []
-    for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     assert ret == expected, f"ret: {ret}"
 
     # iter
     context.cursor.execute("SELECT * FROM test")
-    ret = []
-    for row in context.cursor:
-        ret.append(row.values())
+    ret = [row.values() for row in context.cursor]
     assert ret == expected, f"ret: {ret}"
 
 
@@ -202,9 +192,7 @@ def _(context):
 
     context.cursor.execute("SELECT * FROM test")
     rows = context.cursor.fetchall()
-    ret = []
-    for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     expected = [
         (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
         (-2, 2, 2.0, '"', "", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
