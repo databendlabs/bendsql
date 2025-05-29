@@ -165,7 +165,7 @@ prompt = ":) "
 | `expand`             | Expand table format display, default auto, could be on/off/auto.                    |
 | `time`               | Whether to show the time elapsed when executing queries.                            |
 | `multi_line`         | Whether to allow multi-line input.                                                  |
-| `replace_newline`    | whether replace '\n' with '\\\n'.                                                   |
+| `replace_newline`    | whether replace '\n' with '\\n'.                                                    |
 
 ## Commands in REPL
 
