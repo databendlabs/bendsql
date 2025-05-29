@@ -320,9 +320,9 @@ Then("Load file and Select should be equal", async function () {
     ret.push(row.values());
   }
   const expected = [
-    [-1, 1, 1.0, "1", "1", new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
-    [-2, 2, 2.0, "2", "2", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
-    [-3, 3, 3.0, "3", "2", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
+    [-1, 1, 1.0, "1", null, new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
+    [-2, 2, 2.0, "2", "", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
+    [-3, 3, 3.0, "3", "NULL", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
   ];
   assert.deepEqual(ret, expected);
 });
