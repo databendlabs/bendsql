@@ -270,27 +270,27 @@ When("Create a test table", async function () {
 
 Then("Insert and Select should be equal", async function () {
   await this.conn.exec(`INSERT INTO test VALUES
-    (-1, 1, 1.0, '1', NULL, '2011-03-06', '2011-03-06 06:20:00'),
-    (-2, 2, 2.0, '2', '', '2012-05-31', '2012-05-31 11:20:00'),
-    (-3, 3, 3.0, '3', 'NULL', '2016-04-04', '2016-04-04 11:30:00')`);
+    (-1, 1, 1.0, '\'', NULL, '2011-03-06', '2011-03-06 06:20:00'),
+    (-2, 2, 2.0, '"', '', '2012-05-31', '2012-05-31 11:20:00'),
+    (-3, 3, 3.0, '\\', 'NULL', '2016-04-04', '2016-04-04 11:30:00')`);
   const rows = await this.conn.queryIter("SELECT * FROM test");
   const ret = [];
   for await (const row of rows) {
     ret.push(row.values());
   }
   const expected = [
-    [-1, 1, 1.0, "1", null, new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
-    [-2, 2, 2.0, "2", "", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
-    [-3, 3, 3.0, "3", "NULL", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
+    [-1, 1, 1.0, "'", null, new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
+    [-2, 2, 2.0, '"', "", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
+    [-3, 3, 3.0, "\\", "NULL", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
   ];
   assert.deepEqual(ret, expected);
 });
 
 Then("Stream load and Select should be equal", async function () {
   const values = [
-    ["-1", "1", "1.0", "1", "1", "2011-03-06", "2011-03-06T06:20:00Z"],
-    ["-2", "2", "2.0", "2", "2", "2012-05-31", "2012-05-31T11:20:00Z"],
-    ["-3", "3", "3.0", "3", "2", "2016-04-04", "2016-04-04T11:30:00Z"],
+    ["-1", "1", "1.0", "'", "\\N", "2011-03-06", "2011-03-06T06:20:00Z"],
+    ["-2", "2", "2.0", '"', "", "2012-05-31", "2012-05-31T11:20:00Z"],
+    ["-3", "3", "3.0", "\\", "NULL", "2016-04-04", "2016-04-04T11:30:00Z"],
   ];
   const progress = await this.conn.streamLoad(`INSERT INTO test VALUES`, values);
   assert.equal(progress.writeRows, 3);
@@ -302,9 +302,9 @@ Then("Stream load and Select should be equal", async function () {
     ret.push(row.values());
   }
   const expected = [
-    [-1, 1, 1.0, "1", "1", new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
-    [-2, 2, 2.0, "2", "2", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
-    [-3, 3, 3.0, "3", "2", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
+    [-1, 1, 1.0, "'", null, new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
+    [-2, 2, 2.0, '"', "", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
+    [-3, 3, 3.0, "\\", "NULL", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
   ];
   assert.deepEqual(ret, expected);
 });
@@ -323,9 +323,9 @@ Then("Load file and Select should be equal", async function () {
     ret.push(row.values());
   }
   const expected = [
-    [-1, 1, 1.0, "1", null, new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
-    [-2, 2, 2.0, "2", "", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
-    [-3, 3, 3.0, "3", "NULL", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
+    [-1, 1, 1.0, "'", null, new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
+    [-2, 2, 2.0, '"', "", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
+    [-3, 3, 3.0, "\\", "NULL", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
   ];
   assert.deepEqual(ret, expected);
 });
