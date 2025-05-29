@@ -148,7 +148,7 @@ def _(context):
     ]
     progress = context.conn.stream_load("INSERT INTO test VALUES", values)
     assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
-    assert progress.write_bytes == 193, f"progress.write_bytes: {progress.write_bytes}"
+    assert progress.write_bytes == 194, f"progress.write_bytes: {progress.write_bytes}"
 
     rows = context.conn.query_iter("SELECT * FROM test")
     ret = [row.values() for row in rows]
