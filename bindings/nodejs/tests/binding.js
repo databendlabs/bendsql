@@ -270,9 +270,9 @@ When("Create a test table", async function () {
 
 Then("Insert and Select should be equal", async function () {
   await this.conn.exec(`INSERT INTO test VALUES
-    (-1, 1, 1.0, '\'', NULL, '2011-03-06', '2011-03-06 06:20:00'),
+    (-1, 1, 1.0, '\\'', NULL, '2011-03-06', '2011-03-06 06:20:00'),
     (-2, 2, 2.0, '"', '', '2012-05-31', '2012-05-31 11:20:00'),
-    (-3, 3, 3.0, '\\', 'NULL', '2016-04-04', '2016-04-04 11:30:00')`);
+    (-3, 3, 3.0, '\\\\', 'NULL', '2016-04-04', '2016-04-04 11:30:00')`);
   const rows = await this.conn.queryIter("SELECT * FROM test");
   const ret = [];
   for await (const row of rows) {
