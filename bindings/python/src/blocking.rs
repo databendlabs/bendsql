@@ -307,8 +307,6 @@ impl BlockingDatabendCursor {
         if let Some(param) = seq_of_parameters.first() {
             if param.downcast::<PyList>().is_ok() || param.downcast::<PyTuple>().is_ok() {
                 let bytes = format_csv(seq_of_parameters)?;
-                // DEBUG:
-                println!("==> csv: {:?}", String::from_utf8_lossy(&bytes));
                 let size = bytes.len() as u64;
                 let reader = Box::new(std::io::Cursor::new(bytes));
                 let stats = wait_for_future(py, async move {
@@ -423,7 +421,7 @@ fn format_csv(parameters: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<u8>> {
 
 fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
     if v.is_none() {
-        return Ok("\\N".to_string());
+        return Ok("".to_string());
     }
     match v.downcast::<PyAny>() {
         Ok(v) => {
