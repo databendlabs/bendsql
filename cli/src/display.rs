@@ -738,10 +738,11 @@ pub fn humanize_count(num: f64) -> String {
 fn format_table_style(value: &Value, max_col_width: usize, replace_newline: bool) -> String {
     let quote = matches!(value, Value::String(_));
     let mut value = value.to_string();
-    if replace_newline {
+    if quote && replace_newline {
         value = value.replace('\n', "\\n");
+        value = value.replace("\\", "\\\\").replace("'", "\\'");
     }
-    if value.len() + 3 > max_col_width {
+    if value.len() + 5 > max_col_width {
         let element_size = max_col_width.saturating_sub(6);
         value = String::from_utf8(
             value
@@ -754,8 +755,7 @@ fn format_table_style(value: &Value, max_col_width: usize, replace_newline: bool
         )
         .unwrap();
     }
-    if quote {
-        value = value.replace("\\", "\\\\").replace("'", "\\'");
+    if quote && replace_newline {
         value = format!("'{}'", value);
     }
     value
