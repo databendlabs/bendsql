@@ -53,26 +53,26 @@ Options:
 ❯ bendsql
 Welcome to BendSQL.
 Connecting to localhost:8000 as user root.
+Connected to Databend Query
 
 bendsql> select avg(number) from numbers(10);
 
-SELECT
+select
   avg(number)
-FROM
-  numbers(10);
+from
+  numbers(10)
 
-┌───────────────────┐
-│    avg(number)    │
-│ Nullable(Float64) │
-├───────────────────┤
-│ 4.5               │
-└───────────────────┘
-
-1 row in 0.259 sec. Processed 10 rows, 10B (38.59 rows/s, 308B/s)
+╭───────────────────────────────────────────────────────╮
+│ sum(number) / if(count(number) = 0, 1, count(number)) │
+│                   Nullable(Float64)                   │
+├───────────────────────────────────────────────────────┤
+│                                                   4.5 │
+╰───────────────────────────────────────────────────────╯
+1 row read in 0.032 sec. Processed 10 row, 80 B (312.5 rows/s, 2.44 KiB/s)
 
 bendsql> show tables like 'd%';
 
-SHOW TABLES LIKE 'd%';
+show tables like 'd%'
 
 ┌───────────────────┐
 │ tables_in_default │
@@ -87,7 +87,7 @@ SHOW TABLES LIKE 'd%';
 4 rows in 0.106 sec. Processed 0 rows, 0B (0 rows/s, 0B/s)
 
 bendsql> exit
-Bye
+Bye~
 ```
 
 ### StdIn Pipe
