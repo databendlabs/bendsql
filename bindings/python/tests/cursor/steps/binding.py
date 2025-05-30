@@ -133,16 +133,12 @@ def _(context):
     context.cursor.execute("SELECT number FROM numbers(5)")
 
     rows = context.cursor.fetchmany(3)
-    ret = []
-    for row in rows:
-        ret.append(row[0])
+    ret = [row[0] for row in rows]
     expected = [0, 1, 2]
     assert ret == expected, f"ret: {ret}"
 
     rows = context.cursor.fetchmany(3)
-    ret = []
-    for row in rows:
-        ret.append(row[0])
+    ret = [row[0] for row in rows]
     expected = [3, 4]
     assert ret == expected, f"ret: {ret}"
 
@@ -150,25 +146,23 @@ def _(context):
 @then("Insert and Select should be equal")
 def _(context):
     context.cursor.execute(
-        """
+        r"""
         INSERT INTO test VALUES
-            (-1, 1, 1.0, '1', '1', '2011-03-06', '2011-03-06 06:20:00'),
-            (-2, 2, 2.0, '2', '2', '2012-05-31', '2012-05-31 11:20:00'),
-            (-3, 3, 3.0, '3', '2', '2016-04-04', '2016-04-04 11:30:00')
+            (-1, 1, 1.0, '\'', NULL, '2011-03-06', '2011-03-06 06:20:00'),
+            (-2, 2, 2.0, '"', '', '2012-05-31', '2012-05-31 11:20:00'),
+            (-3, 3, 3.0, '\\', 'NULL', '2016-04-04', '2016-04-04 11:30:00')
         """
     )
     expected = [
-        (-1, 1, 1.0, "1", "1", date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
+        (-2, 2, 2.0, '"', "", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
+        (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
 
     # fetchall
     context.cursor.execute("SELECT * FROM test")
     rows = context.cursor.fetchall()
-    ret = []
-    for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     assert ret == expected, f"ret: {ret}"
 
     desc = context.cursor.description
@@ -177,38 +171,32 @@ def _(context):
     # fetchmany
     context.cursor.execute("SELECT * FROM test")
     rows = context.cursor.fetchmany(3)
-    ret = []
-    for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     assert ret == expected, f"ret: {ret}"
 
     # iter
     context.cursor.execute("SELECT * FROM test")
-    ret = []
-    for row in context.cursor:
-        ret.append(row.values())
+    ret = [row.values() for row in context.cursor]
     assert ret == expected, f"ret: {ret}"
 
 
 @then("Stream load and Select should be equal")
 def _(context):
     values = [
-        [-1, 1, 1.0, "1", "1", "2011-03-06", "2011-03-06T06:20:00Z"],
-        (-2, "2", 2.0, "2", "2", "2012-05-31", "2012-05-31T11:20:00Z"),
-        ["-3", 3, 3.0, "3", "2", "2016-04-04", "2016-04-04T11:30:00Z"],
+        [-1, 1, 1.0, "'", None, "2011-03-06", "2011-03-06T06:20:00Z"],
+        (-2, "2", 2.0, '"', "", "2012-05-31", "2012-05-31T11:20:00Z"),
+        ["-3", 3, 3.0, "\\", "NULL", "2016-04-04", "2016-04-04T11:30:00Z"],
     ]
     count = context.cursor.executemany("INSERT INTO test VALUES", values)
     assert count == 3, f"count: {count}"
 
     context.cursor.execute("SELECT * FROM test")
     rows = context.cursor.fetchall()
-    ret = []
-    for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     expected = [
-        (-1, 1, 1.0, "1", "1", date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
+        (-2, 2, 2.0, '"', None, date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
+        (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
     assert ret == expected, f"ret: {ret}"
 

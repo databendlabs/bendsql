@@ -420,6 +420,9 @@ fn format_csv(parameters: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<u8>> {
 }
 
 fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
+    if v.is_none() {
+        return Ok("".to_string());
+    }
     match v.downcast::<PyAny>() {
         Ok(v) => {
             if let Ok(v) = v.extract::<String>() {

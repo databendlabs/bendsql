@@ -47,9 +47,7 @@ pub struct FormatDisplay<'a> {
     settings: &'a Settings,
     query: &'a str,
     kind: QueryKind,
-    // whether replace '\n' with '\\n',
-    // disable in explain/show create stmts or user config setting false
-    replace_newline: bool,
+    quote_string: bool,
     data: RowStatsIterator,
 
     rows_count: usize,
@@ -64,7 +62,7 @@ impl<'a> FormatDisplay<'a> {
     pub fn new(
         settings: &'a Settings,
         query: &'a str,
-        replace_newline: bool,
+        quote_string: bool,
         start: Instant,
         data: RowStatsIterator,
         interrupted: Arc<AtomicBool>,
@@ -74,7 +72,7 @@ impl<'a> FormatDisplay<'a> {
             settings,
             query,
             kind: QueryKind::from(query),
-            replace_newline,
+            quote_string,
             data,
             rows_count: 0,
             progress: None,
@@ -223,7 +221,7 @@ impl FormatDisplay<'_> {
                     create_table(
                         schema,
                         &rows,
-                        self.replace_newline,
+                        self.quote_string,
                         self.settings.max_display_rows,
                         self.settings.max_width,
                         self.settings.max_col_width,
@@ -238,7 +236,7 @@ impl FormatDisplay<'_> {
                     create_table(
                         schema,
                         &rows,
-                        self.replace_newline,
+                        self.quote_string,
                         self.settings.max_display_rows,
                         self.settings.max_width,
                         self.settings.max_col_width,
@@ -511,7 +509,7 @@ fn display_progress(pb: Option<ProgressBar>, current: &ServerStats, kind: &str) 
 fn create_table(
     schema: SchemaRef,
     results: &[Row],
-    replace_newline: bool,
+    quote_string: bool,
     max_rows: usize,
     max_width: usize,
     max_col_width: usize,
@@ -540,7 +538,7 @@ fn create_table(
 
     let value_rows_count: usize = results.len();
     let mut rows_to_render = value_rows_count.min(max_rows);
-    if !replace_newline {
+    if !quote_string {
         rows_to_render = value_rows_count;
     } else if value_rows_count <= max_rows + 3 {
         // hiding rows adds 3 extra rows
@@ -562,7 +560,7 @@ fn create_table(
         let values = row.values();
         let mut v = vec![];
         for value in values {
-            v.push(format_table_style(value, max_col_width, replace_newline));
+            v.push(format_table_style(value, max_col_width, quote_string));
         }
         res_vec.push(v);
     }
@@ -582,7 +580,7 @@ fn create_table(
             let values = row.values();
             let mut v = vec![];
             for value in values {
-                v.push(format_table_style(value, max_col_width, replace_newline));
+                v.push(format_table_style(value, max_col_width, quote_string));
             }
             res_vec.push(v);
         }
@@ -735,14 +733,19 @@ pub fn humanize_count(num: f64) -> String {
     format!("{}{}{}", negative, pretty_bytes, unit)
 }
 
-fn format_table_style(value: &Value, max_col_width: usize, replace_newline: bool) -> String {
+fn format_table_style(value: &Value, max_col_width: usize, quote_string: bool) -> String {
+    let is_string = matches!(value, Value::String(_));
     let mut value = value.to_string();
-    value = if replace_newline {
-        value.replace('\n', "\\n")
-    } else {
-        value
-    };
-    if value.len() + 3 > max_col_width {
+    if is_string && quote_string {
+        value = value
+            .replace("\\", "\\\\")
+            .replace("\n", "\\n")
+            .replace("\t", "\\t")
+            .replace("\r", "\\r")
+            .replace("\0", "\\0")
+            .replace("'", "\\'");
+    }
+    if value.len() + 5 > max_col_width {
         let element_size = max_col_width.saturating_sub(6);
         value = String::from_utf8(
             value
@@ -754,6 +757,9 @@ fn format_table_style(value: &Value, max_col_width: usize, replace_newline: bool
                 .collect::<Vec<u8>>(),
         )
         .unwrap();
+    }
+    if is_string && quote_string {
+        value = format!("'{}'", value);
     }
     value
 }
