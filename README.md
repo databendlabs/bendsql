@@ -90,7 +90,7 @@ Usage: bendsql [OPTIONS]
 Options:
       --help                       Print help information
       --flight                     Using flight sql protocol, ignored when --dsn is set
-      --tls                        Enable TLS, ignored when --dsn is set
+      --tls <TLS>                  Enable TLS, ignored when --dsn is set [possible values: true, false]
   -h, --host <HOST>                Databend Server host, Default: 127.0.0.1, ignored when --dsn is set
   -P, --port <PORT>                Databend Server port, Default: 8000, ignored when --dsn is set
   -u, --user <USER>                Default: root, overrides username in DSN
