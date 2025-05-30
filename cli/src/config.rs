@@ -41,7 +41,7 @@ pub struct SettingsConfig {
     pub show_progress: Option<bool>,
     pub show_stats: Option<bool>,
     pub expand: Option<String>,
-    pub replace_newline: Option<bool>,
+    pub quote_string: Option<bool>,
     pub max_display_rows: Option<usize>,
     pub max_col_width: Option<usize>,
     pub max_width: Option<usize>,
@@ -99,8 +99,8 @@ pub struct Settings {
 
     /// Multi line mode, default is true.
     pub multi_line: bool,
-    /// whether replace '\n' with '\\n', default true.
-    pub replace_newline: bool,
+    /// Whether to quote string values in table output format.
+    pub quote_string: bool,
 
     pub bind_address: String,
     pub bind_port: u16,
@@ -156,7 +156,7 @@ impl Settings {
             .expand
             .map(|expand| expand.as_str().into())
             .unwrap_or_else(|| self.expand);
-        self.replace_newline = cfg.replace_newline.unwrap_or(self.replace_newline);
+        self.quote_string = cfg.quote_string.unwrap_or(self.quote_string);
         self.max_width = cfg.max_width.unwrap_or(self.max_width);
         self.max_col_width = cfg.max_col_width.unwrap_or(self.max_col_width);
         self.max_display_rows = cfg.max_display_rows.unwrap_or(self.max_display_rows);
@@ -196,7 +196,7 @@ impl Settings {
             "max_display_rows" => self.max_display_rows = cmd_value.parse()?,
             "max_width" => self.max_width = cmd_value.parse()?,
             "max_col_width" => self.max_col_width = cmd_value.parse()?,
-            "replace_newline" => self.replace_newline = cmd_value.parse()?,
+            "quote_string" => self.quote_string = cmd_value.parse()?,
             _ => return Err(anyhow!("Unknown command: {}", cmd_name)),
         }
         Ok(())
@@ -269,7 +269,7 @@ impl Default for Settings {
             show_stats: false,
             time: None,
             multi_line: true,
-            replace_newline: true,
+            quote_string: true,
             auto_open_browser: false,
             bind_address: "127.0.0.1".to_string(),
             bind_port: 0,

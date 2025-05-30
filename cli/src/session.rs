@@ -40,7 +40,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
-use crate::ast::replace_newline_in_box_display;
+use crate::ast::quote_string_in_box_display;
 use crate::ast::QueryKind;
 use crate::config::ExpandMode;
 use crate::config::Settings;
@@ -556,10 +556,10 @@ impl Session {
                 Ok(None)
             }
             other => {
-                let replace_newline = !if self.settings.replace_newline {
+                let quote_string = !if self.settings.quote_string {
                     false
                 } else {
-                    replace_newline_in_box_display(query)
+                    quote_string_in_box_display(query)
                 };
 
                 let data = match other {
@@ -572,7 +572,7 @@ impl Session {
                 let mut displayer = FormatDisplay::new(
                     &self.settings,
                     query,
-                    replace_newline,
+                    quote_string,
                     start,
                     data,
                     self.interrupted.clone(),

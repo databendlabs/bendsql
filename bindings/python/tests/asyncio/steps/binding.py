@@ -126,9 +126,7 @@ async def _(context):
 @async_run_until_complete
 async def _(context):
     rows = await context.conn.query_iter("SELECT number FROM numbers(5)")
-    ret = []
-    async for row in rows:
-        ret.append(row.values()[0])
+    ret = [row.values()[0] for row in rows]
     expected = [0, 1, 2, 3, 4]
     assert ret == expected, f"ret: {ret}"
 
@@ -137,21 +135,19 @@ async def _(context):
 @async_run_until_complete
 async def _(context):
     await context.conn.exec(
-        """
+        r"""
         INSERT INTO test VALUES
-            (-1, 1, 1.0, '1', '1', '2011-03-06', '2011-03-06 06:20:00'),
-            (-2, 2, 2.0, '2', '2', '2012-05-31', '2012-05-31 11:20:00'),
-            (-3, 3, 3.0, '3', '2', '2016-04-04', '2016-04-04 11:30:00')
+            (-1, 1, 1.0, '\'', NULL, '2011-03-06', '2011-03-06 06:20:00'),
+            (-2, 2, 2.0, '"', '', '2012-05-31', '2012-05-31 11:20:00'),
+            (-3, 3, 3.0, '\\', 'NULL', '2016-04-04', '2016-04-04 11:30:00')
         """
     )
     rows = await context.conn.query_iter("SELECT * FROM test")
-    ret = []
-    async for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     expected = [
-        (-1, 1, 1.0, "1", "1", date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
+        (-2, 2, 2.0, '"', "", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
+        (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
     assert ret == expected, f"ret: {ret}"
 
@@ -160,22 +156,20 @@ async def _(context):
 @async_run_until_complete
 async def _(context):
     values = [
-        ["-1", "1", "1.0", "1", "1", "2011-03-06", "2011-03-06T06:20:00Z"],
-        ["-2", "2", "2.0", "2", "2", "2012-05-31", "2012-05-31T11:20:00Z"],
-        ["-3", "3", "3.0", "3", "2", "2016-04-04", "2016-04-04T11:30:00Z"],
+        ["-1", "1", "1.0", "'", "\\N", "2011-03-06", "2011-03-06T06:20:00Z"],
+        ["-2", "2", "2.0", '"', "", "2012-05-31", "2012-05-31T11:20:00Z"],
+        ["-3", "3", "3.0", "\\", "NULL", "2016-04-04", "2016-04-04T11:30:00Z"],
     ]
     progress = await context.conn.stream_load("INSERT INTO test VALUES", values)
     assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
-    assert progress.write_bytes == 193, f"progress.write_bytes: {progress.write_bytes}"
+    assert progress.write_bytes == 194, f"progress.write_bytes: {progress.write_bytes}"
 
     rows = await context.conn.query_iter("SELECT * FROM test")
-    ret = []
-    async for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     expected = [
-        (-1, 1, 1.0, "1", "1", date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
+        (-2, 2, 2.0, '"', None, date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
+        (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
     assert ret == expected, f"ret: {ret}"
 
@@ -183,19 +177,19 @@ async def _(context):
 @then("Load file and Select should be equal")
 async def _(context):
     progress = await context.conn.load_file(
-        "INSERT INTO test VALUES", "tests/data/test.csv", {"type": "CSV"}
+        "INSERT INTO test VALUES",
+        "tests/data/test.csv",
+        {"type": "CSV"},
     )
     assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
-    assert progress.write_bytes == 193, f"progress.write_bytes: {progress.write_bytes}"
+    assert progress.write_bytes == 194, f"progress.write_bytes: {progress.write_bytes}"
 
     rows = await context.conn.query_iter("SELECT * FROM test")
-    ret = []
-    for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     expected = [
-        (-1, 1, 1.0, "1", "1", date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, "2", "2", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "3", "2", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
+        (-2, 2, 2.0, '"', None, date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
+        (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
     assert ret == expected, f"ret: {ret}"
 
@@ -205,9 +199,7 @@ async def _(context):
     await context.conn.exec("create or replace temp table temp_1(a int)")
     await context.conn.exec("INSERT INTO temp_1 VALUES (1),(2)")
     rows = await context.conn.query_iter("SELECT * FROM temp_1")
-    ret = []
-    for row in rows:
-        ret.append(row.values())
+    ret = [row.values() for row in rows]
     expected = [(1), (2)]
     assert ret == expected, f"ret: {ret}"
     await context.conn.exec("DROP TABLE temp_1")

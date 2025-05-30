@@ -122,7 +122,7 @@ impl From<&str> for QueryKind {
     }
 }
 
-pub fn replace_newline_in_box_display(query: &str) -> bool {
+pub fn quote_string_in_box_display(query: &str) -> bool {
     let mut tz = Tokenizer::new(query);
     match tz.next() {
         Some(Ok(t)) => match t.kind {

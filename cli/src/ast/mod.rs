@@ -13,7 +13,7 @@
 // limitations under the License.
 
 mod query_kind;
-pub use query_kind::replace_newline_in_box_display;
+pub use query_kind::quote_string_in_box_display;
 pub use query_kind::GenType;
 pub use query_kind::QueryKind;
 
