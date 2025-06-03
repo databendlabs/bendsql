@@ -510,9 +510,10 @@ impl Session {
                         }
                         previous_token_backslash = matches!(token.kind, TokenKind::Backslash);
                     }
-                    Err(_) => {
+                    Err(e) => {
                         // ignore current query if have invalid token.
                         is_valid = false;
+                        eprintln!("Parser '{}' failed\nwith error '{}'", line, e);
                         continue;
                     }
                 }
