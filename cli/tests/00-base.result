@@ -18,6 +18,10 @@ a"
 -9999999999999999999999999999999999999999999999999999999999999999999999999999
 1
 NULL
+Parser 'CREATE TABLE 🐳🍞(🐳🐳 INTEGER, 🍞🍞 INTEGER);' failed
+with error 'unable to recognize the rest tokens'
+Parser 'explain select * from c where b in （'x');' failed
+with error 'unable to recognize the rest tokens'
 3.00	3.00	0.0000000170141183460469231731687303715884105727000	-0.0000000170141183460469231731687303715884105727000
 Asia/Shanghai
 3

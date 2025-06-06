@@ -483,6 +483,7 @@ impl Session {
             self.query.push('\n');
         }
         self.query.push_str(line);
+        let mut err = String::new();
 
         'Parser: loop {
             let mut is_valid = true;
@@ -510,9 +511,10 @@ impl Session {
                         }
                         previous_token_backslash = matches!(token.kind, TokenKind::Backslash);
                     }
-                    Err(_) => {
+                    Err(e) => {
                         // ignore current query if have invalid token.
                         is_valid = false;
+                        err = e.to_string();
                         continue;
                     }
                 }
@@ -520,6 +522,9 @@ impl Session {
             break;
         }
 
+        if self.query.is_empty() && queries.is_empty() && !err.is_empty() {
+            eprintln!("Parser '{}' failed\nwith error '{}'", line, err);
+        }
         queries
     }
 
