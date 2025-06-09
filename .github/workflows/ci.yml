@@ -56,7 +56,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cache-key: integration
-      - name: Get License from Environment Variable
+      - name: Get License from Variable
         run: |
           echo "::add-mask::${{ vars.DATABEND_LICENSE_TRIAL }}"
           echo "QUERY_DATABEND_ENTERPRISE_LICENSE=${{ vars.DATABEND_LICENSE_TRIAL }}" >> $GITHUB_ENV
