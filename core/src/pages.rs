@@ -48,7 +48,7 @@ impl Page {
         self.stats = p.stats;
     }
 
-    pub fn affected_rows(&self) -> Result<i64, Box<dyn std::error::Error>> {
+    pub fn affected_rows(&self) -> Result<i64, String> {
         if self.schema.is_empty() {
             return Ok(0);
         }
@@ -69,7 +69,7 @@ impl Page {
         }
     }
 
-    fn parse_row_count_string(&self, value_str: &str) -> Result<i64, Box<dyn std::error::Error>> {
+    fn parse_row_count_string(&self, value_str: &str) -> Result<i64, String> {
         let trimmed = value_str.trim();
 
         if trimmed.is_empty() {
@@ -89,7 +89,10 @@ impl Page {
             return Ok(count);
         }
 
-        Err(format!("failed to parse affected rows from: '{}'", value_str).into())
+        Err(format!(
+            "failed to parse affected rows from: '{}'",
+            value_str
+        ))
     }
 
     ///the schema can be `number of rows inserted`, `number of rows deleted`, `number of rows updated` when sql start with  `insert`, `delete`, `update`

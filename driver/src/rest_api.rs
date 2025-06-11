@@ -68,7 +68,7 @@ impl IConnection for RestAPIConnection {
 
         let affected_rows = page
             .affected_rows()
-            .map_err(|e| anyhow::anyhow!("Failed to parse affected rows: {}", e))?;
+            .map_err(|e| Error::InvalidResponse(e))?;
 
         Ok(affected_rows)
     }
