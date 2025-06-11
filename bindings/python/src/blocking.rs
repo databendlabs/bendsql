@@ -192,6 +192,7 @@ pub struct BlockingDatabendCursor {
     // buffer is used to store only the first row after execute
     buffer: Vec<Row>,
     schema: Option<SchemaRef>,
+    rowcount: i64,
 }
 
 impl BlockingDatabendCursor {
@@ -201,6 +202,7 @@ impl BlockingDatabendCursor {
             rows: None,
             buffer: Vec::new(),
             schema: None,
+            rowcount: -1,
         }
     }
 }
@@ -210,6 +212,7 @@ impl BlockingDatabendCursor {
         self.rows = None;
         self.buffer.clear();
         self.schema = None;
+        self.rowcount = -1;
     }
 }
 
@@ -247,10 +250,9 @@ impl BlockingDatabendCursor {
         }
     }
 
-    /// Not supported currently
     #[getter]
     pub fn rowcount(&self, _py: Python) -> i64 {
-        -1
+        self.rowcount
     }
 
     pub fn close(&mut self, py: Python) -> PyResult<()> {
@@ -277,18 +279,40 @@ impl BlockingDatabendCursor {
 
         self.reset();
         let conn = self.conn.clone();
-        // fetch first row after execute
-        // then we could finish the query directly if there's no result
         let params = to_sql_params(params);
+
+        // check if it is DML（INSERT, UPDATE, DELETE）
+        let sql_trimmed = operation.trim_start().to_lowercase();
+        let is_dml = sql_trimmed.starts_with("insert")
+            || sql_trimmed.starts_with("update")
+            || sql_trimmed.starts_with("delete")
+            || sql_trimmed.starts_with("replace");
+
+        if is_dml {
+            let affected_rows = wait_for_future(py, async move {
+                conn.exec(&operation, params)
+                    .await
+                    .map_err(DriverError::new)
+            })?;
+            self.rowcount = affected_rows;
+            return Ok(py.None());
+        }
+
+        //  for select, use query_iter
         let (first, rows) = wait_for_future(py, async move {
             let mut rows = conn.query_iter(&operation, params).await?;
             let first = rows.next().await.transpose()?;
             Ok::<_, databend_driver::Error>((first, rows))
         })
         .map_err(DriverError::new)?;
+
         if let Some(first) = first {
             self.buffer.push(Row::new(first));
+            self.rowcount = 1;
+        } else {
+            self.rowcount = 0;
         }
+
         self.rows = Some(Arc::new(Mutex::new(rows)));
         self.set_schema(py);
         Ok(py.None())
@@ -375,9 +399,14 @@ impl BlockingDatabendCursor {
                 for row in fetched {
                     result.push(Row::new(row.map_err(DriverError::new)?));
                 }
+
+                if self.rowcount == -1 {
+                    self.rowcount = result.len() as i64;
+                }
+
                 Ok(result)
             }
-            None => Ok(vec![]),
+            None => Ok(result),
         }
     }
 

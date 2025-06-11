@@ -65,7 +65,12 @@ impl IConnection for RestAPIConnection {
     async fn exec(&self, sql: &str) -> Result<i64> {
         info!("exec: {}", sql);
         let page = self.client.query_all(sql).await?;
-        Ok(page.stats.progresses.write_progress.rows as i64)
+
+        let affected_rows = page
+            .affected_rows()
+            .map_err(|e| anyhow::anyhow!("Failed to parse affected rows: {}", e))?;
+
+        Ok(affected_rows)
     }
 
     async fn kill_query(&self, query_id: &str) -> Result<()> {
