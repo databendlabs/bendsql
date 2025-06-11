@@ -66,9 +66,7 @@ impl IConnection for RestAPIConnection {
         info!("exec: {}", sql);
         let page = self.client.query_all(sql).await?;
 
-        let affected_rows = page
-            .affected_rows()
-            .map_err(|e| Error::InvalidResponse(e))?;
+        let affected_rows = page.affected_rows().map_err(Error::InvalidResponse)?;
 
         Ok(affected_rows)
     }
