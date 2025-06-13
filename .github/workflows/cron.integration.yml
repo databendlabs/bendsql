@@ -96,8 +96,7 @@ jobs:
           name: bindings-nodejs
           path: bindings/nodejs/*.node
 
-  python-bindings:
-    name: python-bindings
+  integration-python:
     needs: [integration, build-python]
     runs-on: ubuntu-latest
     strategy:
@@ -132,8 +131,7 @@ jobs:
         working-directory: bindings/python
         run: behave tests/cursor
 
-  nodejs-bindings:
-    name: nodejs-bindings
+  integration-nodejs:
     needs: [integration, build-nodejs]
     runs-on: ubuntu-latest
     strategy:
