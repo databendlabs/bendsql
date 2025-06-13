@@ -1,0 +1,164 @@
+name: Daily Integration Tests
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/cron.integration.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: integration
+    runs-on: [self-hosted, Linux, X64, 2c8g, aws]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          runner: aws
+          cache-key: integration
+      - name: Get License from S3
+        run: |
+          aws s3 cp s3://databend-ci/misc/license-trial.key license.key
+          aws s3 cp s3://databend-ci/misc/license-trial.json license.json
+          cat license.json
+          echo "QUERY_DATABEND_ENTERPRISE_LICENSE=$(cat license.key)" >> $GITHUB_ENV
+      - name: Run Core Integration Tests
+        run: make -C tests test-core
+      - name: Run Driver Integration Tests
+        run: make -C tests test-driver
+      - name: Run BendSQL Integration Tests
+        run: make -C tests test-bendsql
+
+  build-python:
+    name: build-python
+    needs: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup
+        with:
+          cache-key: bindings-python-linux-x64
+          target: x86_64-unknown-linux-gnu
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          target: x86_64-unknown-linux-gnu
+          manylinux: auto
+          sccache: "true"
+          args: --release --strip --out dist
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bindings-python
+          path: bindings/python/dist/*.whl
+
+  build-nodejs:
+    name: build-nodejs
+    needs: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup
+        with:
+          cache-key: bindings-nodejs-linux-x64
+          target: x86_64-unknown-linux-gnu
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Corepack
+        working-directory: bindings/nodejs
+        run: npm i -g --force corepack && corepack enable
+      - name: Install dependencies
+        working-directory: bindings/nodejs
+        run: pnpm install
+      - name: Build
+        working-directory: bindings/nodejs
+        shell: bash
+        env:
+          NAPI_TARGET: x86_64-unknown-linux-gnu
+        run: |
+          pnpm napi build --platform --target=$NAPI_TARGET --release --js generated.js
+          pnpm node ./scripts/header.js
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-nodejs
+          path: bindings/nodejs/*.node
+
+  python-bindings:
+    name: python-bindings
+    needs: [integration, build-python]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        pyver: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.pyver }}
+      - name: Prepare
+        working-directory: tests
+        run: make up
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bindings-python
+          path: bindings/python/artifacts
+      - name: Install dependencies
+        working-directory: bindings/python
+        run: |
+          pip install behave
+          pip install artifacts/*.whl
+      - name: Test AsyncIO
+        working-directory: bindings/python
+        run: behave tests/asyncio
+      - name: Test Blocking
+        working-directory: bindings/python
+        run: behave tests/blocking
+      - name: Test Cursor
+        working-directory: bindings/python
+        run: behave tests/cursor
+
+  nodejs-bindings:
+    name: nodejs-bindings
+    needs: [integration, build-nodejs]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ver: ["18", "20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.ver }}
+      - name: Corepack
+        working-directory: bindings/nodejs
+        run: npm i -g --force corepack && corepack enable
+      - name: Install dependencies
+        working-directory: bindings/nodejs
+        run: pnpm install
+      - name: Prepare
+        working-directory: tests
+        run: make up
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bindings-nodejs
+          path: bindings/nodejs
+      - name: Run Tests
+        working-directory: bindings/nodejs
+        run: pnpm run test
