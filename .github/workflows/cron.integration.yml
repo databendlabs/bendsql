@@ -39,7 +39,6 @@ jobs:
 
   build-python:
     name: build-python
-    needs: integration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +63,6 @@ jobs:
 
   build-nodejs:
     name: build-nodejs
-    needs: integration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
