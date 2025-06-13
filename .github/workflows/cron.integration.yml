@@ -175,7 +175,7 @@ jobs:
         run: pnpm run test
 
 
-  failure:
+  notify:
     if: failure()
     needs: [integration, integration-python, integration-nodejs]
     runs-on: ubuntu-latest
@@ -200,5 +200,3 @@ jobs:
             });
             const result = await response.json();
             console.log(result);
-
- 
