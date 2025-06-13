@@ -28,7 +28,7 @@ jobs:
         run: |
           version=$(gh api repos/databendlabs/databend/releases --jq '.[0].tag_name')
           echo "version=$version" >> $GITHUB_OUTPUT
-          echo "Running integration tests with Databend version: $version" >> $GITHUB_STEP_SUMMARY
+          echo "Running integration tests with Databend version: **$version**" >> $GITHUB_STEP_SUMMARY
 
   integration:
     needs: version
