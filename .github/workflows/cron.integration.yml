@@ -173,3 +173,32 @@ jobs:
       - name: Run Tests
         working-directory: bindings/nodejs
         run: pnpm run test
+
+
+  failure:
+    if: failure()
+    needs: [integration, integration-python, integration-nodejs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Notify Dev Team
+        uses: actions/github-script@v7
+        env:
+          WEBHOOK_URL: ${{ secrets.DEV_TEAM_WEBHOOK_URL }}
+        with:
+          script: |
+            const body = {
+              msg_type: 'text',
+              content: {
+                text: '⚠️ BendSQL Integration Tests Failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+              }
+            }
+            const response = await fetch(process.env.WEBHOOK_URL, {
+              method: 'POST',
+              body: JSON.stringify(body),
+              headers: {'Content-Type': 'application/json'}
+            });
+            const result = await response.json();
+            console.log(result);
+
+ 
