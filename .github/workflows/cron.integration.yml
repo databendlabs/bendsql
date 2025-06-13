@@ -15,8 +15,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check New Version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(gh api repos/databendlabs/databend/releases --jq '.[0].tag_name')
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "Running integration tests with Databend version: $version" >> $GITHUB_STEP_SUMMARY
+
   integration:
-    name: integration
+    needs: version
     runs-on: [self-hosted, Linux, X64, 2c8g, aws]
     steps:
       - uses: actions/checkout@v4
@@ -31,11 +46,11 @@ jobs:
           cat license.json
           echo "QUERY_DATABEND_ENTERPRISE_LICENSE=$(cat license.key)" >> $GITHUB_ENV
       - name: Run Core Integration Tests
-        run: make -C tests test-core
+        run: make -C tests test-core DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
       - name: Run Driver Integration Tests
-        run: make -C tests test-driver
+        run: make -C tests test-driver DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
       - name: Run BendSQL Integration Tests
-        run: make -C tests test-bendsql
+        run: make -C tests test-bendsql DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
 
   build-python:
     name: build-python
@@ -95,7 +110,7 @@ jobs:
           path: bindings/nodejs/*.node
 
   integration-python:
-    needs: [integration, build-python]
+    needs: [version, build-python]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -108,7 +123,7 @@ jobs:
           python-version: ${{ matrix.pyver }}
       - name: Prepare
         working-directory: tests
-        run: make up
+        run: make up DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
@@ -130,7 +145,7 @@ jobs:
         run: behave tests/cursor
 
   integration-nodejs:
-    needs: [integration, build-nodejs]
+    needs: [version, build-nodejs]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -149,7 +164,7 @@ jobs:
         run: pnpm install
       - name: Prepare
         working-directory: tests
-        run: make up
+        run: make up DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
