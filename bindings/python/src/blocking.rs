@@ -294,11 +294,12 @@ impl BlockingDatabendCursor {
                     .await
                     .map_err(DriverError::new)
             })?;
+
             self.rowcount = affected_rows;
             return Ok(py.None());
         }
 
-        //  for select, use query_iter
+        // For SELECT, use query_iter as before
         let (first, rows) = wait_for_future(py, async move {
             let mut rows = conn.query_iter(&operation, params).await?;
             let first = rows.next().await.transpose()?;
