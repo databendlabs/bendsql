@@ -65,9 +65,7 @@ impl IConnection for RestAPIConnection {
     async fn exec(&self, sql: &str) -> Result<i64> {
         info!("exec: {}", sql);
         let page = self.client.query_all(sql).await?;
-
-        let affected_rows = page.affected_rows().map_err(Error::InvalidResponse)?;
-
+        let affected_rows = parse_affected_rows_from_page(&page)?;
         Ok(affected_rows)
     }
 
@@ -289,4 +287,50 @@ impl FromRowStats for RawRowWithStats {
         let rows = Row::try_from((schema, row.clone()))?;
         Ok(RawRowWithStats::Row(RawRow::new(rows, row)))
     }
+}
+
+fn parse_affected_rows_from_page(page: &databend_client::Page) -> Result<i64> {
+    if page.schema.is_empty() {
+        return Ok(0);
+    }
+
+    let first_field = &page.schema[0];
+    if !first_field.name.contains("number of rows") {
+        return Ok(0);
+    }
+
+    if page.data.is_empty() || page.data[0].is_empty() {
+        return Ok(0);
+    }
+
+    match &page.data[0][0] {
+        Some(value_str) => parse_row_count_string(value_str).map_err(Error::InvalidResponse),
+        None => Ok(0),
+    }
+}
+
+fn parse_row_count_string(value_str: &str) -> Result<i64, String> {
+    let trimmed = value_str.trim();
+
+    if trimmed.is_empty() {
+        return Ok(0);
+    }
+
+    if let Ok(count) = trimmed.parse::<i64>() {
+        return Ok(count);
+    }
+
+    if let Ok(count) = serde_json::from_str::<i64>(trimmed) {
+        return Ok(count);
+    }
+
+    let unquoted = trimmed.trim_matches('"');
+    if let Ok(count) = unquoted.parse::<i64>() {
+        return Ok(count);
+    }
+
+    Err(format!(
+        "failed to parse affected rows from: '{}'",
+        value_str
+    ))
 }

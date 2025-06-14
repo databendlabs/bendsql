@@ -47,58 +47,6 @@ impl Page {
         }
         self.stats = p.stats;
     }
-
-    pub fn affected_rows(&self) -> Result<i64, String> {
-        if self.schema.is_empty() {
-            return Ok(0);
-        }
-
-        let first_field = &self.schema[0];
-
-        if !first_field.name.contains("number of rows") {
-            return Ok(0);
-        }
-
-        if self.data.is_empty() || self.data[0].is_empty() {
-            return Ok(0);
-        }
-
-        match &self.data[0][0] {
-            Some(value_str) => self.parse_row_count_string(value_str),
-            None => Ok(0),
-        }
-    }
-
-    fn parse_row_count_string(&self, value_str: &str) -> Result<i64, String> {
-        let trimmed = value_str.trim();
-
-        if trimmed.is_empty() {
-            return Ok(0);
-        }
-
-        if let Ok(count) = trimmed.parse::<i64>() {
-            return Ok(count);
-        }
-
-        if let Ok(count) = serde_json::from_str::<i64>(trimmed) {
-            return Ok(count);
-        }
-
-        let unquoted = trimmed.trim_matches('"');
-        if let Ok(count) = unquoted.parse::<i64>() {
-            return Ok(count);
-        }
-
-        Err(format!(
-            "failed to parse affected rows from: '{}'",
-            value_str
-        ))
-    }
-
-    ///the schema can be `number of rows inserted`, `number of rows deleted`, `number of rows updated` when sql start with  `insert`, `delete`, `update`
-    pub fn has_affected_rows(&self) -> bool {
-        !self.schema.is_empty() && self.schema[0].name.contains("number of rows")
-    }
 }
 
 type PageFut = Pin<Box<dyn Future<Output = Result<QueryResponse>> + Send>>;
