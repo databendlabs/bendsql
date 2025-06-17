@@ -90,7 +90,7 @@ Usage: bendsql [OPTIONS]
 Options:
       --help                       Print help information
       --flight                     Using flight sql protocol, ignored when --dsn is set
-      --tls                        Enable TLS, ignored when --dsn is set
+      --tls <TLS>                  Enable TLS, ignored when --dsn is set [possible values: true, false]
   -h, --host <HOST>                Databend Server host, Default: 127.0.0.1, ignored when --dsn is set
   -P, --port <PORT>                Databend Server port, Default: 8000, ignored when --dsn is set
   -u, --user <USER>                Default: root, overrides username in DSN
@@ -165,7 +165,7 @@ prompt = ":) "
 | `expand`             | Expand table format display, default auto, could be on/off/auto.                    |
 | `time`               | Whether to show the time elapsed when executing queries.                            |
 | `multi_line`         | Whether to allow multi-line input.                                                  |
-| `replace_newline`    | whether replace '\n' with '\\\n'.                                                   |
+| `quote_string`       | Whether to quote string values in table output format.                              |
 
 ## Commands in REPL
 

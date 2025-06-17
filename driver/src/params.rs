@@ -129,6 +129,25 @@ impl Param for &str {
     }
 }
 
+// Impl Param for None
+impl Param for () {
+    fn as_sql_string(&self) -> String {
+        "NULL".to_string()
+    }
+}
+
+impl<T> Param for Option<T>
+where
+    T: Param,
+{
+    fn as_sql_string(&self) -> String {
+        match self {
+            Some(s) => s.as_sql_string(),
+            None => "NULL".to_string(),
+        }
+    }
+}
+
 impl Param for serde_json::Value {
     fn as_sql_string(&self) -> String {
         match self {
@@ -170,7 +189,7 @@ impl Param for serde_json::Value {
 macro_rules! params {
     // Handle named parameters
     () => {
-	    $crate::Params::default()
+        $crate::Params::default()
     };
     ($($key:ident => $value:expr),* $(,)?) => {
         $crate::Params::NamedParams({
@@ -304,6 +323,15 @@ mod tests {
                 Params::QuestionParams(vec) => {
                     assert_eq!(vec, vec!["1", "'44'", "2", "3", "'55'", "'66'"]);
                 }
+                _ => panic!("Expected QuestionParams"),
+            }
+        }
+
+        // Test Option<T>
+        {
+            let params: Params = (Some(1), None::<()>, Some("44"), None::<()>).into();
+            match params {
+                Params::QuestionParams(vec) => assert_eq!(vec, vec!["1", "NULL", "'44'", "NULL"]),
                 _ => panic!("Expected QuestionParams"),
             }
         }

@@ -20,50 +20,59 @@ Databend Native Command Line Tool
 Usage: bendsql [OPTIONS]
 
 Options:
-      --help                 Print help information
-      --flight               Using flight sql protocol
-      --tls                  Enable TLS
-  -h, --host <HOST>          Databend Server host, Default: 127.0.0.1
-  -P, --port <PORT>          Databend Server port, Default: 8000
-  -u, --user <USER>          Default: root
-  -p, --password <PASSWORD>  [env: BENDSQL_PASSWORD=]
-  -D, --database <DATABASE>  Database name
-      --set <SET>            Settings
-      --dsn <DSN>            Data source name [env: BENDSQL_DSN=]
-  -n, --non-interactive      Force non-interactive mode
-  -q, --query <QUERY>        Query to execute
-  -d, --data <DATA>          Data to load, @file or @- for stdin
-  -f, --format <FORMAT>      Data format to load [default: csv]
-  -o, --output <OUTPUT>      Output format [default: table]
-      --progress             Show progress for data loading in stderr
-  -V, --version              Print version
+      --help                       Print help information
+      --flight                     Using flight sql protocol, ignored when --dsn is set
+      --tls <TLS>                  Enable TLS, ignored when --dsn is set [possible values: true, false]
+  -h, --host <HOST>                Databend Server host, Default: 127.0.0.1, ignored when --dsn is set
+  -P, --port <PORT>                Databend Server port, Default: 8000, ignored when --dsn is set
+  -u, --user <USER>                Default: root, overrides username in DSN
+  -p, --password <PASSWORD>        Password, overrides password in DSN [env: BENDSQL_PASSWORD]
+  -r, --role <ROLE>                Downgrade role name, overrides role in DSN
+  -D, --database <DATABASE>        Database name, overrides database in DSN
+      --set <SET>                  Settings, overrides settings in DSN
+      --dsn <DSN>                  Data source name [env: BENDSQL_DSN]
+  -n, --non-interactive            Force non-interactive mode
+  -A, --no-auto-complete           Disable loading tables and fields for auto-completion, which offers a quicker start
+      --check                      Check for server status and exit
+      --query=<QUERY>              Query to execute
+  -d, --data <DATA>                Data to load, @file or @- for stdin
+  -f, --format <FORMAT>            Data format to load [default: csv] [possible values: csv, tsv, ndjson, parquet, xml]
+      --format-opt <FORMAT_OPT>    Data format options
+  -o, --output <OUTPUT>            Output format [possible values: table, csv, tsv, null]
+      --quote-style <QUOTE_STYLE>  Output quote style, applies to `csv` and `tsv` output formats [possible values: always, necessary, non-numeric, never]
+      --progress                   Show progress for query execution in stderr, only works with output format `table` and `null`.
+      --stats                      Show stats after query execution in stderr, only works with non-interactive mode.
+      --time[=<TIME>]              Only show execution time without results, will implicitly set output format to `null`. [possible values: local, server]
+  -l, --log-level <LOG_LEVEL>      [default: info]
+  -V, --version                    Print version
 ```
 
 ### REPL
+
 ```sql
 ❯ bendsql
 Welcome to BendSQL.
 Connecting to localhost:8000 as user root.
+Connected to Databend Query
 
 bendsql> select avg(number) from numbers(10);
 
-SELECT
+select
   avg(number)
-FROM
-  numbers(10);
+from
+  numbers(10)
 
-┌───────────────────┐
-│    avg(number)    │
-│ Nullable(Float64) │
-├───────────────────┤
-│ 4.5               │
-└───────────────────┘
-
-1 row in 0.259 sec. Processed 10 rows, 10B (38.59 rows/s, 308B/s)
+╭───────────────────────────────────────────────────────╮
+│ sum(number) / if(count(number) = 0, 1, count(number)) │
+│                   Nullable(Float64)                   │
+├───────────────────────────────────────────────────────┤
+│                                                   4.5 │
+╰───────────────────────────────────────────────────────╯
+1 row read in 0.032 sec. Processed 10 row, 80 B (312.5 rows/s, 2.44 KiB/s)
 
 bendsql> show tables like 'd%';
 
-SHOW TABLES LIKE 'd%';
+show tables like 'd%'
 
 ┌───────────────────┐
 │ tables_in_default │
@@ -78,7 +87,7 @@ SHOW TABLES LIKE 'd%';
 4 rows in 0.106 sec. Processed 0 rows, 0B (0 rows/s, 0B/s)
 
 bendsql> exit
-Bye
+Bye~
 ```
 
 ### StdIn Pipe

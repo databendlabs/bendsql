@@ -32,6 +32,9 @@ drop table t;
 -- issue 572
 CREATE TABLE 🐳🍞(🐳🐳 INTEGER, 🍞🍞 INTEGER);
 
+-- issue 631
+explain select * from c where b in （'x');
+
 -- enable it after we support code string in databend
 -- select $$aa$$;
 -- select $$

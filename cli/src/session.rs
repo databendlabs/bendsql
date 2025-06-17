@@ -40,7 +40,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 
-use crate::ast::replace_newline_in_box_display;
+use crate::ast::quote_string_in_box_display;
 use crate::ast::QueryKind;
 use crate::config::ExpandMode;
 use crate::config::Settings;
@@ -483,6 +483,7 @@ impl Session {
             self.query.push('\n');
         }
         self.query.push_str(line);
+        let mut err = String::new();
 
         'Parser: loop {
             let mut is_valid = true;
@@ -510,9 +511,10 @@ impl Session {
                         }
                         previous_token_backslash = matches!(token.kind, TokenKind::Backslash);
                     }
-                    Err(_) => {
+                    Err(e) => {
                         // ignore current query if have invalid token.
                         is_valid = false;
+                        err = e.to_string();
                         continue;
                     }
                 }
@@ -520,6 +522,9 @@ impl Session {
             break;
         }
 
+        if self.query.is_empty() && queries.is_empty() && !err.is_empty() {
+            eprintln!("Parser '{}' failed\nwith error '{}'", line, err);
+        }
         queries
     }
 
@@ -556,10 +561,10 @@ impl Session {
                 Ok(None)
             }
             other => {
-                let replace_newline = !if self.settings.replace_newline {
+                let quote_string = !if self.settings.quote_string {
                     false
                 } else {
-                    replace_newline_in_box_display(query)
+                    quote_string_in_box_display(query)
                 };
 
                 let data = match other {
@@ -572,7 +577,7 @@ impl Session {
                 let mut displayer = FormatDisplay::new(
                     &self.settings,
                     query,
-                    replace_newline,
+                    quote_string,
                     start,
                     data,
                     self.interrupted.clone(),
