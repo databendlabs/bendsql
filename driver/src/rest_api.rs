@@ -176,13 +176,13 @@ impl IConnection for RestAPIConnection {
     }
 }
 
-impl RestAPIConnection {
+impl<'o> RestAPIConnection {
     pub async fn try_create(dsn: &str, name: String) -> Result<Self> {
         let client = APIClient::new(dsn, Some(name)).await?;
         Ok(Self { client })
     }
 
-    fn default_file_format_options() -> BTreeMap<&'static str, &'static str> {
+    fn default_file_format_options() -> BTreeMap<&'o str, &'o str> {
         vec![
             ("type", "CSV"),
             ("field_delimiter", ","),
@@ -193,7 +193,7 @@ impl RestAPIConnection {
         .collect()
     }
 
-    fn default_copy_options() -> BTreeMap<&'static str, &'static str> {
+    fn default_copy_options() -> BTreeMap<&'o str, &'o str> {
         vec![("purge", "true")].into_iter().collect()
     }
     fn parse_row_count_string(value_str: &str) -> Result<i64, String> {
