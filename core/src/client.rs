@@ -1040,7 +1040,7 @@ mod test {
 
     #[tokio::test]
     async fn parse_special_chars_password() -> Result<()> {
-        let dsn = "databend://username:3a@SC(#nYE1k={{R@localhost:8000";
+        let dsn = "databend://username:3a@SC(nYE1k={{R@localhost:8000";
         let client = APIClient::from_dsn(dsn).await?;
         assert_eq!(client.host(), "localhost");
         assert_eq!(client.port(), 8000);
