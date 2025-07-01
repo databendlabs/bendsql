@@ -23,11 +23,8 @@ pub(crate) fn parse_named_fields<'a>(
     match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(named_fields) => named_fields,
-            _ => panic!(
-                "derive({}) works only for structs with named fields. Tuples don't need derive.",
-                current_derive
-            ),
+            _ => panic!("derive({current_derive}) works only for structs with named fields. Tuples don't need derive."),
         },
-        _ => panic!("derive({}) works only on structs!", current_derive),
+        _ => panic!("derive({current_derive}) works only on structs!"),
     }
 }

@@ -20,7 +20,7 @@ use crate::common::DEFAULT_DSN;
 
 async fn prepare(name: &str) -> (Connection, String) {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
-    let table = format!("{}_{}", name, chrono::Utc::now().timestamp());
+    let table = format!("{name}_{}", chrono::Utc::now().timestamp());
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
     (conn, table)
@@ -29,7 +29,7 @@ async fn prepare(name: &str) -> (Connection, String) {
 async fn prepare_data(name: &str) -> (Connection, String) {
     let (conn, table) = prepare(name).await;
     let sql_create = format!(
-        "CREATE TABLE `{}` (
+        "CREATE TABLE `{table}` (
 		i64 Int64,
 		u64 UInt64,
 		f64 Float64,
@@ -37,16 +37,14 @@ async fn prepare_data(name: &str) -> (Connection, String) {
 		s2  String,
 		d   Date,
 		t   DateTime
-    );",
-        table
+    );"
     );
     conn.inner().exec(&sql_create).await.unwrap();
     let sql_insert = format!(
-        "INSERT INTO `{}` VALUES
+        "INSERT INTO `{table}` VALUES
         (-1, 1, 1.0, '1', '1', '2011-03-06', '2011-03-06 06:20:00'),
         (-2, 2, 2.0, '2', '2', '2012-05-31', '2012-05-31 11:20:00'),
-        (-3, 3, 3.0, '3', '2', '2016-04-04', '2016-04-04 11:30:00')",
-        table
+        (-3, 3, 3.0, '3', '2', '2016-04-04', '2016-04-04 11:30:00')"
     );
     conn.inner().exec(&sql_insert).await.unwrap();
     (conn, table)
@@ -100,7 +98,7 @@ async fn select_iter_tuple() {
                 .naive_utc(),
         ),
     ];
-    let sql_select = format!("SELECT * FROM `{}`", table);
+    let sql_select = format!("SELECT * FROM `{table}`");
     let mut rows = conn.inner().query_iter(&sql_select).await.unwrap();
     let mut row_count = 0;
     while let Some(row) = rows.next().await {
@@ -110,7 +108,7 @@ async fn select_iter_tuple() {
     }
     assert_eq!(row_count, 3);
 
-    let sql_drop = format!("DROP TABLE `{}`", table);
+    let sql_drop = format!("DROP TABLE `{table}`");
     conn.inner().exec(&sql_drop).await.unwrap();
 }
 
@@ -166,7 +164,7 @@ async fn select_iter_struct() {
         },
     ];
 
-    let sql_select = format!("SELECT * FROM `{}`", table);
+    let sql_select = format!("SELECT * FROM `{table}`");
     let rows = conn.inner().query_iter(&sql_select).await.unwrap();
     let results = rows.try_collect::<RowResult>().await.unwrap();
     for (idx, v) in results.iter().enumerate() {
@@ -180,7 +178,7 @@ async fn select_iter_struct() {
         assert_eq!(v.t, expected_row.t);
     }
 
-    let sql_drop = format!("DROP TABLE `{}`", table);
+    let sql_drop = format!("DROP TABLE `{table}`");
     conn.inner().exec(&sql_drop).await.unwrap();
 }
 

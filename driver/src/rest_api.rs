@@ -114,7 +114,7 @@ impl IConnection for RestAPIConnection {
         let now = chrono::Utc::now()
             .timestamp_nanos_opt()
             .ok_or_else(|| Error::IO("Failed to get current timestamp".to_string()))?;
-        let stage = format!("@~/client/load/{}", now);
+        let stage = format!("@~/client/load/{now}");
 
         let file_format_options =
             file_format_options.unwrap_or_else(Self::default_file_format_options);

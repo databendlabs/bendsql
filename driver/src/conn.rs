@@ -97,7 +97,7 @@ pub trait IConnection: Send + Sync {
     /// The operation can be "UPLOAD" or "DOWNLOAD".
     async fn get_presigned_url(&self, operation: &str, stage: &str) -> Result<PresignedResponse> {
         info!("get presigned url: {} {}", operation, stage);
-        let sql = format!("PRESIGN {} {}", operation, stage);
+        let sql = format!("PRESIGN {operation} {stage}");
         let row = self.query_row(&sql).await?.ok_or_else(|| {
             Error::InvalidResponse("Empty response from server for presigned request".to_string())
         })?;
@@ -145,11 +145,9 @@ pub trait IConnection: Send + Sync {
             let entry = entry?;
             let filename = entry
                 .file_name()
-                .ok_or_else(|| Error::BadArgument(format!("Invalid local file path: {:?}", entry)))?
+                .ok_or_else(|| Error::BadArgument(format!("Invalid local file path: {entry:?}")))?
                 .to_str()
-                .ok_or_else(|| {
-                    Error::BadArgument(format!("Invalid local file path: {:?}", entry))
-                })?;
+                .ok_or_else(|| Error::BadArgument(format!("Invalid local file path: {entry:?}")))?;
             let stage_file = stage_location.file_path(filename);
             let file = File::open(&entry).await?;
             let size = file.metadata().await?.len();
@@ -196,7 +194,7 @@ pub trait IConnection: Send + Sync {
         if !location.path.ends_with('/') {
             location.path.push('/');
         }
-        let list_sql = format!("LIST {}", location);
+        let list_sql = format!("LIST {location}");
         let mut response = self.query_iter(&list_sql).await?;
         let mut results = Vec::new();
         let schema = Arc::new(put_get_schema());
@@ -206,7 +204,7 @@ pub trait IConnection: Send + Sync {
             if !location.path.is_empty() && name.starts_with(&location.path) {
                 name = name[location.path.len()..].to_string();
             }
-            let stage_file = format!("{}/{}", location, name);
+            let stage_file = format!("{location}/{name}");
             let presign = self.get_presigned_url("DOWNLOAD", &stage_file).await?;
             let local_file = Path::new(local_dsn.path()).join(&name);
             let status = presign_download_from_stage(presign, &local_file).await;
