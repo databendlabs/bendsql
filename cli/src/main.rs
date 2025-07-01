@@ -383,12 +383,12 @@ pub async fn main() -> Result<()> {
             if let Some(error) = err.downcast_ref::<databend_driver::Error>() {
                 match error {
                     databend_driver::Error::Api(databend_client::Error::AuthFailure(_)) => {
-                        println!("Authenticate failed wrong password user {}", user);
+                        println!("Authenticate failed wrong password user {user}");
                         return Ok(());
                     }
                     databend_driver::Error::Arrow(arrow::error::ArrowError::IpcError(ipc_err)) => {
                         if ipc_err.contains("Unauthenticated") {
-                            println!("Authenticate failed wrong password user {}", user);
+                            println!("Authenticate failed wrong password user {user}");
                             return Ok(());
                         }
                     }
@@ -428,17 +428,17 @@ pub async fn main() -> Result<()> {
                         Some(fname) => {
                             let path = std::path::Path::new(fname);
                             if !path.exists() {
-                                return Err(anyhow!("file not found: {}", fname));
+                                return Err(anyhow!("file not found: {fname}"));
                             }
                             session.stream_load_file(&query, path, options).await?
                         }
                         None => {
-                            return Err(anyhow!("invalid data input: {}", data));
+                            return Err(anyhow!("invalid data input: {data}"));
                         }
                     }
                 } else {
                     // TODO: should we allow passing data directly?
-                    return Err(anyhow!("invalid data input: {}", data));
+                    return Err(anyhow!("invalid data input: {data}"));
                 }
             }
         },
