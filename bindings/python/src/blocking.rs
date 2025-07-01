@@ -435,8 +435,7 @@ fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
                 Ok(v.to_string())
             } else {
                 Err(PyAttributeError::new_err(format!(
-                    "Invalid parameter type for: {:?}, expected str, bool, int or float",
-                    v
+                    "Invalid parameter type for: {v:?}, expected str, bool, int or float"
                 )))
             }
         }
