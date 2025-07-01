@@ -311,7 +311,7 @@ impl ToNapiValue for Value<'_> {
             databend_driver::Value::Variant(s) => {
                 if val.opts.variant_as_object {
                     let val: serde_json::Value = serde_json::from_str(s)
-                        .map_err(|e| Error::from_reason(format!("parse variant error: {}", e)))?;
+                        .map_err(|e| Error::from_reason(format!("parse variant error: {e}")))?;
                     serde_json::Value::to_napi_value(env, val)
                 } else {
                     String::to_napi_value(env, s.to_string())
@@ -571,5 +571,5 @@ impl ServerStats {
 }
 
 fn format_napi_error(err: databend_driver::Error) -> Error {
-    Error::from_reason(format!("{}", err))
+    Error::from_reason(format!("{err}"))
 }
