@@ -153,7 +153,7 @@ impl KeyWordCompleter {
             let word = String::from_utf8_lossy(&w);
             let category = String::from_utf8_lossy(&t);
             results.push(Pair {
-                display: format!("{}({})", word, category),
+                display: format!("{word}({category})"),
                 replacement: word.to_string(),
             });
         }

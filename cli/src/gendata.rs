@@ -66,13 +66,13 @@ impl Session {
             GenType::TPCH => {
                 conn.execute("install tpch;", params![]).unwrap();
                 conn.execute("load tpch;", params![]).unwrap();
-                conn.execute(&format!("CALL DBGEN(sf = {});", scale), params![])
+                conn.execute(&format!("CALL DBGEN(sf = {scale});"), params![])
                     .unwrap();
             }
             GenType::TPCDS => {
                 conn.execute("install tpcds;", params![]).unwrap();
                 conn.execute("load tpcds;", params![]).unwrap();
-                conn.execute(&format!("CALL DSDGEN(sf = {});", scale), params![])
+                conn.execute(&format!("CALL DSDGEN(sf = {scale});"), params![])
                     .unwrap();
             }
         }
@@ -108,7 +108,7 @@ impl Session {
             let size = metadata.len();
 
             let now = chrono::Utc::now().timestamp_nanos_opt().unwrap();
-            let stage = format!("@~/client/load/{}", now);
+            let stage = format!("@~/client/load/{now}");
             self.conn
                 .upload_to_stage(&stage, Box::new(data), size)
                 .await?;

@@ -57,8 +57,8 @@ static VERSION_SHORT: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     let sha = option_env!("VERGEN_GIT_SHA").unwrap_or("dev");
     match option_env!("BENDSQL_BUILD_INFO") {
-        Some(info) => format!("{}-{}", version, info),
-        None => format!("{}-{}", version, sha),
+        Some(info) => format!("{version}-{info}"),
+        None => format!("{version}-{sha}"),
     }
 });
 
@@ -128,7 +128,7 @@ impl Session {
                     "".to_string()
                 }
             };
-            println!("Connected to {}", version);
+            println!("Connected to {version}");
 
             let config = sled::Config::new().temporary(true);
             let db = config.open()?;
@@ -177,7 +177,7 @@ impl Session {
                     .unwrap();
             let addr = listener.local_addr().unwrap();
             let handle = tokio::spawn(async move { start_server(listener).await });
-            println!("Started web server at {}", addr);
+            println!("Started web server at {addr}");
             server_addr = Some(addr.to_string());
             server_handle = Some(handle);
         };
@@ -228,7 +228,7 @@ impl Session {
                 prompt = prompt.replace("{database}", "default");
             }
             if let Some(warehouse) = &info.warehouse {
-                prompt = prompt.replace("{warehouse}", &format!("({})", warehouse));
+                prompt = prompt.replace("{warehouse}", &format!("({warehouse})"));
             } else {
                 prompt = prompt.replace("{warehouse}", &format!("{}:{}", info.host, info.port));
             }
