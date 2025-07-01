@@ -23,9 +23,9 @@ use crate::common::DEFAULT_DSN;
 async fn prepare_client(presigned: bool) -> Option<Client> {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let client = if presigned {
-        Client::new(format!("{}&presign=on", dsn))
+        Client::new(format!("{dsn}&presign=on"))
     } else {
-        Client::new(format!("{}&presign=off", dsn))
+        Client::new(format!("{dsn}&presign=off"))
     };
     let conn = client.get_conn().await.unwrap();
     let info = conn.info().await;
@@ -38,14 +38,13 @@ async fn prepare_client(presigned: bool) -> Option<Client> {
 
 async fn prepare_table(client: &Client, prefix: &str) -> String {
     let conn = client.get_conn().await.unwrap();
-    let table = format!("books_{}_{}", prefix, Utc::now().format("%Y%m%d%H%M%S%9f"));
+    let table = format!("books_{prefix}_{}", Utc::now().format("%Y%m%d%H%M%S%9f"));
     let sql = format!(
-        "CREATE TABLE `{}` (
+        "CREATE TABLE `{table}` (
             title VARCHAR NULL,
             author VARCHAR NULL,
             date VARCHAR NULL,
             publish_time TIMESTAMP NULL)",
-        table
     );
     conn.exec(&sql, ()).await.unwrap();
     table
@@ -53,7 +52,7 @@ async fn prepare_table(client: &Client, prefix: &str) -> String {
 
 async fn prepare_data(table: &str, client: &Client) {
     let conn = client.get_conn().await.unwrap();
-    let sql = format!("INSERT INTO `{}` VALUES", table);
+    let sql = format!("INSERT INTO `{table}` VALUES");
     let data = vec![
         vec![
             "Transaction Processing",
@@ -75,8 +74,8 @@ async fn prepare_data(table: &str, client: &Client) {
 
 async fn prepare_data_with_file(table: &str, file_type: &str, client: &Client) {
     let conn = client.get_conn().await.unwrap();
-    let fp = format!("tests/driver/data/books.{}", file_type);
-    let sql = format!("INSERT INTO `{}` VALUES", table);
+    let fp = format!("tests/driver/data/books.{file_type}");
+    let sql = format!("INSERT INTO `{table}` VALUES");
     let stats = conn
         .load_file(&sql, Path::new(&fp), None, None)
         .await
@@ -86,7 +85,7 @@ async fn prepare_data_with_file(table: &str, file_type: &str, client: &Client) {
 
 async fn check_result(table: &str, client: &Client) {
     let conn = client.get_conn().await.unwrap();
-    let sql = format!("SELECT * FROM `{}`", table);
+    let sql = format!("SELECT * FROM `{table}`");
     let rows = conn.query_iter(&sql, ()).await.unwrap();
     let result: Vec<(String, String, String, NaiveDateTime)> =
         rows.map(|r| r.unwrap().try_into().unwrap()).collect().await;
@@ -114,7 +113,7 @@ async fn check_result(table: &str, client: &Client) {
     ];
     assert_eq!(result, expected);
 
-    let sql = format!("DROP TABLE `{}`;", table);
+    let sql = format!("DROP TABLE `{table}`;");
     conn.exec(&sql, ()).await.unwrap();
 }
 
