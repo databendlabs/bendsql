@@ -163,8 +163,7 @@ impl APIClient {
                         "off" => PresignMode::Off,
                         _ => {
                             return Err(Error::BadArgument(format!(
-                            "Invalid value for presign: {}, should be one of auto/detect/on/off",
-                            v
+                            "Invalid value for presign: {v}, should be one of auto/detect/on/off"
                         )))
                         }
                     };
@@ -182,8 +181,7 @@ impl APIClient {
                     "require" | "enable" => scheme = "https",
                     _ => {
                         return Err(Error::BadArgument(format!(
-                            "Invalid value for sslmode: {}",
-                            v
+                            "Invalid value for sslmode: {v}"
                         )))
                     }
                 },
@@ -201,10 +199,7 @@ impl APIClient {
                         "disable" => true,
                         "enable" => false,
                         _ => {
-                            return Err(Error::BadArgument(format!(
-                                "Invalid value for login: {}",
-                                v
-                            )))
+                            return Err(Error::BadArgument(format!("Invalid value for login: {v}")))
                         }
                     }
                 }
@@ -214,8 +209,7 @@ impl APIClient {
                         "enable" => false,
                         _ => {
                             return Err(Error::BadArgument(format!(
-                                "Invalid value for session_token: {}",
-                                v
+                                "Invalid value for session_token: {v}"
                             )))
                         }
                     }
@@ -295,7 +289,7 @@ impl APIClient {
             PresignMode::Detect => match self.get_presigned_upload_url("@~/.bendsql/check").await {
                 Ok(_) => PresignMode::On,
                 Err(e) => {
-                    warn!("presign mode off with error detected: {}", e);
+                    warn!("presign mode off with error detected: {e}");
                     PresignMode::Off
                 }
             },
@@ -388,7 +382,7 @@ impl APIClient {
     }
 
     pub async fn start_query(self: &Arc<Self>, sql: &str, need_progress: bool) -> Result<Pages> {
-        info!("start query: {}", sql);
+        info!("start query: {sql}");
         let resp = self.start_query_inner(sql, None).await?;
         let pages = Pages::new(self.clone(), resp, need_progress);
         Ok(pages)
@@ -457,7 +451,7 @@ impl APIClient {
         next_uri: &str,
         node_id: &Option<String>,
     ) -> Result<QueryResponse> {
-        info!("query page: {}", next_uri);
+        info!("query page: {next_uri}");
         let endpoint = self.endpoint.join(next_uri)?;
         let headers = self.make_headers(Some(query_id))?;
         let mut builder = self.cli.get(endpoint.clone());
@@ -491,7 +485,7 @@ impl APIClient {
         let kill_uri = format!("/v1/query/{}/kill", query_id);
         let endpoint = self.endpoint.join(&kill_uri)?;
         let headers = self.make_headers(Some(query_id))?;
-        info!("kill query: {}", kill_uri);
+        info!("kill query: {kill_uri}");
 
         let mut builder = self.cli.post(endpoint);
         builder = self.wrap_auth_or_session_token(builder)?;
@@ -583,7 +577,7 @@ impl APIClient {
     }
 
     async fn get_presigned_upload_url(self: &Arc<Self>, stage: &str) -> Result<PresignedResponse> {
-        info!("get presigned upload url: {}", stage);
+        info!("get presigned upload url: {stage}");
         let sql = format!("PRESIGN UPLOAD {}", stage);
         let resp = self.query_all(&sql).await?;
         if resp.data.len() != 1 {
@@ -642,7 +636,7 @@ impl APIClient {
         data: Reader,
         size: u64,
     ) -> Result<()> {
-        info!("upload to stage with stream: {}, size: {}", stage, size);
+        info!("upload to stage with stream: {stage}, size: {size}");
         if let Some(info) = self.need_pre_refresh_session().await {
             self.refresh_session_token(info).await?;
         }

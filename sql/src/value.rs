@@ -1007,7 +1007,7 @@ pub fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
         None => 0,
     };
     if i_part.len() as i32 + exp > 76 {
-        Err(ConvertError::new("decimal", format!("{:?}", text)).into())
+        Err(ConvertError::new("decimal", format!("{text:?}")).into())
     } else {
         let mut digits = Vec::with_capacity(76);
         digits.extend_from_slice(i_part.as_bytes());
@@ -1071,7 +1071,7 @@ impl IntervalToStringCast {
     }
 
     fn format_two_digits(value: i64, buffer: &mut [u8], length: &mut usize) {
-        let s = format!("{:02}", value.abs());
+        let s = format!("{value:02}");
         let bytes = s.as_bytes();
         buffer[*length..*length + bytes.len()].copy_from_slice(bytes);
         *length += bytes.len();
@@ -1099,7 +1099,7 @@ impl IntervalToStringCast {
         if micros < 0 {
             micros = -micros;
         }
-        let s = format!("{:06}", micros);
+        let s = format!("{micros:06}");
         let bytes = s.as_bytes();
         buffer[*length..*length + bytes.len()].copy_from_slice(bytes);
         *length += bytes.len();
@@ -1240,8 +1240,7 @@ impl Interval {
                 }
                 _ => {
                     return Err(Error::BadArgument(format!(
-                        "Unexpected character at position {}",
-                        pos
+                        "Unexpected character at position {pos}"
                     )));
                 }
             }
@@ -1407,8 +1406,7 @@ fn try_get_date_part_specifier(specifier_str: &str) -> Result<DatePartSpecifier>
         "minute" | "minutes" | "m" => Ok(DatePartSpecifier::Minute),
         "hour" | "hours" | "h" => Ok(DatePartSpecifier::Hour),
         _ => Err(Error::BadArgument(format!(
-            "Invalid date part specifier: {}",
-            specifier_str
+            "Invalid date part specifier: {specifier_str}"
         ))),
     }
 }
