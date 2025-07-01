@@ -331,10 +331,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                 }
                 _ => Err(ConvertError::new(
                     "extension",
-                    format!(
-                        "Unsupported extension datatype for arrow field: {:?}",
-                        field
-                    ),
+                    format!("Unsupported extension datatype for arrow field: {field:?}"),
                 )
                 .into()),
             };
@@ -821,7 +818,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
                 write!(f, "false")
             }
         }
-        Value::Number(n) => write!(f, "{}", n),
+        Value::Number(n) => write!(f, "{n}"),
         Value::Binary(s) => write!(f, "{}", hex::encode_upper(s)),
         Value::String(s)
         | Value::Bitmap(s)

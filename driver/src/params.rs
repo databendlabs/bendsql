@@ -118,7 +118,7 @@ impl Param for bool {
 // Implement Param for String
 impl Param for String {
     fn as_sql_string(&self) -> String {
-        format!("'{}'", self)
+        format!("'{self}'")
     }
 }
 

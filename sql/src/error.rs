@@ -81,7 +81,7 @@ impl std::fmt::Display for Error {
                 "ConvertError: cannot convert {} to {}: {:?}",
                 e.data, e.target, e.message
             ),
-            Error::Api(e) => write!(f, "APIError: {}", e),
+            Error::Api(e) => write!(f, "APIError: {e}"),
         }
     }
 }
