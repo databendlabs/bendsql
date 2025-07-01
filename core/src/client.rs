@@ -376,7 +376,7 @@ impl APIClient {
     fn handle_warnings(&self, resp: &QueryResponse) {
         if let Some(warnings) = &resp.warnings {
             for w in warnings {
-                warn!(target: "server_warnings", "server warning: {}", w);
+                warn!(target: "server_warnings", "server warning: {w}");
             }
         }
     }
@@ -558,10 +558,7 @@ impl APIClient {
         file_format_options: BTreeMap<&str, &str>,
         copy_options: BTreeMap<&str, &str>,
     ) -> Result<QueryStats> {
-        info!(
-            "insert with stage: {}, format: {:?}, copy: {:?}",
-            sql, file_format_options, copy_options
-        );
+        info!("insert with stage: {sql}, format: {file_format_options:?}, copy: {copy_options:?}");
         let stage_attachment = Some(StageAttachmentConfig {
             location: stage,
             file_format_options: Some(file_format_options),
@@ -917,7 +914,7 @@ impl APIClient {
                 .build_log_out_request()
                 .expect("failed to build logout request");
             if let Err(err) = cli.execute(req).await {
-                error!("logout request failed: {}", err);
+                error!("logout request failed: {err}");
             } else {
                 debug!("logout success");
             };
@@ -939,8 +936,7 @@ where
 {
     serde_json::from_slice::<T>(body).map_err(|e| {
         Error::Decode(format!(
-            "fail to decode JSON response: {}, body: {}",
-            e,
+            "fail to decode JSON response: {e}, body: {}",
             String::from_utf8_lossy(body)
         ))
     })

@@ -44,7 +44,7 @@ pub async fn presign_upload_to_stage(
     data: Reader,
     size: u64,
 ) -> Result<()> {
-    info!("upload to stage with presigned url, size: {}", size);
+    info!("upload to stage with presigned url, size: {size}");
     let client = HttpClient::new();
     let mut builder = client.put(presigned.url);
     for (k, v) in presigned.headers {
