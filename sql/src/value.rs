@@ -1056,7 +1056,7 @@ impl IntervalToStringCast {
     }
 
     fn format_two_digits(value: i64, buffer: &mut [u8], length: &mut usize) {
-        let s = format!("{value:02}");
+        let s = format!("{:02}", value.abs());
         let bytes = s.as_bytes();
         buffer[*length..*length + bytes.len()].copy_from_slice(bytes);
         *length += bytes.len();
