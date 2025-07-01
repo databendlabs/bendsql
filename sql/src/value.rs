@@ -951,10 +951,9 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
 
                 write!(
                     buf,
-                    "{neg}{int_part}.{:0>width$}{}",
+                    "{neg}{int_part}.{:0>frac_width$}{}",
                     frac_high_part.to_i128().unwrap(),
                     frac_low_part.to_i128().unwrap(),
-                    width = frac_width
                 )
                 .unwrap();
             }
