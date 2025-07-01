@@ -94,6 +94,6 @@ pub fn start_server(listener: TcpListener) -> Server {
             .route("/{filename:.*}", web::get().to(embed_file))
     })
     .listen(listener)
-    .unwrap_or_else(|e| panic!("Cannot listen to address: {}", e))
+    .unwrap_or_else(|e| panic!("Cannot listen to address: {e}"))
     .run()
 }

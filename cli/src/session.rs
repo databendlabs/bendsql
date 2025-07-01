@@ -162,7 +162,7 @@ impl Session {
                         println!("Loaded {} auto complete keywords from server.", db.len());
                     }
                     Err(e) => {
-                        eprintln!("WARN: loading auto complete keywords failed: {}", e);
+                        eprintln!("WARN: loading auto complete keywords failed: {e}");
                     }
                 }
             }
@@ -250,10 +250,10 @@ impl Session {
                 info.handler, info.host, info.port, info.user
             );
             if let Some(warehouse) = &info.warehouse {
-                println!("Using Databend Cloud warehouse: {}", warehouse);
+                println!("Using Databend Cloud warehouse: {warehouse}");
             }
             if let Some(database) = &info.database {
-                println!("Current database: {}", database);
+                println!("Current database: {database}");
             } else {
                 println!("Current database: default");
             }
@@ -262,7 +262,7 @@ impl Session {
         // server version
         {
             let version = self.conn.version().await.unwrap_or_default();
-            println!("Server version: {}", version);
+            println!("Server version: {version}");
         }
 
         #[derive(TryFromRow)]
@@ -282,7 +282,7 @@ impl Session {
                 let row = rows.next().await.unwrap()?;
                 let linfo: LicenseInfo = row
                     .try_into()
-                    .map_err(|e| anyhow!("parse license info failed: {}", e))?;
+                    .map_err(|e| anyhow!("parse license info failed: {e}"))?;
                 if chrono::Utc::now().naive_utc() > linfo.expire_at {
                     eprintln!("-> WARN: License expired at {}", linfo.expire_at);
                 } else {
@@ -321,12 +321,12 @@ impl Session {
                     match self.conn.upload_to_stage(stage_file, reader, size).await {
                         Err(e) => {
                             eprintln!("-> ERR: Backend storage upload not working as expected.");
-                            eprintln!("        {}", e);
+                            eprintln!("        {e}");
                         }
                         Ok(()) => {
                             let u = url::Url::parse(&resp.url)?;
                             let host = u.host_str().unwrap_or("unknown");
-                            println!("Backend storage OK: {}", host);
+                            println!("Backend storage OK: {host}");
                         }
                     };
                 }
@@ -360,15 +360,15 @@ impl Session {
                             Err(e) => {
                                 if e.to_string().contains("Unauthenticated") {
                                     if let Err(e) = self.reconnect().await {
-                                        eprintln!("reconnect error: {}", e);
+                                        eprintln!("reconnect error: {e}");
                                     } else if let Err(e) = self.handle_query(true, &query).await {
-                                        eprintln!("error: {}", e);
+                                        eprintln!("error: {e}");
                                     }
                                 } else {
-                                    eprintln!("error: {}", e);
+                                    eprintln!("error: {e}");
                                     if e.to_string().contains(INTERRUPTED_MESSAGE) {
                                         if let Some(query_id) = self.conn.last_query_id() {
-                                            println!("killing query: {}", query_id);
+                                            println!("killing query: {query_id}");
                                             let _ = self.conn.kill_query(&query_id).await;
                                         }
                                     }
@@ -407,7 +407,7 @@ impl Session {
         // save history first to avoid loss data.
         let _ = rl.save_history(&get_history_path());
         if let Err(e) = self.conn.close().await {
-            println!("got error when closing session: {}", e);
+            println!("got error when closing session: {e}");
         }
         println!("Bye~");
     }
@@ -425,7 +425,7 @@ impl Session {
                     }
                 }
                 Some(Err(e)) => {
-                    return Err(anyhow!("read lines err: {}", e.to_string()));
+                    return Err(anyhow!("read lines err: {e}"));
                 }
                 None => break,
             }
