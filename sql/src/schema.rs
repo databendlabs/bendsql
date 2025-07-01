@@ -135,8 +135,8 @@ impl std::fmt::Display for DataType {
             }
             DataType::Timestamp => write!(f, "Timestamp"),
             DataType::Date => write!(f, "Date"),
-            DataType::Nullable(inner) => write!(f, "Nullable({})", inner),
-            DataType::Array(inner) => write!(f, "Array({})", inner),
+            DataType::Nullable(inner) => write!(f, "Nullable({inner})"),
+            DataType::Array(inner) => write!(f, "Array({inner})"),
             DataType::Map(inner) => match inner.as_ref() {
                 DataType::Tuple(tys) => {
                     write!(f, "Map({}, {})", tys[0], tys[1])
@@ -149,7 +149,7 @@ impl std::fmt::Display for DataType {
                     .map(|x| x.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                write!(f, "Tuple({})", inner)
+                write!(f, "Tuple({inner})")
             }
             DataType::Variant => write!(f, "Variant"),
             DataType::Bitmap => write!(f, "Bitmap"),
@@ -275,7 +275,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
             "Geometry" => DataType::Geometry,
             "Geography" => DataType::Geography,
             "Interval" => DataType::Interval,
-            _ => return Err(Error::Parsing(format!("Unknown type: {:?}", desc))),
+            _ => return Err(Error::Parsing(format!("Unknown type: {desc:?}"))),
         };
         Ok(dt)
     }
@@ -322,8 +322,7 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                 ARROW_EXT_TYPE_GEOGRAPHY => DataType::Geography,
                 _ => {
                     return Err(Error::Parsing(format!(
-                        "Unsupported extension datatype for arrow field: {:?}",
-                        f
+                        "Unsupported extension datatype for arrow field: {f:?}"
                     )))
                 }
             }
@@ -425,7 +424,7 @@ fn parse_type_desc(s: &str) -> Result<TypeDesc> {
     let mut depth = 0;
     let mut start = 0;
     let mut nullable = false;
-    for (i, c) in s.chars().enumerate() {
+    for (i, c) in s.char_indices() {
         match c {
             '(' => {
                 if depth == 0 {
@@ -464,7 +463,7 @@ fn parse_type_desc(s: &str) -> Result<TypeDesc> {
         }
     }
     if depth != 0 {
-        return Err(Error::Parsing(format!("Invalid type desc: {}", s)));
+        return Err(Error::Parsing(format!("Invalid type desc: {s}")));
     }
     if start < s.len() {
         let s = &s[start..];
@@ -474,10 +473,7 @@ fn parse_type_desc(s: &str) -> Result<TypeDesc> {
             } else if s == "NULL" {
                 nullable = true;
             } else {
-                return Err(Error::Parsing(format!(
-                    "Invalid type arg for {}: {}",
-                    name, s
-                )));
+                return Err(Error::Parsing(format!("Invalid type arg for {name}: {s}")));
             }
         }
     }
