@@ -787,16 +787,16 @@ impl_try_from_to_option!(NaiveDate);
 impl std::fmt::Display for NumberValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NumberValue::Int8(i) => write!(f, "{}", i),
-            NumberValue::Int16(i) => write!(f, "{}", i),
-            NumberValue::Int32(i) => write!(f, "{}", i),
-            NumberValue::Int64(i) => write!(f, "{}", i),
-            NumberValue::UInt8(i) => write!(f, "{}", i),
-            NumberValue::UInt16(i) => write!(f, "{}", i),
-            NumberValue::UInt32(i) => write!(f, "{}", i),
-            NumberValue::UInt64(i) => write!(f, "{}", i),
-            NumberValue::Float32(i) => write!(f, "{}", i),
-            NumberValue::Float64(i) => write!(f, "{}", i),
+            NumberValue::Int8(i) => write!(f, "{i}"),
+            NumberValue::Int16(i) => write!(f, "{i}"),
+            NumberValue::Int32(i) => write!(f, "{i}"),
+            NumberValue::Int64(i) => write!(f, "{i}"),
+            NumberValue::UInt8(i) => write!(f, "{i}"),
+            NumberValue::UInt16(i) => write!(f, "{i}"),
+            NumberValue::UInt32(i) => write!(f, "{i}"),
+            NumberValue::UInt64(i) => write!(f, "{i}"),
+            NumberValue::Float32(i) => write!(f, "{i}"),
+            NumberValue::Float64(i) => write!(f, "{i}"),
             NumberValue::Decimal128(v, s) => write!(f, "{}", display_decimal_128(*v, s.scale)),
             NumberValue::Decimal256(v, s) => write!(f, "{}", display_decimal_256(*v, s.scale)),
         }
@@ -831,9 +831,9 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
         | Value::Geometry(s)
         | Value::Geography(s) => {
             if raw {
-                write!(f, "{}", s)
+                write!(f, "{s}")
             } else {
-                write!(f, "'{}'", s)
+                write!(f, "'{s}'")
             }
         }
         Value::Timestamp(micros) => {
@@ -854,9 +854,9 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
             let days = i + DAYS_FROM_CE;
             let d = NaiveDate::from_num_days_from_ce_opt(days).unwrap_or_default();
             if raw {
-                write!(f, "{}", d)
+                write!(f, "{d}")
             } else {
-                write!(f, "'{}'", d)
+                write!(f, "'{d}'")
             }
         }
         Value::Array(vals) => {
@@ -900,7 +900,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
 pub fn display_decimal_128(num: i128, scale: u8) -> String {
     let mut buf = String::new();
     if scale == 0 {
-        write!(buf, "{}", num).unwrap();
+        write!(buf, "{num}").unwrap();
     } else {
         let pow_scale = 10_i128.pow(scale as u32);
         if num >= 0 {
@@ -929,7 +929,7 @@ pub fn display_decimal_128(num: i128, scale: u8) -> String {
 pub fn display_decimal_256(num: i256, scale: u8) -> String {
     let mut buf = String::new();
     if scale == 0 {
-        write!(buf, "{}", num).unwrap();
+        write!(buf, "{num}").unwrap();
     } else {
         let pow_scale = i256::from_i128(10i128).wrapping_pow(scale as u32);
         let width = scale as usize;
