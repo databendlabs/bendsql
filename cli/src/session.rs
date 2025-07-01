@@ -523,7 +523,7 @@ impl Session {
         }
 
         if self.query.is_empty() && queries.is_empty() && !err.is_empty() {
-            eprintln!("Parser '{}' failed\nwith error '{}'", line, err);
+            eprintln!("Parser '{line}' failed\nwith error '{err}'");
         }
         queries
     }
@@ -611,13 +611,13 @@ impl Session {
                     let query = query[7..].trim();
                     let path = Path::new(query);
                     if !path.exists() {
-                        return Err(anyhow!("File not found: {}", query));
+                        return Err(anyhow!("File not found: {query}"));
                     }
                     let file = std::fs::File::open(path)?;
                     let reader = std::io::BufReader::new(file);
                     self.handle_reader(reader).await?;
                 } else {
-                    return Err(anyhow!("Unknown commands: {}", other));
+                    return Err(anyhow!("Unknown commands: {other}"));
                 }
             }
         }
@@ -635,7 +635,7 @@ impl Session {
         let now = chrono::Utc::now().timestamp_nanos_opt().ok_or_else(|| {
             anyhow!("Failed to get timestamp, please check your system time is correct and retry.")
         })?;
-        let tmp_file = dir.join(format!("bendsql_{}", now));
+        let tmp_file = dir.join(format!("bendsql_{now}"));
         {
             let mut file = File::create(&tmp_file).await?;
             loop {
@@ -645,7 +645,7 @@ impl Session {
                         file.write_all(b"\n").await?;
                     }
                     Some(Err(e)) => {
-                        return Err(anyhow!("stream load stdin err: {}", e.to_string()));
+                        return Err(anyhow!("stream load stdin err: {e}"));
                     }
                     None => break,
                 }
