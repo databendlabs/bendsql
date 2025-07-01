@@ -482,7 +482,7 @@ impl APIClient {
     }
 
     pub async fn kill_query(&self, query_id: &str) -> Result<()> {
-        let kill_uri = format!("/v1/query/{}/kill", query_id);
+        let kill_uri = format!("/v1/query/{query_id}/kill");
         let endpoint = self.endpoint.join(&kill_uri)?;
         let headers = self.make_headers(Some(query_id))?;
         info!("kill query: {kill_uri}");
@@ -578,7 +578,7 @@ impl APIClient {
 
     async fn get_presigned_upload_url(self: &Arc<Self>, stage: &str) -> Result<PresignedResponse> {
         info!("get presigned upload url: {stage}");
-        let sql = format!("PRESIGN UPLOAD {}", stage);
+        let sql = format!("PRESIGN UPLOAD {stage}");
         let resp = self.query_all(&sql).await?;
         if resp.data.len() != 1 {
             return Err(Error::Decode(
@@ -594,8 +594,7 @@ impl APIClient {
         let method = resp.data[0][0].clone().unwrap_or_default();
         if method != "PUT" {
             return Err(Error::Decode(format!(
-                "Invalid method for presigned upload request: {}",
-                method
+                "Invalid method for presigned upload request: {method}"
             )));
         }
         let headers: BTreeMap<String, String> =
@@ -1006,7 +1005,7 @@ impl RouteHintGenerator {
     fn next(&self) -> String {
         let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
         let uuid = uuid::Uuid::new_v4();
-        let current = format!("rh:{}:{:06}", uuid, nonce);
+        let current = format!("rh:{uuid}:{nonce:06}");
         let mut guard = self.current.lock().unwrap();
         guard.clone_from(&current);
         current

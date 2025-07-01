@@ -94,8 +94,7 @@ pub async fn presign_download_from_stage(
             Ok(metadata.len())
         }
         _ => Err(Error::IO(format!(
-            "Download with presigned url failed: {}",
-            status
+            "Download with presigned url failed: {status}"
         ))),
     }
 }

@@ -381,8 +381,7 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                 }
                 _ => {
                     return Err(Error::Parsing(format!(
-                        "Unsupported datatype for arrow field: {:?}",
-                        f
+                        "Unsupported datatype for arrow field: {f:?}"
                     )))
                 }
             }

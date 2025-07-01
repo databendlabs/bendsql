@@ -53,13 +53,13 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Parsing(msg) => write!(f, "ParseError: {}", msg),
-            Error::Protocol(msg) => write!(f, "ProtocolError: {}", msg),
-            Error::Transport(msg) => write!(f, "TransportError: {}", msg),
-            Error::IO(msg) => write!(f, "IOError: {}", msg),
+            Error::Parsing(msg) => write!(f, "ParseError: {msg}"),
+            Error::Protocol(msg) => write!(f, "ProtocolError: {msg}"),
+            Error::Transport(msg) => write!(f, "TransportError: {msg}"),
+            Error::IO(msg) => write!(f, "IOError: {msg}"),
 
-            Error::BadArgument(msg) => write!(f, "BadArgument: {}", msg),
-            Error::InvalidResponse(msg) => write!(f, "ResponseError: {}", msg),
+            Error::BadArgument(msg) => write!(f, "BadArgument: {msg}"),
+            Error::InvalidResponse(msg) => write!(f, "ResponseError: {msg}"),
             #[cfg(feature = "flight-sql")]
             Error::Arrow(e) => {
                 let msg = match e {
@@ -72,9 +72,9 @@ impl std::fmt::Display for Error {
                         let message = &msg[message_index..message_end_index];
                         message.replace("\\n", "\n")
                     }
-                    other => format!("{}", other),
+                    other => format!("{other}"),
                 };
-                write!(f, "ArrowError: {}", msg)
+                write!(f, "ArrowError: {msg}")
             }
             Error::Convert(e) => write!(
                 f,
