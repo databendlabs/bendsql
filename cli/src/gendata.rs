@@ -18,11 +18,14 @@ use anyhow::Result;
 use databend_driver::DataType;
 use databend_driver::Field;
 use databend_driver::NumberDataType;
-use databend_driver::NumberValue;
-use databend_driver::Row;
 use databend_driver::RowStatsIterator;
-use databend_driver::RowWithStats;
 use databend_driver::Schema;
+
+#[cfg(any(
+    all(target_arch = "x86_64", target_os = "linux"),
+    all(target_arch = "aarch64", target_os = "macos")
+))]
+use databend_driver::{NumberValue, Row, RowWithStats};
 
 #[cfg(not(any(
     all(target_arch = "x86_64", target_os = "linux"),
@@ -151,7 +154,7 @@ impl Session {
     }
 }
 
-pub fn gendata_schema() -> Schema {
+fn gendata_schema() -> Schema {
     Schema::from_vec(vec![
         Field {
             name: "table".to_string(),
