@@ -942,15 +942,7 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
 
         match frac_part.to_i128() {
             Some(frac_part) => {
-                write!(
-                    buf,
-                    "{}{}.{:0>width$}",
-                    neg,
-                    int_part,
-                    frac_part,
-                    width = width
-                )
-                .unwrap();
+                write!(buf, "{neg}{int_part}.{:0>width$}", frac_part, width = width).unwrap();
             }
             None => {
                 // fractional part is too big for display,
@@ -962,9 +954,7 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
 
                 write!(
                     buf,
-                    "{}{}.{:0>width$}{}",
-                    neg,
-                    int_part,
+                    "{neg}{int_part}.{:0>width$}{}",
                     frac_high_part.to_i128().unwrap(),
                     frac_low_part.to_i128().unwrap(),
                     width = frac_width
