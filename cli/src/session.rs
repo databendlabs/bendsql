@@ -692,7 +692,7 @@ impl Session {
                 info.host, info.port, info.user
             );
             let version = self.conn.version().await.unwrap_or_default();
-            eprintln!("connected to {}", version);
+            eprintln!("connected to {version}");
             eprintln!();
         }
         Ok(())

@@ -45,8 +45,8 @@ static VERSION: Lazy<String> = Lazy::new(|| {
     let sha = option_env!("VERGEN_GIT_SHA").unwrap_or("dev");
     let timestamp = option_env!("VERGEN_BUILD_TIMESTAMP").unwrap_or("");
     match option_env!("BENDSQL_BUILD_INFO") {
-        Some(info) => format!("{}-{}", version, info),
-        None => format!("{}-{}({})", version, sha, timestamp),
+        Some(info) => format!("{version}-{info}"),
+        None => format!("{version}-{sha}({timestamp})"),
     }
 });
 
