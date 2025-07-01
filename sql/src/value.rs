@@ -268,7 +268,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                         Some(array) => {
                             Ok(Value::Variant(RawJsonb::new(array.value(seq)).to_string()))
                         }
-                        None => Err(ConvertError::new("variant", format!("{:?}", array)).into()),
+                        None => Err(ConvertError::new("variant", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_INTERVAL => {
@@ -287,7 +287,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                                 .to_string(),
                             ))
                         }
-                        None => Err(ConvertError::new("Interval", format!("{:?}", array)).into()),
+                        None => Err(ConvertError::new("Interval", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_BITMAP => {
@@ -302,7 +302,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             let s = itertools::join(raw.iter(), ",");
                             Ok(Value::Bitmap(s))
                         }
-                        None => Err(ConvertError::new("bitmap", format!("{:?}", array)).into()),
+                        None => Err(ConvertError::new("bitmap", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_GEOMETRY => {
@@ -314,7 +314,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             let wkt = parse_geometry(array.value(seq))?;
                             Ok(Value::Geometry(wkt))
                         }
-                        None => Err(ConvertError::new("geometry", format!("{:?}", array)).into()),
+                        None => Err(ConvertError::new("geometry", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_GEOGRAPHY => {
@@ -326,7 +326,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             let wkt = parse_geometry(array.value(seq))?;
                             Ok(Value::Geography(wkt))
                         }
-                        None => Err(ConvertError::new("geography", format!("{:?}", array)).into()),
+                        None => Err(ConvertError::new("geography", format!("{array:?}")).into()),
                     }
                 }
                 _ => Err(ConvertError::new(
@@ -347,47 +347,47 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
             ArrowDataType::Null => Ok(Value::Null),
             ArrowDataType::Boolean => match array.as_any().downcast_ref::<BooleanArray>() {
                 Some(array) => Ok(Value::Boolean(array.value(seq))),
-                None => Err(ConvertError::new("bool", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("bool", format!("{array:?}")).into()),
             },
             ArrowDataType::Int8 => match array.as_any().downcast_ref::<Int8Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Int8(array.value(seq)))),
-                None => Err(ConvertError::new("int8", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("int8", format!("{array:?}")).into()),
             },
             ArrowDataType::Int16 => match array.as_any().downcast_ref::<Int16Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Int16(array.value(seq)))),
-                None => Err(ConvertError::new("int16", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("int16", format!("{array:?}")).into()),
             },
             ArrowDataType::Int32 => match array.as_any().downcast_ref::<Int32Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Int32(array.value(seq)))),
-                None => Err(ConvertError::new("int64", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("int64", format!("{array:?}")).into()),
             },
             ArrowDataType::Int64 => match array.as_any().downcast_ref::<Int64Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Int64(array.value(seq)))),
-                None => Err(ConvertError::new("int64", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("int64", format!("{array:?}")).into()),
             },
             ArrowDataType::UInt8 => match array.as_any().downcast_ref::<UInt8Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::UInt8(array.value(seq)))),
-                None => Err(ConvertError::new("uint8", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("uint8", format!("{array:?}")).into()),
             },
             ArrowDataType::UInt16 => match array.as_any().downcast_ref::<UInt16Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::UInt16(array.value(seq)))),
-                None => Err(ConvertError::new("uint16", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("uint16", format!("{array:?}")).into()),
             },
             ArrowDataType::UInt32 => match array.as_any().downcast_ref::<UInt32Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::UInt32(array.value(seq)))),
-                None => Err(ConvertError::new("uint32", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("uint32", format!("{array:?}")).into()),
             },
             ArrowDataType::UInt64 => match array.as_any().downcast_ref::<UInt64Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::UInt64(array.value(seq)))),
-                None => Err(ConvertError::new("uint64", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("uint64", format!("{array:?}")).into()),
             },
             ArrowDataType::Float32 => match array.as_any().downcast_ref::<Float32Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Float32(array.value(seq)))),
-                None => Err(ConvertError::new("float32", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("float32", format!("{array:?}")).into()),
             },
             ArrowDataType::Float64 => match array.as_any().downcast_ref::<Float64Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Float64(array.value(seq)))),
-                None => Err(ConvertError::new("float64", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("float64", format!("{array:?}")).into()),
             },
 
             ArrowDataType::Decimal128(p, s) => {
@@ -399,7 +399,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             scale: *s as u8,
                         },
                     ))),
-                    None => Err(ConvertError::new("Decimal128", format!("{:?}", array)).into()),
+                    None => Err(ConvertError::new("Decimal128", format!("{array:?}")).into()),
                 }
             }
             ArrowDataType::Decimal256(p, s) => {
@@ -411,58 +411,57 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             scale: *s as u8,
                         },
                     ))),
-                    None => Err(ConvertError::new("Decimal256", format!("{:?}", array)).into()),
+                    None => Err(ConvertError::new("Decimal256", format!("{array:?}")).into()),
                 }
             }
 
             ArrowDataType::Binary => match array.as_any().downcast_ref::<BinaryArray>() {
                 Some(array) => Ok(Value::Binary(array.value(seq).to_vec())),
-                None => Err(ConvertError::new("binary", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("binary", format!("{array:?}")).into()),
             },
             ArrowDataType::LargeBinary | ArrowDataType::FixedSizeBinary(_) => {
                 match array.as_any().downcast_ref::<LargeBinaryArray>() {
                     Some(array) => Ok(Value::Binary(array.value(seq).to_vec())),
-                    None => Err(ConvertError::new("large binary", format!("{:?}", array)).into()),
+                    None => Err(ConvertError::new("large binary", format!("{array:?}")).into()),
                 }
             }
             ArrowDataType::Utf8 => match array.as_any().downcast_ref::<StringArray>() {
                 Some(array) => Ok(Value::String(array.value(seq).to_string())),
-                None => Err(ConvertError::new("string", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("string", format!("{array:?}")).into()),
             },
             ArrowDataType::LargeUtf8 => match array.as_any().downcast_ref::<LargeStringArray>() {
                 Some(array) => Ok(Value::String(array.value(seq).to_string())),
-                None => Err(ConvertError::new("large string", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("large string", format!("{array:?}")).into()),
             },
             ArrowDataType::Utf8View => match array.as_any().downcast_ref::<StringViewArray>() {
                 Some(array) => Ok(Value::String(array.value(seq).to_string())),
-                None => Err(ConvertError::new("string view", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("string view", format!("{array:?}")).into()),
             },
             // we only support timestamp in microsecond in databend
             ArrowDataType::Timestamp(unit, tz) => {
                 match array.as_any().downcast_ref::<TimestampMicrosecondArray>() {
                     Some(array) => {
                         if unit != &TimeUnit::Microsecond {
-                            return Err(ConvertError::new("timestamp", format!("{:?}", array))
+                            return Err(ConvertError::new("timestamp", format!("{array:?}"))
                                 .with_message(format!(
-                                    "unsupported timestamp unit: {:?}, only support microsecond",
-                                    unit
+                                    "unsupported timestamp unit: {unit:?}, only support microsecond"
                                 ))
                                 .into());
                         }
                         let ts = array.value(seq);
                         match tz {
                             None => Ok(Value::Timestamp(ts)),
-                            Some(tz) => Err(ConvertError::new("timestamp", format!("{:?}", array))
-                                .with_message(format!("non-UTC timezone not supported: {:?}", tz))
+                            Some(tz) => Err(ConvertError::new("timestamp", format!("{array:?}"))
+                                .with_message(format!("non-UTC timezone not supported: {tz:?}"))
                                 .into()),
                         }
                     }
-                    None => Err(ConvertError::new("timestamp", format!("{:?}", array)).into()),
+                    None => Err(ConvertError::new("timestamp", format!("{array:?}")).into()),
                 }
             }
             ArrowDataType::Date32 => match array.as_any().downcast_ref::<Date32Array>() {
                 Some(array) => Ok(Value::Date(array.value(seq))),
-                None => Err(ConvertError::new("date", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("date", format!("{array:?}")).into()),
             },
             ArrowDataType::List(f) => match array.as_any().downcast_ref::<ListArray>() {
                 Some(array) => {
@@ -474,7 +473,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                     }
                     Ok(Value::Array(values))
                 }
-                None => Err(ConvertError::new("list", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("list", format!("{array:?}")).into()),
             },
             ArrowDataType::LargeList(f) => match array.as_any().downcast_ref::<LargeListArray>() {
                 Some(array) => {
@@ -486,7 +485,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                     }
                     Ok(Value::Array(values))
                 }
-                None => Err(ConvertError::new("large list", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("large list", format!("{array:?}")).into()),
             },
             ArrowDataType::Map(f, _) => match array.as_any().downcast_ref::<MapArray>() {
                 Some(array) => {
@@ -501,12 +500,12 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                         Ok(Value::Map(values))
                     } else {
                         Err(
-                            ConvertError::new("invalid map inner type", format!("{:?}", array))
+                            ConvertError::new("invalid map inner type", format!("{array:?}"))
                                 .into(),
                         )
                     }
                 }
-                None => Err(ConvertError::new("map", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("map", format!("{array:?}")).into()),
             },
             ArrowDataType::Struct(fs) => match array.as_any().downcast_ref::<StructArray>() {
                 Some(array) => {
@@ -517,9 +516,9 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                     }
                     Ok(Value::Tuple(values))
                 }
-                None => Err(ConvertError::new("struct", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("struct", format!("{array:?}")).into()),
             },
-            _ => Err(ConvertError::new("unsupported data type", format!("{:?}", array)).into()),
+            _ => Err(ConvertError::new("unsupported data type", format!("{array:?}")).into()),
         }
     }
 }
@@ -536,7 +535,7 @@ impl TryFrom<Value> for String {
             Value::Geography(s) => Ok(s),
             Value::Interval(s) => Ok(s),
             Value::Variant(s) => Ok(s),
-            _ => Err(ConvertError::new("string", format!("{:?}", val)).into()),
+            _ => Err(ConvertError::new("string", format!("{val:?}")).into()),
         }
     }
 }
@@ -547,7 +546,7 @@ impl TryFrom<Value> for bool {
         match val {
             Value::Boolean(b) => Ok(b),
             Value::Number(n) => Ok(n != NumberValue::Int8(0)),
-            _ => Err(ConvertError::new("bool", format!("{:?}", val)).into()),
+            _ => Err(ConvertError::new("bool", format!("{val:?}")).into()),
         }
     }
 }
@@ -603,7 +602,7 @@ impl TryFrom<Value> for NaiveDateTime {
                     None => Err(ConvertError::new("NaiveDateTime", "".to_string()).into()),
                 }
             }
-            _ => Err(ConvertError::new("NaiveDateTime", format!("{}", val)).into()),
+            _ => Err(ConvertError::new("NaiveDateTime", format!("{val}")).into()),
         }
     }
 }
@@ -619,7 +618,7 @@ impl TryFrom<Value> for NaiveDate {
                     None => Err(ConvertError::new("NaiveDate", "".to_string()).into()),
                 }
             }
-            _ => Err(ConvertError::new("NaiveDate", format!("{}", val)).into()),
+            _ => Err(ConvertError::new("NaiveDate", format!("{val}")).into()),
         }
     }
 }
@@ -637,7 +636,7 @@ where
                 .collect(),
             Value::Array(vals) => vals.into_iter().map(V::try_from).collect(),
             Value::EmptyArray => Ok(vec![]),
-            _ => Err(ConvertError::new("Vec", format!("{}", val)).into()),
+            _ => Err(ConvertError::new("Vec", format!("{val}")).into()),
         }
     }
 }
@@ -660,7 +659,7 @@ where
                 Ok(map)
             }
             Value::EmptyMap => Ok(HashMap::new()),
-            _ => Err(ConvertError::new("HashMap", format!("{}", val)).into()),
+            _ => Err(ConvertError::new("HashMap", format!("{val}")).into()),
         }
     }
 }
