@@ -122,17 +122,17 @@ impl FormatDisplay<'_> {
 
         let perf_id = set_data(result);
 
-        let url = format!("http://{}?perf_id={}", addr, perf_id);
+        let url = format!("http://{addr}?perf_id={perf_id}");
 
         // Open the browser in a separate task if not in ssh mode
         let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
         if !in_sshmode && self.settings.auto_open_browser {
             if let Err(e) = webbrowser::open(&url) {
-                eprintln!("Failed to open browser: {}", e);
+                eprintln!("Failed to open browser: {e}");
             }
         }
 
-        println!("View graphical online: \x1B[4m{}\x1B[0m", url);
+        println!("View graphical online: \x1B[4m{url}\x1B[0m");
         println!();
         Ok(())
     }
@@ -141,7 +141,7 @@ impl FormatDisplay<'_> {
         if self.settings.display_pretty_sql {
             let format_sql = format_query(self.query);
             let format_sql = highlight_query(&format_sql);
-            println!("\n{}\n", format_sql);
+            println!("\n{format_sql}\n");
         }
 
         let max_display_rows_count = self.settings.max_display_rows / 2 + 2;
@@ -626,7 +626,7 @@ fn create_table(
             table.add_row(cells);
         }
 
-        let rows_count_str = format!("{} rows", rows_count);
+        let rows_count_str = format!("{rows_count} rows");
         let show_count_str = format!("({} shown)", top_rows + bottom_rows);
         table.add_row(vec![Cell::new(rows_count_str).set_alignment(aligns[0])]);
         table.add_row(vec![Cell::new(show_count_str).set_alignment(aligns[0])]);
@@ -657,7 +657,7 @@ fn render_head(schema: SchemaRef, header: &mut Vec<Cell>, aligns: &mut Vec<CellA
     for field in fields.iter() {
         let field_name = field.name.to_string();
         let field_data_type = field.data_type.to_string();
-        let head_name = format!("{}\n{}", field_name, field_data_type);
+        let head_name = format!("{field_name}\n{field_data_type}");
         let cell = Cell::new(head_name)
             .fg(HEAD_YELLOW)
             .set_alignment(CellAlignment::Center);
@@ -718,7 +718,7 @@ pub fn humanize_count(num: f64) -> String {
     ];
 
     if num < 1_f64 {
-        return format!("{}{:.2}", negative, num);
+        return format!("{negative}{num:.2}");
     }
     let delimiter = 1000_f64;
     let exponent = std::cmp::min(
@@ -730,7 +730,7 @@ pub fn humanize_count(num: f64) -> String {
         .unwrap()
         * 1_f64;
     let unit = units[exponent as usize];
-    format!("{}{}{}", negative, pretty_bytes, unit)
+    format!("{negative}{pretty_bytes}{unit}")
 }
 
 fn format_table_style(value: &Value, max_col_width: usize, quote_string: bool) -> String {
@@ -759,7 +759,7 @@ fn format_table_style(value: &Value, max_col_width: usize, quote_string: bool) -
         .unwrap();
     }
     if is_string && quote_string {
-        value = format!("'{}'", value);
+        value = format!("'{value}'");
     }
     value
 }

@@ -118,14 +118,14 @@ impl Param for bool {
 // Implement Param for String
 impl Param for String {
     fn as_sql_string(&self) -> String {
-        format!("'{}'", self)
+        format!("'{self}'")
     }
 }
 
 // Implement Param for &str
 impl Param for &str {
     fn as_sql_string(&self) -> String {
-        format!("'{}'", self)
+        format!("'{self}'")
     }
 }
 
@@ -152,7 +152,7 @@ impl Param for serde_json::Value {
     fn as_sql_string(&self) -> String {
         match self {
             serde_json::Value::Number(n) => n.to_string(),
-            serde_json::Value::String(s) => format!("'{}'", s),
+            serde_json::Value::String(s) => format!("'{s}'"),
             serde_json::Value::Bool(b) => b.to_string(),
             serde_json::Value::Null => "NULL".to_string(),
             serde_json::Value::Array(values) => {
@@ -172,7 +172,7 @@ impl Param for serde_json::Value {
                     if i > 0 {
                         s.push_str(", ");
                     }
-                    s.push_str(&format!("\"{}\": {}", k, v.as_sql_string()));
+                    s.push_str(&format!("\"{k}\": {}", v.as_sql_string()));
                 }
                 s.push_str("}'::JSON");
                 s
