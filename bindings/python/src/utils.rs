@@ -88,8 +88,7 @@ fn to_sql_string(v: Bound<PyAny>) -> PyResult<String> {
                 Ok(v.as_sql_string())
             } else {
                 Err(PyAttributeError::new_err(format!(
-                    "Invalid parameter type for: {:?}, expected str, bool, int or float",
-                    v
+                    "Invalid parameter type for: {v:?}, expected str, bool, int or float"
                 )))
             }
         }

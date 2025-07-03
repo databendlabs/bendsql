@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let config = config.clone();
         tokio::spawn(async move {
             if let Err(e) = process(socket, &config).await {
-                eprintln!("Error processing connection: {:?}", e);
+                eprintln!("Error processing connection: {e:?}");
             }
         });
     }
