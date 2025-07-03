@@ -217,6 +217,19 @@ async def _(context):
 """)
     rows = await context.conn.query_iter("SELECT i64, u64 FROM temp_2")
     ret = [row.values() for row in rows]
-    expected = [(1, 1, ), (1, 2, ), (1, 3, )]
+    expected = [
+        (
+            1,
+            1,
+        ),
+        (
+            1,
+            2,
+        ),
+        (
+            1,
+            3,
+        ),
+    ]
     assert ret == expected, f"ret: {ret}"
     await context.conn.exec("DROP TABLE temp_2")

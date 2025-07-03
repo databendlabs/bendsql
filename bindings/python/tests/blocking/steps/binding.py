@@ -186,7 +186,7 @@ def _(context):
     context.conn.exec("INSERT INTO temp_1 VALUES (1),(2)")
     rows = context.conn.query_iter("SELECT * FROM temp_1")
     ret = [row.values() for row in rows]
-    expected = [(1, ), (2, )]
+    expected = [(1,), (2,)]
     assert ret == expected, f"ret: {ret}"
     context.conn.exec("DROP TABLE temp_1")
 
@@ -203,6 +203,19 @@ def _(context):
 """)
     rows = context.conn.query_iter("SELECT i64, u64 FROM temp_2")
     ret = [row.values() for row in rows]
-    expected = [(1, 1, ), (1, 2, ), (1, 3, )]
+    expected = [
+        (
+            1,
+            1,
+        ),
+        (
+            1,
+            2,
+        ),
+        (
+            1,
+            3,
+        ),
+    ]
     assert ret == expected, f"ret: {ret}"
     context.conn.exec("DROP TABLE temp_2")
