@@ -203,3 +203,20 @@ async def _(context):
     expected = [(1), (2)]
     assert ret == expected, f"ret: {ret}"
     await context.conn.exec("DROP TABLE temp_1")
+
+    await context.conn.exec("""
+    CREATE OR REPLACE TEMP TABLE temp_2 (
+        i64 Int64,
+        u64 UInt64,
+        f64 Float64,
+        s   String,
+        s2  String,
+        d   Date,
+        t   DateTime
+    ) as select 1, number + 1,3, '4', '5', today(), now() from numbers(3)
+""")
+    rows = await context.conn.query_iter("SELECT i64, u64 FROM temp_2")
+    ret = [row.values() for row in rows]
+    expected = [(1, 1, ), (1, 2, ), (1, 3, )]
+    assert ret == expected, f"ret: {ret}"
+    await context.conn.exec("DROP TABLE temp_2")
