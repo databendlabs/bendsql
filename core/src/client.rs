@@ -333,7 +333,7 @@ impl APIClient {
     }
 
     fn gen_query_id(&self) -> String {
-        uuid::Uuid::new_v4().to_string()
+        uuid::Uuid::now_v7().simple().to_string()
     }
 
     async fn handle_session(&self, session: &Option<SessionState>) {
