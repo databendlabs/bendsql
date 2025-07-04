@@ -181,11 +181,11 @@ def _(context):
 
 
 @then("Temp table should work with cluster")
-async def _(context):
+def _(context):
     context.conn.exec("create or replace temp table temp_1(a int)")
     context.conn.exec("INSERT INTO temp_1 VALUES (1),(2)")
     rows = context.conn.query_iter("SELECT * FROM temp_1")
     ret = [row.values() for row in rows]
-    expected = [(1), (2)]
-    assert ret == expected, f"ret: {ret}"
+    expected = [(1,), (2,)]
+    assert ret == expected, f"ret: {ret}, expected: {expected}"
     context.conn.exec("DROP TABLE temp_1")
