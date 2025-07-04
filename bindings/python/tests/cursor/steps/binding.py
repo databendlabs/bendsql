@@ -27,6 +27,7 @@ def _(context):
         "databend://root:root@localhost:8000/?sslmode=disable",
     )
     client = databend_driver.BlockingDatabendClient(dsn)
+    context.client = client
     context.cursor = client.cursor()
 
 
@@ -203,15 +204,34 @@ def _(context):
 
 @then("Temp table should work with cluster")
 def _(context):
+    cursor = context.client.cursor()
     for i in range(10):
-        context.cursor.execute(f"create or replace temp table temp_{i}(a int)")
-        context.cursor.execute(f"INSERT INTO temp_{i} VALUES (1),({i})")
-        context.cursor.execute(f"SELECT * FROM temp_{i}")
-        rows = context.cursor.fetchall()
+        cursor.execute(f"create or replace temp table temp_{i}(a int)")
+        cursor.execute(f"INSERT INTO temp_{i} VALUES (1),({i})")
+        cursor.execute(f"SELECT * FROM temp_{i}")
+        rows = cursor.fetchall()
         ret = [row.values() for row in rows]
         expected = [(1,), (i,)]
         assert ret == expected, f"ret: {ret}"
-        context.cursor.execute(f"DROP TABLE temp_{i}")
+        if i == 1:
+            cursor.execute(f"DROP TABLE temp_{i}")
+
+    # use cursor which is stickied to the node
+    cursor.execute(f"SELECT COUNT(*) FROM system.temporary_tables")
+    rows = cursor.fetchall()
+    temp_table_count = list(rows)[0].values()[0]
+    assert temp_table_count == 9, f"temp_table_count before close = {temp_table_count}"
+
+    cursor.close()
+
+    # check 3 nodes behind nginx
+    for _ in range(3):
+        context.cursor.execute(f"SELECT COUNT(*) FROM system.temporary_tables")
+        rows = context.cursor.fetchall()
+        temp_table_count = list(rows)[0].values()[0]
+        assert temp_table_count == 0, (
+            f"temp_table_count after close = {temp_table_count}"
+        )
 
 
 @then("Load file and Select should be equal")
