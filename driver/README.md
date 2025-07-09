@@ -24,6 +24,7 @@ let sql_create = "CREATE TABLE books (
 conn.exec(sql_create).await.unwrap();
 let sql_insert = "INSERT INTO books VALUES ('The Little Prince', 'Antoine de Saint-Exupéry', '1943-04-06');";
 conn.exec(sql_insert).await.unwrap();
+conn.close().await
 ```
 
 ### query row
