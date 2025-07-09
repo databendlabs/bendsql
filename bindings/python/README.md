@@ -34,6 +34,7 @@ cursor.execute("SELECT * FROM test")
 rows = cursor.fetchall()
 for row in rows:
     print(row.values())
+cursor.close()
 ```
 
 ### Blocking Connection Object
@@ -59,6 +60,7 @@ conn.exec(
 rows = conn.query_iter("SELECT * FROM test")
 for row in rows:
     print(row.values())
+conn.close()
 ```
 
 ### Asyncio Connection Object
@@ -86,6 +88,7 @@ async def main():
     rows = await conn.query_iter("SELECT * FROM test")
     async for row in rows:
         print(row.values())
+    await conn.close()
 
 asyncio.run(main())
 ```
