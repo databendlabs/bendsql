@@ -30,7 +30,7 @@ async fn test_temp_table(session_token_enabled: bool) {
         "disable"
     };
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
-    let dsn = format!("{}&session_token={}", dsn, session_token);
+    let dsn = format!("{dsn}&session_token={session_token}");
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
 
@@ -38,7 +38,7 @@ async fn test_temp_table(session_token_enabled: bool) {
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();
-    println!("version = {}", val);
+    println!("version = {val}");
 
     let _ = conn.exec("create temp table t1 (a int)", ()).await.unwrap();
     let n = conn

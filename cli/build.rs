@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .emit()
         .unwrap_or_else(|_| {
             let info = env::var("BENDSQL_BUILD_INFO").unwrap_or_else(|_| "unknown".to_string());
-            println!("cargo:rustc-env=BENDSQL_BUILD_INFO={}", info);
+            println!("cargo:rustc-env=BENDSQL_BUILD_INFO={info}");
         });
 
     Ok(())

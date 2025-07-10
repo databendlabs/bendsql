@@ -30,6 +30,7 @@ async def _(context):
     )
     client = databend_driver.AsyncDatabendClient(dsn)
     context.conn = await client.get_conn()
+    context.client = client
 
 
 @when("Create a test table")
@@ -175,6 +176,7 @@ async def _(context):
 
 
 @then("Load file and Select should be equal")
+@async_run_until_complete
 async def _(context):
     progress = await context.conn.load_file(
         "INSERT INTO test VALUES",
@@ -195,11 +197,31 @@ async def _(context):
 
 
 @then("Temp table should work with cluster")
+@async_run_until_complete
 async def _(context):
-    await context.conn.exec("create or replace temp table temp_1(a int)")
-    await context.conn.exec("INSERT INTO temp_1 VALUES (1),(2)")
-    rows = await context.conn.query_iter("SELECT * FROM temp_1")
-    ret = [row.values() for row in rows]
-    expected = [(1), (2)]
-    assert ret == expected, f"ret: {ret}"
-    await context.conn.exec("DROP TABLE temp_1")
+    conn = await context.client.get_conn()
+    for i in range(10):
+        await conn.exec(f"create or replace temp table temp_{i}(a int)")
+        await conn.exec(f"INSERT INTO temp_{i} VALUES (1),({i})")
+        rows = await conn.query_iter(f"SELECT * FROM temp_{i}")
+        ret = [row.values() for row in rows]
+        expected = [(1,), (i,)]
+        assert ret == expected, f"ret: {ret}"
+
+    await conn.exec("DROP TABLE temp_1")
+
+    # use conn which is stickied to the node
+    rows = await conn.query_iter("SELECT COUNT(*) FROM system.temporary_tables")
+    temp_table_count = list(rows)[0].values()[0]
+    assert temp_table_count == 9, f"temp_table_count before close = {temp_table_count}"
+    await conn.close()
+
+    # check 3 nodes behind nginx
+    for _ in range(3):
+        rows = await context.conn.query_iter(
+            "SELECT COUNT(*) FROM system.temporary_tables"
+        )
+        temp_table_count = list(rows)[0].values()[0]
+        assert temp_table_count == 0, (
+            f"temp_table_count after close = {temp_table_count}"
+        )

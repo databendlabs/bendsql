@@ -74,13 +74,13 @@ impl<'py> IntoPyObject<'py> for Value {
             }
             databend_driver::Value::Timestamp(_) => {
                 let t = NaiveDateTime::try_from(self.0).map_err(|e| {
-                    PyException::new_err(format!("failed to convert timestamp: {}", e))
+                    PyException::new_err(format!("failed to convert timestamp: {e}"))
                 })?;
                 t.into_bound_py_any(py)?
             }
             databend_driver::Value::Date(_) => {
                 let d = NaiveDate::try_from(self.0)
-                    .map_err(|e| PyException::new_err(format!("failed to convert date: {}", e)))?;
+                    .map_err(|e| PyException::new_err(format!("failed to convert date: {e}")))?;
                 d.into_bound_py_any(py)?
             }
             databend_driver::Value::Array(inner) => {
@@ -219,9 +219,7 @@ impl Row {
             .fields()
             .iter()
             .position(|f| f.name == field)
-            .ok_or_else(|| {
-                PyException::new_err(format!("field '{}' not found in schema", field))
-            })?;
+            .ok_or_else(|| PyException::new_err(format!("field '{field}' not found in schema")))?;
         Ok(Value(self.inner.values()[idx].clone()))
     }
 
@@ -263,7 +261,7 @@ impl RowIterator {
         wait_for_future(py, async move {
             match streamer.lock().await.next().await {
                 Some(val) => match val {
-                    Err(e) => Err(PyException::new_err(format!("{}", e))),
+                    Err(e) => Err(PyException::new_err(format!("{e}"))),
                     Ok(ret) => Ok(Row::new(ret)),
                 },
                 None => Err(PyStopIteration::new_err("Rows exhausted")),
@@ -279,7 +277,7 @@ impl RowIterator {
         future_into_py(py, async move {
             match streamer.lock().await.next().await {
                 Some(val) => match val {
-                    Err(e) => Err(PyException::new_err(format!("{}", e))),
+                    Err(e) => Err(PyException::new_err(format!("{e}"))),
                     Ok(ret) => Ok(Row::new(ret)),
                 },
                 None => Err(PyStopAsyncIteration::new_err("The iterator is exhausted")),

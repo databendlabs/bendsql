@@ -270,7 +270,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                         Some(array) => {
                             Ok(Value::Variant(RawJsonb::new(array.value(seq)).to_string()))
                         }
-                        None => Err(ConvertError::new("variant", format!("{:?}", array)).into()),
+                        None => Err(ConvertError::new("variant", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_INTERVAL => {
@@ -289,7 +289,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                                 .to_string(),
                             ))
                         }
-                        None => Err(ConvertError::new("Interval", format!("{:?}", array)).into()),
+                        None => Err(ConvertError::new("Interval", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_BITMAP => {
@@ -304,7 +304,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             let s = itertools::join(raw.iter(), ",");
                             Ok(Value::Bitmap(s))
                         }
-                        None => Err(ConvertError::new("bitmap", format!("{:?}", array)).into()),
+                        None => Err(ConvertError::new("bitmap", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_GEOMETRY => {
@@ -316,7 +316,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             let wkt = parse_geometry(array.value(seq))?;
                             Ok(Value::Geometry(wkt))
                         }
-                        None => Err(ConvertError::new("geometry", format!("{:?}", array)).into()),
+                        None => Err(ConvertError::new("geometry", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_GEOGRAPHY => {
@@ -328,7 +328,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             let wkt = parse_geometry(array.value(seq))?;
                             Ok(Value::Geography(wkt))
                         }
-                        None => Err(ConvertError::new("geography", format!("{:?}", array)).into()),
+                        None => Err(ConvertError::new("geography", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_VECTOR => {
@@ -377,10 +377,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                 }
                 _ => Err(ConvertError::new(
                     "extension",
-                    format!(
-                        "Unsupported extension datatype for arrow field: {:?}",
-                        field
-                    ),
+                    format!("Unsupported extension datatype for arrow field: {field:?}"),
                 )
                 .into()),
             };
@@ -393,47 +390,47 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
             ArrowDataType::Null => Ok(Value::Null),
             ArrowDataType::Boolean => match array.as_any().downcast_ref::<BooleanArray>() {
                 Some(array) => Ok(Value::Boolean(array.value(seq))),
-                None => Err(ConvertError::new("bool", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("bool", format!("{array:?}")).into()),
             },
             ArrowDataType::Int8 => match array.as_any().downcast_ref::<Int8Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Int8(array.value(seq)))),
-                None => Err(ConvertError::new("int8", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("int8", format!("{array:?}")).into()),
             },
             ArrowDataType::Int16 => match array.as_any().downcast_ref::<Int16Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Int16(array.value(seq)))),
-                None => Err(ConvertError::new("int16", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("int16", format!("{array:?}")).into()),
             },
             ArrowDataType::Int32 => match array.as_any().downcast_ref::<Int32Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Int32(array.value(seq)))),
-                None => Err(ConvertError::new("int64", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("int64", format!("{array:?}")).into()),
             },
             ArrowDataType::Int64 => match array.as_any().downcast_ref::<Int64Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Int64(array.value(seq)))),
-                None => Err(ConvertError::new("int64", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("int64", format!("{array:?}")).into()),
             },
             ArrowDataType::UInt8 => match array.as_any().downcast_ref::<UInt8Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::UInt8(array.value(seq)))),
-                None => Err(ConvertError::new("uint8", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("uint8", format!("{array:?}")).into()),
             },
             ArrowDataType::UInt16 => match array.as_any().downcast_ref::<UInt16Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::UInt16(array.value(seq)))),
-                None => Err(ConvertError::new("uint16", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("uint16", format!("{array:?}")).into()),
             },
             ArrowDataType::UInt32 => match array.as_any().downcast_ref::<UInt32Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::UInt32(array.value(seq)))),
-                None => Err(ConvertError::new("uint32", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("uint32", format!("{array:?}")).into()),
             },
             ArrowDataType::UInt64 => match array.as_any().downcast_ref::<UInt64Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::UInt64(array.value(seq)))),
-                None => Err(ConvertError::new("uint64", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("uint64", format!("{array:?}")).into()),
             },
             ArrowDataType::Float32 => match array.as_any().downcast_ref::<Float32Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Float32(array.value(seq)))),
-                None => Err(ConvertError::new("float32", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("float32", format!("{array:?}")).into()),
             },
             ArrowDataType::Float64 => match array.as_any().downcast_ref::<Float64Array>() {
                 Some(array) => Ok(Value::Number(NumberValue::Float64(array.value(seq)))),
-                None => Err(ConvertError::new("float64", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("float64", format!("{array:?}")).into()),
             },
 
             ArrowDataType::Decimal128(p, s) => {
@@ -445,7 +442,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             scale: *s as u8,
                         },
                     ))),
-                    None => Err(ConvertError::new("Decimal128", format!("{:?}", array)).into()),
+                    None => Err(ConvertError::new("Decimal128", format!("{array:?}")).into()),
                 }
             }
             ArrowDataType::Decimal256(p, s) => {
@@ -457,58 +454,57 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             scale: *s as u8,
                         },
                     ))),
-                    None => Err(ConvertError::new("Decimal256", format!("{:?}", array)).into()),
+                    None => Err(ConvertError::new("Decimal256", format!("{array:?}")).into()),
                 }
             }
 
             ArrowDataType::Binary => match array.as_any().downcast_ref::<BinaryArray>() {
                 Some(array) => Ok(Value::Binary(array.value(seq).to_vec())),
-                None => Err(ConvertError::new("binary", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("binary", format!("{array:?}")).into()),
             },
             ArrowDataType::LargeBinary | ArrowDataType::FixedSizeBinary(_) => {
                 match array.as_any().downcast_ref::<LargeBinaryArray>() {
                     Some(array) => Ok(Value::Binary(array.value(seq).to_vec())),
-                    None => Err(ConvertError::new("large binary", format!("{:?}", array)).into()),
+                    None => Err(ConvertError::new("large binary", format!("{array:?}")).into()),
                 }
             }
             ArrowDataType::Utf8 => match array.as_any().downcast_ref::<StringArray>() {
                 Some(array) => Ok(Value::String(array.value(seq).to_string())),
-                None => Err(ConvertError::new("string", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("string", format!("{array:?}")).into()),
             },
             ArrowDataType::LargeUtf8 => match array.as_any().downcast_ref::<LargeStringArray>() {
                 Some(array) => Ok(Value::String(array.value(seq).to_string())),
-                None => Err(ConvertError::new("large string", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("large string", format!("{array:?}")).into()),
             },
             ArrowDataType::Utf8View => match array.as_any().downcast_ref::<StringViewArray>() {
                 Some(array) => Ok(Value::String(array.value(seq).to_string())),
-                None => Err(ConvertError::new("string view", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("string view", format!("{array:?}")).into()),
             },
             // we only support timestamp in microsecond in databend
             ArrowDataType::Timestamp(unit, tz) => {
                 match array.as_any().downcast_ref::<TimestampMicrosecondArray>() {
                     Some(array) => {
                         if unit != &TimeUnit::Microsecond {
-                            return Err(ConvertError::new("timestamp", format!("{:?}", array))
+                            return Err(ConvertError::new("timestamp", format!("{array:?}"))
                                 .with_message(format!(
-                                    "unsupported timestamp unit: {:?}, only support microsecond",
-                                    unit
+                                    "unsupported timestamp unit: {unit:?}, only support microsecond"
                                 ))
                                 .into());
                         }
                         let ts = array.value(seq);
                         match tz {
                             None => Ok(Value::Timestamp(ts)),
-                            Some(tz) => Err(ConvertError::new("timestamp", format!("{:?}", array))
-                                .with_message(format!("non-UTC timezone not supported: {:?}", tz))
+                            Some(tz) => Err(ConvertError::new("timestamp", format!("{array:?}"))
+                                .with_message(format!("non-UTC timezone not supported: {tz:?}"))
                                 .into()),
                         }
                     }
-                    None => Err(ConvertError::new("timestamp", format!("{:?}", array)).into()),
+                    None => Err(ConvertError::new("timestamp", format!("{array:?}")).into()),
                 }
             }
             ArrowDataType::Date32 => match array.as_any().downcast_ref::<Date32Array>() {
                 Some(array) => Ok(Value::Date(array.value(seq))),
-                None => Err(ConvertError::new("date", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("date", format!("{array:?}")).into()),
             },
             ArrowDataType::List(f) => match array.as_any().downcast_ref::<ListArray>() {
                 Some(array) => {
@@ -520,7 +516,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                     }
                     Ok(Value::Array(values))
                 }
-                None => Err(ConvertError::new("list", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("list", format!("{array:?}")).into()),
             },
             ArrowDataType::LargeList(f) => match array.as_any().downcast_ref::<LargeListArray>() {
                 Some(array) => {
@@ -532,7 +528,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                     }
                     Ok(Value::Array(values))
                 }
-                None => Err(ConvertError::new("large list", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("large list", format!("{array:?}")).into()),
             },
             ArrowDataType::Map(f, _) => match array.as_any().downcast_ref::<MapArray>() {
                 Some(array) => {
@@ -547,12 +543,12 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                         Ok(Value::Map(values))
                     } else {
                         Err(
-                            ConvertError::new("invalid map inner type", format!("{:?}", array))
+                            ConvertError::new("invalid map inner type", format!("{array:?}"))
                                 .into(),
                         )
                     }
                 }
-                None => Err(ConvertError::new("map", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("map", format!("{array:?}")).into()),
             },
             ArrowDataType::Struct(fs) => match array.as_any().downcast_ref::<StructArray>() {
                 Some(array) => {
@@ -563,9 +559,9 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                     }
                     Ok(Value::Tuple(values))
                 }
-                None => Err(ConvertError::new("struct", format!("{:?}", array)).into()),
+                None => Err(ConvertError::new("struct", format!("{array:?}")).into()),
             },
-            _ => Err(ConvertError::new("unsupported data type", format!("{:?}", array)).into()),
+            _ => Err(ConvertError::new("unsupported data type", format!("{array:?}")).into()),
         }
     }
 }
@@ -582,7 +578,7 @@ impl TryFrom<Value> for String {
             Value::Geography(s) => Ok(s),
             Value::Interval(s) => Ok(s),
             Value::Variant(s) => Ok(s),
-            _ => Err(ConvertError::new("string", format!("{:?}", val)).into()),
+            _ => Err(ConvertError::new("string", format!("{val:?}")).into()),
         }
     }
 }
@@ -593,7 +589,7 @@ impl TryFrom<Value> for bool {
         match val {
             Value::Boolean(b) => Ok(b),
             Value::Number(n) => Ok(n != NumberValue::Int8(0)),
-            _ => Err(ConvertError::new("bool", format!("{:?}", val)).into()),
+            _ => Err(ConvertError::new("bool", format!("{val:?}")).into()),
         }
     }
 }
@@ -649,7 +645,7 @@ impl TryFrom<Value> for NaiveDateTime {
                     None => Err(ConvertError::new("NaiveDateTime", "".to_string()).into()),
                 }
             }
-            _ => Err(ConvertError::new("NaiveDateTime", format!("{}", val)).into()),
+            _ => Err(ConvertError::new("NaiveDateTime", format!("{val}")).into()),
         }
     }
 }
@@ -665,7 +661,7 @@ impl TryFrom<Value> for NaiveDate {
                     None => Err(ConvertError::new("NaiveDate", "".to_string()).into()),
                 }
             }
-            _ => Err(ConvertError::new("NaiveDate", format!("{}", val)).into()),
+            _ => Err(ConvertError::new("NaiveDate", format!("{val}")).into()),
         }
     }
 }
@@ -683,7 +679,7 @@ where
                 .collect(),
             Value::Array(vals) => vals.into_iter().map(V::try_from).collect(),
             Value::EmptyArray => Ok(vec![]),
-            _ => Err(ConvertError::new("Vec", format!("{}", val)).into()),
+            _ => Err(ConvertError::new("Vec", format!("{val}")).into()),
         }
     }
 }
@@ -706,7 +702,7 @@ where
                 Ok(map)
             }
             Value::EmptyMap => Ok(HashMap::new()),
-            _ => Err(ConvertError::new("HashMap", format!("{}", val)).into()),
+            _ => Err(ConvertError::new("HashMap", format!("{val}")).into()),
         }
     }
 }
@@ -833,16 +829,16 @@ impl_try_from_to_option!(NaiveDate);
 impl std::fmt::Display for NumberValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NumberValue::Int8(i) => write!(f, "{}", i),
-            NumberValue::Int16(i) => write!(f, "{}", i),
-            NumberValue::Int32(i) => write!(f, "{}", i),
-            NumberValue::Int64(i) => write!(f, "{}", i),
-            NumberValue::UInt8(i) => write!(f, "{}", i),
-            NumberValue::UInt16(i) => write!(f, "{}", i),
-            NumberValue::UInt32(i) => write!(f, "{}", i),
-            NumberValue::UInt64(i) => write!(f, "{}", i),
-            NumberValue::Float32(i) => write!(f, "{}", i),
-            NumberValue::Float64(i) => write!(f, "{}", i),
+            NumberValue::Int8(i) => write!(f, "{i}"),
+            NumberValue::Int16(i) => write!(f, "{i}"),
+            NumberValue::Int32(i) => write!(f, "{i}"),
+            NumberValue::Int64(i) => write!(f, "{i}"),
+            NumberValue::UInt8(i) => write!(f, "{i}"),
+            NumberValue::UInt16(i) => write!(f, "{i}"),
+            NumberValue::UInt32(i) => write!(f, "{i}"),
+            NumberValue::UInt64(i) => write!(f, "{i}"),
+            NumberValue::Float32(i) => write!(f, "{i}"),
+            NumberValue::Float64(i) => write!(f, "{i}"),
             NumberValue::Decimal128(v, s) => write!(f, "{}", display_decimal_128(*v, s.scale)),
             NumberValue::Decimal256(v, s) => write!(f, "{}", display_decimal_256(*v, s.scale)),
         }
@@ -868,7 +864,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
                 write!(f, "false")
             }
         }
-        Value::Number(n) => write!(f, "{}", n),
+        Value::Number(n) => write!(f, "{n}"),
         Value::Binary(s) => write!(f, "{}", hex::encode_upper(s)),
         Value::String(s)
         | Value::Bitmap(s)
@@ -877,9 +873,9 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
         | Value::Geometry(s)
         | Value::Geography(s) => {
             if raw {
-                write!(f, "{}", s)
+                write!(f, "{s}")
             } else {
-                write!(f, "'{}'", s)
+                write!(f, "'{s}'")
             }
         }
         Value::Timestamp(micros) => {
@@ -900,9 +896,9 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
             let days = i + DAYS_FROM_CE;
             let d = NaiveDate::from_num_days_from_ce_opt(days).unwrap_or_default();
             if raw {
-                write!(f, "{}", d)
+                write!(f, "{d}")
             } else {
-                write!(f, "'{}'", d)
+                write!(f, "'{d}'")
             }
         }
         Value::Array(vals) => {
@@ -957,7 +953,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
 pub fn display_decimal_128(num: i128, scale: u8) -> String {
     let mut buf = String::new();
     if scale == 0 {
-        write!(buf, "{}", num).unwrap();
+        write!(buf, "{num}").unwrap();
     } else {
         let pow_scale = 10_i128.pow(scale as u32);
         if num >= 0 {
@@ -986,7 +982,7 @@ pub fn display_decimal_128(num: i128, scale: u8) -> String {
 pub fn display_decimal_256(num: i256, scale: u8) -> String {
     let mut buf = String::new();
     if scale == 0 {
-        write!(buf, "{}", num).unwrap();
+        write!(buf, "{num}").unwrap();
     } else {
         let pow_scale = i256::from_i128(10i128).wrapping_pow(scale as u32);
         let width = scale as usize;
@@ -1000,15 +996,7 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
 
         match frac_part.to_i128() {
             Some(frac_part) => {
-                write!(
-                    buf,
-                    "{}{}.{:0>width$}",
-                    neg,
-                    int_part,
-                    frac_part,
-                    width = width
-                )
-                .unwrap();
+                write!(buf, "{neg}{int_part}.{frac_part:0>width$}").unwrap();
             }
             None => {
                 // fractional part is too big for display,
@@ -1020,12 +1008,9 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
 
                 write!(
                     buf,
-                    "{}{}.{:0>width$}{}",
-                    neg,
-                    int_part,
+                    "{neg}{int_part}.{:0>frac_width$}{}",
                     frac_high_part.to_i128().unwrap(),
                     frac_low_part.to_i128().unwrap(),
-                    width = frac_width
                 )
                 .unwrap();
             }
@@ -1064,7 +1049,7 @@ pub fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
         None => 0,
     };
     if i_part.len() as i32 + exp > 76 {
-        Err(ConvertError::new("decimal", format!("{:?}", text)).into())
+        Err(ConvertError::new("decimal", format!("{text:?}")).into())
     } else {
         let mut digits = Vec::with_capacity(76);
         digits.extend_from_slice(i_part.as_bytes());
@@ -1156,7 +1141,7 @@ impl IntervalToStringCast {
         if micros < 0 {
             micros = -micros;
         }
-        let s = format!("{:06}", micros);
+        let s = format!("{micros:06}");
         let bytes = s.as_bytes();
         buffer[*length..*length + bytes.len()].copy_from_slice(bytes);
         *length += bytes.len();
@@ -1297,8 +1282,7 @@ impl Interval {
                 }
                 _ => {
                     return Err(Error::BadArgument(format!(
-                        "Unexpected character at position {}",
-                        pos
+                        "Unexpected character at position {pos}"
                     )));
                 }
             }
@@ -1464,8 +1448,7 @@ fn try_get_date_part_specifier(specifier_str: &str) -> Result<DatePartSpecifier>
         "minute" | "minutes" | "m" => Ok(DatePartSpecifier::Minute),
         "hour" | "hours" | "h" => Ok(DatePartSpecifier::Hour),
         _ => Err(Error::BadArgument(format!(
-            "Invalid date part specifier: {}",
-            specifier_str
+            "Invalid date part specifier: {specifier_str}"
         ))),
     }
 }

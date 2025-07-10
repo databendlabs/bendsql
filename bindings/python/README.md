@@ -34,6 +34,7 @@ cursor.execute("SELECT * FROM test")
 rows = cursor.fetchall()
 for row in rows:
     print(row.values())
+cursor.close()
 ```
 
 ### Blocking Connection Object
@@ -59,6 +60,7 @@ conn.exec(
 rows = conn.query_iter("SELECT * FROM test")
 for row in rows:
     print(row.values())
+conn.close()
 ```
 
 ### Asyncio Connection Object
@@ -86,6 +88,7 @@ async def main():
     rows = await conn.query_iter("SELECT * FROM test")
     async for row in rows:
         print(row.values())
+    await conn.close()
 
 asyncio.run(main())
 ```
@@ -170,6 +173,7 @@ class AsyncDatabendClient:
 class AsyncDatabendConnection:
     async def info(self) -> ConnectionInfo: ...
     async def version(self) -> str: ...
+    async def close(self) -> None: ...
     async def exec(self, sql: str, params: list[string] | tuple[string] | any = None) -> int: ...
     async def query_row(self, sql: str, params: list[string] | tuple[string] | any = None) -> Row: ...
     async def query_iter(self, sql: str, params: list[string] | tuple[string] | any = None) -> RowIterator: ...
@@ -192,6 +196,7 @@ class BlockingDatabendClient:
 class BlockingDatabendConnection:
     def info(self) -> ConnectionInfo: ...
     def version(self) -> str: ...
+    def close(self) -> None: ...
     def exec(self, sql: str, params: list[string] | tuple[string] | any = None) -> int: ...
     def query_row(self, sql: str, params: list[string] | tuple[string] | any = None) -> Row: ...
     def query_iter(self, sql: str, params: list[string] | tuple[string] | any = None) -> RowIterator: ...
