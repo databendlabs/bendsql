@@ -38,6 +38,8 @@ pub(crate) const ARROW_EXT_TYPE_GEOMETRY: &str = "Geometry";
 pub(crate) const ARROW_EXT_TYPE_GEOGRAPHY: &str = "Geography";
 #[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_INTERVAL: &str = "Interval";
+#[cfg(feature = "flight-sql")]
+pub(crate) const ARROW_EXT_TYPE_VECTOR: &str = "Vector";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumberDataType {
@@ -95,6 +97,7 @@ pub enum DataType {
     Geometry,
     Geography,
     Interval,
+    Vector(u64),
     // Generic(usize),
 }
 
@@ -156,6 +159,7 @@ impl std::fmt::Display for DataType {
             DataType::Geometry => write!(f, "Geometry"),
             DataType::Geography => write!(f, "Geography"),
             DataType::Interval => write!(f, "Interval"),
+            DataType::Vector(d) => write!(f, "Vector({d})"),
         }
     }
 }
@@ -275,6 +279,10 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
             "Geometry" => DataType::Geometry,
             "Geography" => DataType::Geography,
             "Interval" => DataType::Interval,
+            "Vector" => {
+                let dimension = desc.args[0].name.parse::<u64>()?;
+                DataType::Vector(dimension)
+            }
             _ => return Err(Error::Parsing(format!("Unknown type: {desc:?}"))),
         };
         Ok(dt)
@@ -320,6 +328,26 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                 ARROW_EXT_TYPE_BITMAP => DataType::Bitmap,
                 ARROW_EXT_TYPE_GEOMETRY => DataType::Geometry,
                 ARROW_EXT_TYPE_GEOGRAPHY => DataType::Geography,
+                ARROW_EXT_TYPE_INTERVAL => DataType::Interval,
+                ARROW_EXT_TYPE_VECTOR => match f.data_type() {
+                    ArrowDataType::FixedSizeList(field, dimension) => {
+                        let dimension = match field.data_type() {
+                            ArrowDataType::Float32 => *dimension as u64,
+                            _ => {
+                                return Err(Error::Parsing(format!(
+                                    "Unsupported FixedSizeList Arrow type: {:?}",
+                                    field.data_type()
+                                )));
+                            }
+                        };
+                        DataType::Vector(dimension)
+                    }
+                    arrow_type => {
+                        return Err(Error::Parsing(format!(
+                            "Unsupported Arrow type: {arrow_type:?}",
+                        )));
+                    }
+                },
                 _ => {
                     return Err(Error::Parsing(format!(
                         "Unsupported extension datatype for arrow field: {f:?}"
