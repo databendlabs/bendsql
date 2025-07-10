@@ -358,19 +358,19 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                                         }
                                         None => Err(ConvertError::new(
                                             "vector float32",
-                                            format!("{:?}", inner_array),
+                                            format!("{inner_array:?}"),
                                         )
                                         .into()),
                                     }
                                 }
                                 None => {
-                                    Err(ConvertError::new("vector", format!("{:?}", array)).into())
+                                    Err(ConvertError::new("vector", format!("{array:?}")).into())
                                 }
                             }
                         }
                         arrow_type => Err(ConvertError::new(
                             "vector",
-                            format!("Unsupported Arrow type: {:?}", arrow_type),
+                            format!("Unsupported Arrow type: {arrow_type:?}"),
                         )
                         .into()),
                     }

@@ -344,8 +344,7 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                     }
                     arrow_type => {
                         return Err(Error::Parsing(format!(
-                            "Unsupported Arrow type: {:?}",
-                            arrow_type
+                            "Unsupported Arrow type: {arrow_type:?}",
                         )));
                     }
                 },
