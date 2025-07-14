@@ -320,6 +320,21 @@ impl ToNapiValue for Value<'_> {
             databend_driver::Value::Geometry(s) => String::to_napi_value(env, s.to_string()),
             databend_driver::Value::Interval(s) => String::to_napi_value(env, s.to_string()),
             databend_driver::Value::Geography(s) => String::to_napi_value(env, s.to_string()),
+            databend_driver::Value::Vector(inner) => {
+                let mut arr = ctx.create_array(inner.len() as u32)?;
+                for (i, v) in inner.iter().enumerate() {
+                    arr.set(
+                        i as u32,
+                        Value::new(
+                            &databend_driver::Value::Number(databend_driver::NumberValue::Float32(
+                                *v,
+                            )),
+                            val.opts,
+                        ),
+                    )?;
+                }
+                Array::to_napi_value(env, arr)
+            }
         }
     }
 }

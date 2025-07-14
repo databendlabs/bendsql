@@ -36,7 +36,7 @@ use {
     crate::schema::{
         ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
         ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
-        ARROW_EXT_TYPE_VARIANT, EXTENSION_KEY,
+        ARROW_EXT_TYPE_VARIANT, ARROW_EXT_TYPE_VECTOR, EXTENSION_KEY,
     },
     arrow_array::{
         Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array,
@@ -93,6 +93,7 @@ pub enum Value {
     Geometry(String),
     Geography(String),
     Interval(String),
+    Vector(Vec<f32>),
 }
 
 impl Value {
@@ -145,6 +146,7 @@ impl Value {
             Self::Variant(_) => DataType::Variant,
             Self::Geometry(_) => DataType::Geometry,
             Self::Geography(_) => DataType::Geography,
+            Self::Vector(v) => DataType::Vector(v.len() as u64),
         }
     }
 }
@@ -229,7 +231,7 @@ impl TryFrom<(&DataType, String)> for Value {
             DataType::Geometry => Ok(Self::Geometry(v)),
             DataType::Geography => Ok(Self::Geography(v)),
             DataType::Interval => Ok(Self::Interval(v)),
-            DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) => {
+            DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) | DataType::Vector(_) => {
                 let mut reader = Cursor::new(v.as_str());
                 let decoder = ValueDecoder {};
                 decoder.read_field(t, &mut reader)
@@ -327,6 +329,50 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                             Ok(Value::Geography(wkt))
                         }
                         None => Err(ConvertError::new("geography", format!("{array:?}")).into()),
+                    }
+                }
+                ARROW_EXT_TYPE_VECTOR => {
+                    if field.is_nullable() && array.is_null(seq) {
+                        return Ok(Value::Null);
+                    }
+                    match field.data_type() {
+                        ArrowDataType::FixedSizeList(_, dimension) => {
+                            match array
+                                .as_any()
+                                .downcast_ref::<arrow_array::FixedSizeListArray>()
+                            {
+                                Some(inner_array) => {
+                                    match inner_array
+                                        .value(seq)
+                                        .as_any()
+                                        .downcast_ref::<Float32Array>()
+                                    {
+                                        Some(inner_array) => {
+                                            let dimension = *dimension as usize;
+                                            let mut values = Vec::with_capacity(dimension);
+                                            for i in 0..dimension {
+                                                let value = inner_array.value(i);
+                                                values.push(value);
+                                            }
+                                            Ok(Value::Vector(values))
+                                        }
+                                        None => Err(ConvertError::new(
+                                            "vector float32",
+                                            format!("{inner_array:?}"),
+                                        )
+                                        .into()),
+                                    }
+                                }
+                                None => {
+                                    Err(ConvertError::new("vector", format!("{array:?}")).into())
+                                }
+                            }
+                        }
+                        arrow_type => Err(ConvertError::new(
+                            "vector",
+                            format!("Unsupported Arrow type: {arrow_type:?}"),
+                        )
+                        .into()),
                     }
                 }
                 _ => Err(ConvertError::new(
@@ -888,6 +934,17 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
                 encode_value(f, val, false)?;
             }
             write!(f, ")")?;
+            Ok(())
+        }
+        Value::Vector(vals) => {
+            write!(f, "[")?;
+            for (i, val) in vals.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ",")?;
+                }
+                write!(f, "{val}")?;
+            }
+            write!(f, "]")?;
             Ok(())
         }
     }
@@ -1608,6 +1665,7 @@ impl ValueDecoder {
             DataType::Array(inner_ty) => self.read_array(inner_ty.as_ref(), reader),
             DataType::Map(inner_ty) => self.read_map(inner_ty.as_ref(), reader),
             DataType::Tuple(inner_tys) => self.read_tuple(inner_tys.as_ref(), reader),
+            DataType::Vector(dimension) => self.read_vector(*dimension as usize, reader),
             DataType::Nullable(inner_ty) => self.read_nullable(inner_ty.as_ref(), reader),
         }
     }
@@ -1810,6 +1868,26 @@ impl ValueDecoder {
             vals.push(val);
         }
         Ok(Value::Array(vals))
+    }
+
+    fn read_vector<R: AsRef<[u8]>>(
+        &self,
+        dimension: usize,
+        reader: &mut Cursor<R>,
+    ) -> Result<Value> {
+        let mut vals = Vec::with_capacity(dimension);
+        reader.must_ignore_byte(b'[')?;
+        for idx in 0..dimension {
+            let _ = reader.ignore_white_spaces();
+            if idx > 0 {
+                reader.must_ignore_byte(b',')?;
+            }
+            let _ = reader.ignore_white_spaces();
+            let val: f32 = reader.read_float_text()?;
+            vals.push(val);
+        }
+        reader.must_ignore_byte(b']')?;
+        Ok(Value::Vector(vals))
     }
 
     fn read_map<R: AsRef<[u8]>>(&self, ty: &DataType, reader: &mut Cursor<R>) -> Result<Value> {

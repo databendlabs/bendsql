@@ -110,6 +110,17 @@ impl<'py> IntoPyObject<'py> for Value {
                 let s = Duration::microseconds(total_micros);
                 s.into_bound_py_any(py)?
             }
+            databend_driver::Value::Vector(inner) => {
+                let list = PyList::new(
+                    py,
+                    inner.into_iter().map(|v| {
+                        Value(databend_driver::Value::Number(
+                            databend_driver::NumberValue::Float32(v),
+                        ))
+                    }),
+                )?;
+                list.into_bound_py_any(py)?
+            }
         };
         Ok(val)
     }
