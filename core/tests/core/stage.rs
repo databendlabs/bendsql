@@ -22,11 +22,11 @@ use crate::common::DEFAULT_DSN;
 async fn insert_with_stage(presign: bool) {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let client = if presign {
-        APIClient::new(&format!("{}&presign=on", dsn), None)
+        APIClient::new(&format!("{dsn}&presign=on"), None)
             .await
             .unwrap()
     } else {
-        APIClient::new(&format!("{}&presign=off", dsn), None)
+        APIClient::new(&format!("{dsn}&presign=off"), None)
             .await
             .unwrap()
     };
@@ -36,24 +36,21 @@ async fn insert_with_stage(presign: bool) {
     let data = BufReader::new(file);
 
     let path = chrono::Utc::now().format("%Y%m%d%H%M%S%9f").to_string();
-    let stage_location = format!("@~/{}/sample.csv", path);
+    let stage_location = format!("@~/{path}/sample.csv");
     let table = if presign {
-        format!("sample_insert_presigned_{}", path)
+        format!("sample_insert_presigned_{path}")
     } else {
-        format!("sample_insert_stream_{}", path)
+        format!("sample_insert_stream_{path}")
     };
 
     client
         .upload_to_stage(&stage_location, Box::new(data), metadata.len())
         .await
         .unwrap();
-    let sql = format!(
-        "CREATE TABLE `{}` (id UInt64, city String, number UInt64)",
-        table
-    );
+    let sql = format!("CREATE TABLE `{table}` (id UInt64, city String, number UInt64)");
     client.query_all(&sql).await.unwrap();
 
-    let sql = format!("INSERT INTO `{}` VALUES", table);
+    let sql = format!("INSERT INTO `{table}` VALUES");
     let file_format_options = vec![
         ("type", "CSV"),
         ("field_delimiter", ","),
@@ -70,7 +67,7 @@ async fn insert_with_stage(presign: bool) {
         .await
         .unwrap();
 
-    let sql = format!("SELECT * FROM `{}`", table);
+    let sql = format!("SELECT * FROM `{table}`");
     let resp = client.query_all(&sql).await.unwrap();
     assert_eq!(resp.data.len(), 6);
     let expect = [
@@ -92,7 +89,7 @@ async fn insert_with_stage(presign: bool) {
         .collect::<Vec<_>>();
     assert_eq!(result, expect);
 
-    let sql = format!("DROP TABLE `{}`;", table);
+    let sql = format!("DROP TABLE `{table}`;");
     client.query_all(&sql).await.unwrap();
 }
 

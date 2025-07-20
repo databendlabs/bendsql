@@ -57,8 +57,8 @@ static VERSION_SHORT: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     let sha = option_env!("VERGEN_GIT_SHA").unwrap_or("dev");
     match option_env!("BENDSQL_BUILD_INFO") {
-        Some(info) => format!("{}-{}", version, info),
-        None => format!("{}-{}", version, sha),
+        Some(info) => format!("{version}-{info}"),
+        None => format!("{version}-{sha}"),
     }
 });
 
@@ -128,7 +128,7 @@ impl Session {
                     "".to_string()
                 }
             };
-            println!("Connected to {}", version);
+            println!("Connected to {version}");
 
             let config = sled::Config::new().temporary(true);
             let db = config.open()?;
@@ -162,7 +162,7 @@ impl Session {
                         println!("Loaded {} auto complete keywords from server.", db.len());
                     }
                     Err(e) => {
-                        eprintln!("WARN: loading auto complete keywords failed: {}", e);
+                        eprintln!("WARN: loading auto complete keywords failed: {e}");
                     }
                 }
             }
@@ -177,7 +177,7 @@ impl Session {
                     .unwrap();
             let addr = listener.local_addr().unwrap();
             let handle = tokio::spawn(async move { start_server(listener).await });
-            println!("Started web server at {}", addr);
+            println!("Started web server at {addr}");
             server_addr = Some(addr.to_string());
             server_handle = Some(handle);
         };
@@ -228,7 +228,7 @@ impl Session {
                 prompt = prompt.replace("{database}", "default");
             }
             if let Some(warehouse) = &info.warehouse {
-                prompt = prompt.replace("{warehouse}", &format!("({})", warehouse));
+                prompt = prompt.replace("{warehouse}", &format!("({warehouse})"));
             } else {
                 prompt = prompt.replace("{warehouse}", &format!("{}:{}", info.host, info.port));
             }
@@ -250,10 +250,10 @@ impl Session {
                 info.handler, info.host, info.port, info.user
             );
             if let Some(warehouse) = &info.warehouse {
-                println!("Using Databend Cloud warehouse: {}", warehouse);
+                println!("Using Databend Cloud warehouse: {warehouse}");
             }
             if let Some(database) = &info.database {
-                println!("Current database: {}", database);
+                println!("Current database: {database}");
             } else {
                 println!("Current database: default");
             }
@@ -262,7 +262,7 @@ impl Session {
         // server version
         {
             let version = self.conn.version().await.unwrap_or_default();
-            println!("Server version: {}", version);
+            println!("Server version: {version}");
         }
 
         #[derive(TryFromRow)]
@@ -282,7 +282,7 @@ impl Session {
                 let row = rows.next().await.unwrap()?;
                 let linfo: LicenseInfo = row
                     .try_into()
-                    .map_err(|e| anyhow!("parse license info failed: {}", e))?;
+                    .map_err(|e| anyhow!("parse license info failed: {e}"))?;
                 if chrono::Utc::now().naive_utc() > linfo.expire_at {
                     eprintln!("-> WARN: License expired at {}", linfo.expire_at);
                 } else {
@@ -321,12 +321,12 @@ impl Session {
                     match self.conn.upload_to_stage(stage_file, reader, size).await {
                         Err(e) => {
                             eprintln!("-> ERR: Backend storage upload not working as expected.");
-                            eprintln!("        {}", e);
+                            eprintln!("        {e}");
                         }
                         Ok(()) => {
                             let u = url::Url::parse(&resp.url)?;
                             let host = u.host_str().unwrap_or("unknown");
-                            println!("Backend storage OK: {}", host);
+                            println!("Backend storage OK: {host}");
                         }
                     };
                 }
@@ -360,15 +360,15 @@ impl Session {
                             Err(e) => {
                                 if e.to_string().contains("Unauthenticated") {
                                     if let Err(e) = self.reconnect().await {
-                                        eprintln!("reconnect error: {}", e);
+                                        eprintln!("reconnect error: {e}");
                                     } else if let Err(e) = self.handle_query(true, &query).await {
-                                        eprintln!("error: {}", e);
+                                        eprintln!("error: {e}");
                                     }
                                 } else {
-                                    eprintln!("error: {}", e);
+                                    eprintln!("error: {e}");
                                     if e.to_string().contains(INTERRUPTED_MESSAGE) {
                                         if let Some(query_id) = self.conn.last_query_id() {
-                                            println!("killing query: {}", query_id);
+                                            println!("killing query: {query_id}");
                                             let _ = self.conn.kill_query(&query_id).await;
                                         }
                                     }
@@ -407,7 +407,7 @@ impl Session {
         // save history first to avoid loss data.
         let _ = rl.save_history(&get_history_path());
         if let Err(e) = self.conn.close().await {
-            println!("got error when closing session: {}", e);
+            println!("got error when closing session: {e}");
         }
         println!("Bye~");
     }
@@ -425,7 +425,7 @@ impl Session {
                     }
                 }
                 Some(Err(e)) => {
-                    return Err(anyhow!("read lines err: {}", e.to_string()));
+                    return Err(anyhow!("read lines err: {e}"));
                 }
                 None => break,
             }
@@ -524,7 +524,7 @@ impl Session {
         }
 
         if self.query.is_empty() && queries.is_empty() && !err.is_empty() {
-            eprintln!("Parser '{}' failed\nwith error '{}'", line, err);
+            eprintln!("Parser '{line}' failed\nwith error '{err}'");
         }
         queries
     }
@@ -622,13 +622,13 @@ impl Session {
                     let query = query[7..].trim();
                     let path = Path::new(query);
                     if !path.exists() {
-                        return Err(anyhow!("File not found: {}", query));
+                        return Err(anyhow!("File not found: {query}"));
                     }
                     let file = std::fs::File::open(path)?;
                     let reader = std::io::BufReader::new(file);
                     self.handle_reader(reader).await?;
                 } else {
-                    return Err(anyhow!("Unknown commands: {}", other));
+                    return Err(anyhow!("Unknown commands: {other}"));
                 }
             }
         }
@@ -646,7 +646,7 @@ impl Session {
         let now = chrono::Utc::now().timestamp_nanos_opt().ok_or_else(|| {
             anyhow!("Failed to get timestamp, please check your system time is correct and retry.")
         })?;
-        let tmp_file = dir.join(format!("bendsql_{}", now));
+        let tmp_file = dir.join(format!("bendsql_{now}"));
         {
             let mut file = File::create(&tmp_file).await?;
             loop {
@@ -656,7 +656,7 @@ impl Session {
                         file.write_all(b"\n").await?;
                     }
                     Some(Err(e)) => {
-                        return Err(anyhow!("stream load stdin err: {}", e.to_string()));
+                        return Err(anyhow!("stream load stdin err: {e}"));
                     }
                     None => break,
                 }
@@ -703,7 +703,7 @@ impl Session {
                 info.host, info.port, info.user
             );
             let version = self.conn.version().await.unwrap_or_default();
-            eprintln!("connected to {}", version);
+            eprintln!("connected to {version}");
             eprintln!();
         }
         Ok(())

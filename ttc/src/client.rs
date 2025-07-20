@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let response: Response = serde_json::from_reader(response.as_slice()).unwrap();
         // Print the response
-        println!("response: {:?}", response);
+        println!("response: {response:?}");
     }
 
     Ok(())

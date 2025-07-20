@@ -67,6 +67,14 @@ impl AsyncDatabendConnection {
         })
     }
 
+    pub fn close<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyAny>> {
+        let this = self.0.clone();
+        future_into_py(py, async move {
+            this.close().await.map_err(DriverError::new)?;
+            Ok(())
+        })
+    }
+
     #[pyo3(signature = (sql, params=None))]
     pub fn format_sql(
         &self,
