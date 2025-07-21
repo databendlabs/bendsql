@@ -181,6 +181,14 @@ impl BlockingDatabendConnection {
         })?;
         Ok(ServerStats::new(ret))
     }
+
+    pub fn close(&mut self, py: Python) -> PyResult<()> {
+        wait_for_future(
+            py,
+            async move { self.0.close().await.map_err(DriverError::new) },
+        )?;
+        Ok(())
+    }
 }
 
 /// BlockingDatabendCursor is an object that follows PEP 249
@@ -435,8 +443,7 @@ fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
                 Ok(v.to_string())
             } else {
                 Err(PyAttributeError::new_err(format!(
-                    "Invalid parameter type for: {:?}, expected str, bool, int or float",
-                    v
+                    "Invalid parameter type for: {v:?}, expected str, bool, int or float"
                 )))
             }
         }

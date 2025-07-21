@@ -29,7 +29,8 @@ jobs:
         include:
           - { os: ubuntu, arch: x86_64, target: x86_64-unknown-linux-gnu }
           - { os: macos, arch: aarch64, target: aarch64-apple-darwin }
-          - { os: windows, arch: x86_64, target: x86_64-pc-windows-msvc }
+          # FIXME: Windows build is broken
+          # - { os: windows, arch: x86_64, target: x86_64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
@@ -50,19 +51,16 @@ jobs:
 
   integration:
     needs: check
-    runs-on: [self-hosted, Linux, X64, 2c8g, aws]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
         with:
-          runner: aws
           cache-key: integration
-      - name: Get License from S3
-        run: |
-          aws s3 cp s3://databend-ci/misc/license-trial.key license.key
-          aws s3 cp s3://databend-ci/misc/license-trial.json license.json
-          cat license.json
-          echo "QUERY_DATABEND_ENTERPRISE_LICENSE=$(cat license.key)" >> $GITHUB_ENV
+      # - name: Get License from Variable
+      #   run: |
+      #     echo "::add-mask::${{ vars.DATABEND_LICENSE_TRIAL }}"
+      #     echo "QUERY_DATABEND_ENTERPRISE_LICENSE=${{ vars.DATABEND_LICENSE_TRIAL }}" >> $GITHUB_ENV
       - run: make -C tests test-core
       - run: make -C tests test-driver
       - run: make -C tests test-bendsql

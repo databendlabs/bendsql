@@ -254,7 +254,7 @@ impl Config {
         match toml::from_str(&std::fs::read_to_string(path).unwrap()) {
             Ok(config) => config,
             Err(e) => {
-                eprintln!("failed to load config file {}: {}, using defaults", path, e);
+                eprintln!("failed to load config file {path}: {e}, using defaults");
                 Self::default()
             }
         }

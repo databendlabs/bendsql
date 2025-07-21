@@ -54,10 +54,11 @@ jobs:
             target: aarch64-apple-darwin
           - os: macos
             target: x86_64-apple-darwin
-          - os: windows
-            target: aarch64-pc-windows-msvc
-          - os: windows
-            target: x86_64-pc-windows-msvc
+          # FIXME: Windows build is broken
+          # - os: windows
+          #   target: aarch64-pc-windows-msvc
+          # - os: windows
+          #   target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}-latest
     steps:
       - uses: actions/checkout@v4

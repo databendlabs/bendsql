@@ -1,3 +1,6 @@
+DATABEND_META_VERSION ?= nightly
+DATABEND_QUERY_VERSION ?= nightly
+
 default: run
 
 run: test-core test-driver test-bendsql down

@@ -43,7 +43,7 @@ async fn set_timezone_with_dsn() {
         // skip dsn variable test for flight
         return;
     }
-    let client = Client::new(format!("{}&timezone=Europe/London", dsn));
+    let client = Client::new(format!("{dsn}&timezone=Europe/London"));
     let conn = client.get_conn().await.unwrap();
 
     let row = conn.query_row("select timezone()", ()).await.unwrap();

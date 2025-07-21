@@ -163,8 +163,7 @@ impl APIClient {
                         "off" => PresignMode::Off,
                         _ => {
                             return Err(Error::BadArgument(format!(
-                            "Invalid value for presign: {}, should be one of auto/detect/on/off",
-                            v
+                            "Invalid value for presign: {v}, should be one of auto/detect/on/off"
                         )))
                         }
                     };
@@ -182,8 +181,7 @@ impl APIClient {
                     "require" | "enable" => scheme = "https",
                     _ => {
                         return Err(Error::BadArgument(format!(
-                            "Invalid value for sslmode: {}",
-                            v
+                            "Invalid value for sslmode: {v}"
                         )))
                     }
                 },
@@ -201,10 +199,7 @@ impl APIClient {
                         "disable" => true,
                         "enable" => false,
                         _ => {
-                            return Err(Error::BadArgument(format!(
-                                "Invalid value for login: {}",
-                                v
-                            )))
+                            return Err(Error::BadArgument(format!("Invalid value for login: {v}")))
                         }
                     }
                 }
@@ -214,8 +209,7 @@ impl APIClient {
                         "enable" => false,
                         _ => {
                             return Err(Error::BadArgument(format!(
-                                "Invalid value for session_token: {}",
-                                v
+                                "Invalid value for session_token: {v}"
                             )))
                         }
                     }
@@ -295,7 +289,7 @@ impl APIClient {
             PresignMode::Detect => match self.get_presigned_upload_url("@~/.bendsql/check").await {
                 Ok(_) => PresignMode::On,
                 Err(e) => {
-                    warn!("presign mode off with error detected: {}", e);
+                    warn!("presign mode off with error detected: {e}");
                     PresignMode::Off
                 }
             },
@@ -339,7 +333,7 @@ impl APIClient {
     }
 
     fn gen_query_id(&self) -> String {
-        uuid::Uuid::new_v4().to_string()
+        uuid::Uuid::now_v7().simple().to_string()
     }
 
     async fn handle_session(&self, session: &Option<SessionState>) {
@@ -382,13 +376,13 @@ impl APIClient {
     fn handle_warnings(&self, resp: &QueryResponse) {
         if let Some(warnings) = &resp.warnings {
             for w in warnings {
-                warn!(target: "server_warnings", "server warning: {}", w);
+                warn!(target: "server_warnings", "server warning: {w}");
             }
         }
     }
 
     pub async fn start_query(self: &Arc<Self>, sql: &str, need_progress: bool) -> Result<Pages> {
-        info!("start query: {}", sql);
+        info!("start query: {sql}");
         let resp = self.start_query_inner(sql, None).await?;
         let pages = Pages::new(self.clone(), resp, need_progress);
         Ok(pages)
@@ -457,7 +451,7 @@ impl APIClient {
         next_uri: &str,
         node_id: &Option<String>,
     ) -> Result<QueryResponse> {
-        info!("query page: {}", next_uri);
+        info!("query page: {next_uri}");
         let endpoint = self.endpoint.join(next_uri)?;
         let headers = self.make_headers(Some(query_id))?;
         let mut builder = self.cli.get(endpoint.clone());
@@ -488,10 +482,10 @@ impl APIClient {
     }
 
     pub async fn kill_query(&self, query_id: &str) -> Result<()> {
-        let kill_uri = format!("/v1/query/{}/kill", query_id);
+        let kill_uri = format!("/v1/query/{query_id}/kill");
         let endpoint = self.endpoint.join(&kill_uri)?;
         let headers = self.make_headers(Some(query_id))?;
-        info!("kill query: {}", kill_uri);
+        info!("kill query: {kill_uri}");
 
         let mut builder = self.cli.post(endpoint);
         builder = self.wrap_auth_or_session_token(builder)?;
@@ -564,10 +558,7 @@ impl APIClient {
         file_format_options: BTreeMap<&str, &str>,
         copy_options: BTreeMap<&str, &str>,
     ) -> Result<QueryStats> {
-        info!(
-            "insert with stage: {}, format: {:?}, copy: {:?}",
-            sql, file_format_options, copy_options
-        );
+        info!("insert with stage: {sql}, format: {file_format_options:?}, copy: {copy_options:?}");
         let stage_attachment = Some(StageAttachmentConfig {
             location: stage,
             file_format_options: Some(file_format_options),
@@ -583,8 +574,8 @@ impl APIClient {
     }
 
     async fn get_presigned_upload_url(self: &Arc<Self>, stage: &str) -> Result<PresignedResponse> {
-        info!("get presigned upload url: {}", stage);
-        let sql = format!("PRESIGN UPLOAD {}", stage);
+        info!("get presigned upload url: {stage}");
+        let sql = format!("PRESIGN UPLOAD {stage}");
         let resp = self.query_all(&sql).await?;
         if resp.data.len() != 1 {
             return Err(Error::Decode(
@@ -600,8 +591,7 @@ impl APIClient {
         let method = resp.data[0][0].clone().unwrap_or_default();
         if method != "PUT" {
             return Err(Error::Decode(format!(
-                "Invalid method for presigned upload request: {}",
-                method
+                "Invalid method for presigned upload request: {method}"
             )));
         }
         let headers: BTreeMap<String, String> =
@@ -642,7 +632,7 @@ impl APIClient {
         data: Reader,
         size: u64,
     ) -> Result<()> {
-        info!("upload to stage with stream: {}, size: {}", stage, size);
+        info!("upload to stage with stream: {stage}, size: {size}");
         if let Some(info) = self.need_pre_refresh_session().await {
             self.refresh_session_token(info).await?;
         }
@@ -924,7 +914,7 @@ impl APIClient {
                 .build_log_out_request()
                 .expect("failed to build logout request");
             if let Err(err) = cli.execute(req).await {
-                error!("logout request failed: {}", err);
+                error!("logout request failed: {err}");
             } else {
                 debug!("logout success");
             };
@@ -946,8 +936,7 @@ where
 {
     serde_json::from_slice::<T>(body).map_err(|e| {
         Error::Decode(format!(
-            "fail to decode JSON response: {}, body: {}",
-            e,
+            "fail to decode JSON response: {e}, body: {}",
             String::from_utf8_lossy(body)
         ))
     })
@@ -1012,7 +1001,7 @@ impl RouteHintGenerator {
     fn next(&self) -> String {
         let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
         let uuid = uuid::Uuid::new_v4();
-        let current = format!("rh:{}:{:06}", uuid, nonce);
+        let current = format!("rh:{uuid}:{nonce:06}");
         let mut guard = self.current.lock().unwrap();
         guard.clone_from(&current);
         current

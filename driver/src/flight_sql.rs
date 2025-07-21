@@ -263,9 +263,8 @@ impl Args {
                     }
                     _ => {
                         return Err(Error::BadArgument(format!(
-                            "Invalid value for sslmode: {}",
-                            v.as_ref()
-                        )))
+                            "Invalid value for sslmode: {v}"
+                        )));
                     }
                 },
                 "tls_ca_file" => args.tls_ca_file = Some(v.to_string()),
@@ -302,8 +301,8 @@ impl Args {
             .ok_or_else(|| Error::BadArgument("Port is empty".to_string()))?;
         args.port = port;
         args.uri = match args.database {
-            Some(ref db) => format!("{}://{}:{}/{}", scheme, host, port, db),
-            None => format!("{}://{}:{}", scheme, host, port),
+            Some(ref db) => format!("{scheme}://{host}:{port}/{db}"),
+            None => format!("{scheme}://{host}:{port}"),
         };
         args.user = u.username().to_string();
         let password = u.password().unwrap_or_default();
@@ -328,7 +327,7 @@ impl FlightSQLRows {
             .map_err(|err| Error::Protocol(format!("Read flight data failed: {err:?}")))?
             .ok_or_else(|| Error::Protocol("No flight data in stream".to_string()))?;
         let message = root_as_message(&datum.inner.data_header[..])
-            .map_err(|err| Error::Protocol(format!("InvalidFlatbuffer: {}", err)))?;
+            .map_err(|err| Error::Protocol(format!("InvalidFlatbuffer: {err}")))?;
         let ipc_schema = message.header_as_schema().ok_or_else(|| {
             Error::Protocol("Invalid Message: Cannot get header as Schema".to_string())
         })?;

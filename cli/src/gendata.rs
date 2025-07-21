@@ -18,11 +18,14 @@ use anyhow::Result;
 use databend_driver::DataType;
 use databend_driver::Field;
 use databend_driver::NumberDataType;
-use databend_driver::NumberValue;
-use databend_driver::Row;
 use databend_driver::RowStatsIterator;
-use databend_driver::RowWithStats;
 use databend_driver::Schema;
+
+#[cfg(any(
+    all(target_arch = "x86_64", target_os = "linux"),
+    all(target_arch = "aarch64", target_os = "macos")
+))]
+use databend_driver::{NumberValue, Row, RowWithStats};
 
 #[cfg(not(any(
     all(target_arch = "x86_64", target_os = "linux"),
@@ -66,13 +69,13 @@ impl Session {
             GenType::TPCH => {
                 conn.execute("install tpch;", params![]).unwrap();
                 conn.execute("load tpch;", params![]).unwrap();
-                conn.execute(&format!("CALL DBGEN(sf = {});", scale), params![])
+                conn.execute(&format!("CALL DBGEN(sf = {scale});"), params![])
                     .unwrap();
             }
             GenType::TPCDS => {
                 conn.execute("install tpcds;", params![]).unwrap();
                 conn.execute("load tpcds;", params![]).unwrap();
-                conn.execute(&format!("CALL DSDGEN(sf = {});", scale), params![])
+                conn.execute(&format!("CALL DSDGEN(sf = {scale});"), params![])
                     .unwrap();
             }
         }
@@ -108,7 +111,7 @@ impl Session {
             let size = metadata.len();
 
             let now = chrono::Utc::now().timestamp_nanos_opt().unwrap();
-            let stage = format!("@~/client/load/{}", now);
+            let stage = format!("@~/client/load/{now}");
             self.conn
                 .upload_to_stage(&stage, Box::new(data), size)
                 .await?;
@@ -151,7 +154,7 @@ impl Session {
     }
 }
 
-pub fn gendata_schema() -> Schema {
+fn gendata_schema() -> Schema {
     Schema::from_vec(vec![
         Field {
             name: "table".to_string(),

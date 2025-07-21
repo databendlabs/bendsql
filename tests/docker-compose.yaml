@@ -7,7 +7,7 @@ services:
     volumes:
       - ./data:/data
   meta:
-    image: docker.io/datafuselabs/databend-meta:nightly
+    image: docker.io/datafuselabs/databend-meta:${DATABEND_META_VERSION:-nightly}
     volumes:
       - ./config/databend-meta-node-1.toml:/conf.toml:ro
     command: -c /conf.toml
@@ -20,7 +20,7 @@ services:
       start_period: 2s
       timeout: 1s
   query:
-    image: docker.io/datafuselabs/databend-query:nightly
+    image: docker.io/datafuselabs/databend-query:${DATABEND_QUERY_VERSION:-nightly}
     volumes:
       - ./config/databend-query-node-1.toml:/conf.toml:ro
     command: -c /conf.toml
