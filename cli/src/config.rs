@@ -42,6 +42,7 @@ pub struct SettingsConfig {
     pub show_stats: Option<bool>,
     pub expand: Option<String>,
     pub quote_string: Option<bool>,
+    pub sql_delimiter: Option<char>,
     pub max_display_rows: Option<usize>,
     pub max_col_width: Option<usize>,
     pub max_width: Option<usize>,
@@ -101,6 +102,7 @@ pub struct Settings {
     pub multi_line: bool,
     /// Whether to quote string values in table output format.
     pub quote_string: bool,
+    pub sql_delimiter: char,
 
     pub bind_address: String,
     pub bind_port: u16,
@@ -157,6 +159,7 @@ impl Settings {
             .map(|expand| expand.as_str().into())
             .unwrap_or_else(|| self.expand);
         self.quote_string = cfg.quote_string.unwrap_or(self.quote_string);
+        self.sql_delimiter = cfg.sql_delimiter.unwrap_or(self.sql_delimiter);
         self.max_width = cfg.max_width.unwrap_or(self.max_width);
         self.max_col_width = cfg.max_col_width.unwrap_or(self.max_col_width);
         self.max_display_rows = cfg.max_display_rows.unwrap_or(self.max_display_rows);
@@ -197,6 +200,12 @@ impl Settings {
             "max_width" => self.max_width = cmd_value.parse()?,
             "max_col_width" => self.max_col_width = cmd_value.parse()?,
             "quote_string" => self.quote_string = cmd_value.parse()?,
+            "sql_delimiter" => {
+                if cmd_value.len() != 1 {
+                    return Err(anyhow!("SQL delimiter must be a single character"));
+                }
+                self.sql_delimiter = cmd_value.chars().next().unwrap()
+            }
             _ => return Err(anyhow!("Unknown command: {}", cmd_name)),
         }
         Ok(())
@@ -261,6 +270,7 @@ impl Default for Settings {
             no_auto_complete: false,
             output_format: OutputFormat::Table,
             quote_style: OutputQuoteStyle::Necessary,
+            sql_delimiter: ';',
             expand: ExpandMode::Auto,
             show_progress: false,
             max_display_rows: 1000,
@@ -269,7 +279,7 @@ impl Default for Settings {
             show_stats: false,
             time: None,
             multi_line: true,
-            quote_string: true,
+            quote_string: false,
             auto_open_browser: false,
             bind_address: "127.0.0.1".to_string(),
             bind_port: 0,

@@ -165,7 +165,8 @@ prompt = ":) "
 | `expand`             | Expand table format display, default auto, could be on/off/auto.                    |
 | `time`               | Whether to show the time elapsed when executing queries.                            |
 | `multi_line`         | Whether to allow multi-line input.                                                  |
-| `quote_string`       | Whether to quote string values in table output format.                              |
+| `quote_string`       | Whether to quote string values in table output format, default false.               |
+| `sql_delimiter`      | SQL delimiter, default `;`.                                                         |
 
 ## Commands in REPL
 

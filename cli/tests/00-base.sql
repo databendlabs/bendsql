@@ -36,13 +36,13 @@ CREATE TABLE 🐳🍞(🐳🐳 INTEGER, 🍞🍞 INTEGER);
 explain select * from c where b in （'x');
 
 -- enable it after we support code string in databend
--- select $$aa$$;
--- select $$
--- def add(a, b):
--- 	a + b
--- $$;
+select $$aa$$;
+select $$
+def add(a, b):
+	a + b
+$$;
 
-/* ignore this block /* /*
+/* ignore this block
 select 'in comment block';
 */
 
@@ -68,3 +68,4 @@ select 'bye';
 drop table test;
 drop table test_decimal;
 drop table test_nested;
+

@@ -484,6 +484,7 @@ impl Session {
         }
         self.query.push_str(line);
         let mut err = String::new();
+        let delimiter = self.settings.sql_delimiter;
 
         'Parser: loop {
             let mut is_valid = true;
@@ -493,7 +494,7 @@ impl Session {
                 match token {
                     Ok(token) => {
                         // SQL end with `;` or `\G` in repl
-                        let is_end_query = matches!(token.kind, TokenKind::SemiColon);
+                        let is_end_query = token.text() == delimiter.to_string();
                         let is_slash_g = self.is_repl
                             && (previous_token_backslash
                                 && token.kind == TokenKind::Ident
@@ -503,8 +504,8 @@ impl Session {
                         if is_end_query || is_slash_g {
                             // push to current and continue the tokenizer
                             let (sql, remain) = self.query.split_at(token.span.end as usize);
-                            if is_valid && !sql.is_empty() && sql.trim() != ";" {
-                                queries.push(sql.to_string());
+                            if is_valid && !sql.is_empty() && sql.trim() != delimiter.to_string() {
+                                queries.push(sql.trim_end_matches(delimiter).to_string());
                             }
                             self.query = remain.to_string();
                             continue 'Parser;
@@ -532,15 +533,17 @@ impl Session {
     pub async fn handle_query(
         &mut self,
         is_repl: bool,
-        query: &str,
+        raw_query: &str,
     ) -> Result<Option<ServerStats>> {
-        let mut query = query.trim_end_matches(';').trim();
+        let mut query = raw_query
+            .trim_end_matches(self.settings.sql_delimiter)
+            .trim();
         let mut expand = None;
         self.interrupted.store(false, Ordering::SeqCst);
 
         if is_repl {
             if query.starts_with('!') {
-                return self.handle_commands(query).await;
+                return self.handle_commands(raw_query).await;
             }
             if query == "exit" || query == "quit" {
                 return Ok(None);
@@ -601,12 +604,20 @@ impl Session {
             other => {
                 if other.starts_with("!set") {
                     let query = query[4..].split_whitespace().collect::<Vec<_>>();
-                    if query.len() != 2 {
+                    if query.len() == 3 {
+                        if query[1] != "=" {
+                            return Err(anyhow!(
+                                "Control command error, must be syntax of `!set cmd_name = cmd_value`."
+                            ));
+                        }
+                        self.settings.inject_ctrl_cmd(query[0], query[2])?;
+                    } else if query.len() == 2 {
+                        self.settings.inject_ctrl_cmd(query[0], query[1])?;
+                    } else {
                         return Err(anyhow!(
-                            "Control command error, must be syntax of `.cmd_name cmd_value`."
+                            "Control command error, must be syntax of `!set cmd_name = cmd_value` or `!set cmd_name cmd_value`."
                         ));
                     }
-                    self.settings.inject_ctrl_cmd(query[0], query[1])?;
                 } else if other.starts_with("!source") {
                     let query = query[7..].trim();
                     let path = Path::new(query);

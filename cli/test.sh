@@ -23,6 +23,7 @@ DATABEND_HOST=${DATABEND_HOST:-localhost}
 DATABEND_PORT=${DATABEND_PORT:-8000}
 
 TEST_HANDLER=$1
+FILTER=$2
 
 cargo build --bin bendsql
 
@@ -44,6 +45,10 @@ esac
 export BENDSQL="${CARGO_TARGET_DIR}/debug/bendsql"
 
 for tf in cli/tests/*.{sql,sh}; do
+	if [[ -n "$FILTER" && ! $tf =~ $FILTER ]]; then
+		continue
+	fi
+
 	[[ -e "$tf" ]] || continue
 	echo "    Running test -- ${tf}"
 	if [[ $tf == *.sh ]]; then
@@ -59,6 +64,11 @@ rm -f cli/tests/*.output
 
 for tf in cli/tests/"$TEST_HANDLER"/*.{sql,sh}; do
 	[[ -e "$tf" ]] || continue
+
+	if [[ -n "$FILTER" && ! $tf =~ $FILTER ]]; then
+		continue
+	fi
+
 	echo "    Running test -- ${tf}"
 	if [[ $tf == *.sh ]]; then
 		suite=$(basename "${tf}" | sed -e 's#.sh##')
