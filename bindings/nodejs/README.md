@@ -63,6 +63,8 @@ const transformer = new Transform({
 });
 await pipeline(stream, transformer);
 await finished(stream);
+
+await conn.close();
 ```
 
 ## Type Mapping

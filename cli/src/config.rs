@@ -14,12 +14,12 @@
 
 // Loading from `$HOME/.config/bendsql/config.toml`
 
-use std::{collections::BTreeMap, path::Path};
-
 use anyhow::anyhow;
 use anyhow::Result;
 use clap::ValueEnum;
+use databend_driver::LoadMethod;
 use serde::Deserialize;
+use std::{collections::BTreeMap, path::Path};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Config {
@@ -138,6 +138,21 @@ impl TryFrom<&str> for TimeOption {
             "server" => Ok(TimeOption::Server),
             "local" => Ok(TimeOption::Local),
             _ => Err(anyhow!("Unknown time display option: {}", s)),
+        }
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug, PartialEq)]
+pub enum ClapLoadMethod {
+    Stage,
+    Streaming,
+}
+
+impl From<ClapLoadMethod> for LoadMethod {
+    fn from(value: ClapLoadMethod) -> Self {
+        match value {
+            ClapLoadMethod::Stage => LoadMethod::Stage,
+            ClapLoadMethod::Streaming => LoadMethod::Streaming,
         }
     }
 }

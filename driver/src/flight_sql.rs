@@ -31,6 +31,8 @@ use tokio_stream::{Stream, StreamExt};
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use url::Url;
 
+use crate::client::LoadMethod;
+use crate::conn::{ConnectionInfo, IConnection, Reader};
 use databend_client::presign_upload_to_stage;
 use databend_client::SensitiveString;
 use databend_driver_core::error::{Error, Result};
@@ -38,8 +40,6 @@ use databend_driver_core::rows::{
     Row, RowIterator, RowStatsIterator, RowWithStats, Rows, ServerStats,
 };
 use databend_driver_core::schema::Schema;
-
-use crate::conn::{ConnectionInfo, IConnection, Reader};
 
 #[derive(Clone)]
 pub struct FlightSQLConnection {
@@ -110,27 +110,37 @@ impl IConnection for FlightSQLConnection {
         _sql: &str,
         _data: Reader,
         _size: u64,
-        _file_format_options: Option<BTreeMap<&str, &str>>,
-        _copy_options: Option<BTreeMap<&str, &str>>,
+        _method: LoadMethod,
     ) -> Result<ServerStats> {
         Err(Error::Protocol(
             "LOAD DATA unavailable for FlightSQL".to_string(),
         ))
     }
 
-    async fn load_file(
-        &self,
-        _sql: &str,
-        _fp: &Path,
-        _format_options: Option<BTreeMap<&str, &str>>,
-        _copy_options: Option<BTreeMap<&str, &str>>,
-    ) -> Result<ServerStats> {
+    async fn load_file(&self, _sql: &str, _fp: &Path, _method: LoadMethod) -> Result<ServerStats> {
         Err(Error::Protocol(
             "LOAD FILE unavailable for FlightSQL".to_string(),
         ))
     }
 
-    async fn stream_load(&self, _sql: &str, _data: Vec<Vec<&str>>) -> Result<ServerStats> {
+    async fn load_file_with_options(
+        &self,
+        _sql: &str,
+        _fp: &Path,
+        _file_format_options: Option<BTreeMap<&str, &str>>,
+        _copy_options: Option<BTreeMap<&str, &str>>,
+    ) -> Result<ServerStats> {
+        Err(Error::Protocol(
+            "load_file_with_options unavailable for FlightSQL".to_string(),
+        ))
+    }
+
+    async fn stream_load(
+        &self,
+        _sql: &str,
+        _data: Vec<Vec<&str>>,
+        _method: LoadMethod,
+    ) -> Result<ServerStats> {
         Err(Error::Protocol(
             "STREAM LOAD unavailable for FlightSQL".to_string(),
         ))

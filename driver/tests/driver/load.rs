@@ -15,10 +15,26 @@
 use std::{path::Path, vec};
 
 use chrono::{NaiveDateTime, Utc};
-use databend_driver::Client;
+use databend_driver::{Client, LoadMethod};
 use tokio_stream::StreamExt;
 
 use crate::common::DEFAULT_DSN;
+
+// enum LoadMethodExt{
+//     Stage(pregined, old),
+//
+// }
+//
+// struct TestCase {
+//     table_name: String,
+//     is_presigned: bool,
+//     load_method: LoadMethod
+//
+// }
+//
+// impl TestCase {
+//
+// }
 
 async fn prepare_client(presigned: bool) -> Option<Client> {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
@@ -36,9 +52,17 @@ async fn prepare_client(presigned: bool) -> Option<Client> {
     Some(client)
 }
 
-async fn prepare_table(client: &Client, prefix: &str) -> String {
+async fn prepare_table(client: &Client, prefix: &str, load_method: Option<LoadMethod>) -> String {
+    let method = if let Some(load_method) = load_method {
+        format!("{load_method:?}").to_lowercase()
+    } else {
+        "attachment".to_string()
+    };
     let conn = client.get_conn().await.unwrap();
-    let table = format!("books_{prefix}_{}", Utc::now().format("%Y%m%d%H%M%S%9f"));
+    let table = format!(
+        "books_{prefix}_{}_{method}",
+        Utc::now().format("%Y%m%d%H%M%S%9f")
+    );
     let sql = format!(
         "CREATE TABLE `{table}` (
             title VARCHAR NULL,
@@ -50,7 +74,7 @@ async fn prepare_table(client: &Client, prefix: &str) -> String {
     table
 }
 
-async fn prepare_data(table: &str, client: &Client) {
+async fn prepare_data(table: &str, client: &Client, load_method: LoadMethod) {
     let conn = client.get_conn().await.unwrap();
     let sql = format!("INSERT INTO `{table}` VALUES");
     let data = vec![
@@ -68,18 +92,30 @@ async fn prepare_data(table: &str, client: &Client) {
         ],
         vec!["Three Body", "NULL-liucixin", "2019", "2019-07-04T00:00:00"],
     ];
-    let stats = conn.stream_load(&sql, data).await.unwrap();
-    assert_eq!(stats.write_rows, 3)
+    let stats = conn.stream_load(&sql, data, load_method).await.unwrap();
+    assert_eq!(stats.write_rows, 3);
 }
 
-async fn prepare_data_with_file(table: &str, file_type: &str, client: &Client) {
+async fn prepare_data_with_file(
+    table: &str,
+    file_type: &str,
+    client: &Client,
+    load_method: Option<LoadMethod>,
+) {
     let conn = client.get_conn().await.unwrap();
     let fp = format!("tests/driver/data/books.{file_type}");
-    let sql = format!("INSERT INTO `{table}` VALUES");
-    let stats = conn
-        .load_file(&sql, Path::new(&fp), None, None)
-        .await
-        .unwrap();
+    let stats = if let Some(load_method) = load_method {
+        let sql =
+            format!("INSERT INTO `{table}` VALUES from @_databend_load file_format=(type=csv)");
+        conn.load_file(&sql, Path::new(&fp), load_method)
+            .await
+            .unwrap()
+    } else {
+        let sql = format!("INSERT INTO `{table}` VALUES");
+        conn.load_file_with_options(&sql, Path::new(&fp), None, None)
+            .await
+            .unwrap()
+    };
     assert_eq!(stats.write_rows, 3);
 }
 
@@ -120,26 +156,43 @@ async fn check_result(table: &str, client: &Client) {
 #[tokio::test]
 async fn load_csv_with_presign() {
     if let Some(client) = prepare_client(true).await {
-        let table = prepare_table(&client, "load_csv_with_presign").await;
-        prepare_data_with_file(&table, "csv", &client).await;
-        check_result(&table, &client).await;
+        for m in [None, Some(LoadMethod::Streaming), Some(LoadMethod::Stage)] {
+            let table = prepare_table(&client, "load_csv_with_presign", m).await;
+            prepare_data_with_file(&table, "csv", &client, m).await;
+            check_result(&table, &client).await;
+        }
     }
 }
 
 #[tokio::test]
 async fn load_csv_without_presign() {
     if let Some(client) = prepare_client(false).await {
-        let table = prepare_table(&client, "load_csv_without_presign").await;
-        prepare_data_with_file(&table, "csv", &client).await;
-        check_result(&table, &client).await;
+        for m in [None, Some(LoadMethod::Streaming), Some(LoadMethod::Stage)] {
+            let table = prepare_table(&client, "load_csv_without_presign", m).await;
+            prepare_data_with_file(&table, "csv", &client, m).await;
+            check_result(&table, &client).await;
+        }
     }
 }
 
 #[tokio::test]
 async fn stream_load_with_presign() {
     if let Some(client) = prepare_client(true).await {
-        let table = prepare_table(&client, "stream_load_with_presign").await;
-        prepare_data(&table, &client).await;
-        check_result(&table, &client).await;
+        for m in [LoadMethod::Streaming, LoadMethod::Stage] {
+            let table = prepare_table(&client, "stream_load_with_presign", Some(m)).await;
+            prepare_data(&table, &client, m).await;
+            check_result(&table, &client).await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn stream_load_without_presign() {
+    if let Some(client) = prepare_client(false).await {
+        for m in [LoadMethod::Streaming, LoadMethod::Stage] {
+            let table = prepare_table(&client, "stream_load_without_presign", Some(m)).await;
+            prepare_data(&table, &client, m).await;
+            check_result(&table, &client).await;
+        }
     }
 }

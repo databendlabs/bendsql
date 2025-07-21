@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth};
+use crate::capability::Capability;
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
 use crate::global_cookie_store::GlobalCookieStore;
 use crate::login::{
@@ -25,6 +26,7 @@ use crate::login::{
     SessionTokenInfo,
 };
 use crate::presign::{presign_upload_to_stage, PresignMode, PresignedResponse, Reader};
+use crate::response::LoadResponse;
 use crate::stage::StageLocation;
 use crate::{
     error::{Error, Result},
@@ -42,6 +44,7 @@ use reqwest::cookie::CookieStore;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::multipart::{Form, Part};
 use reqwest::{Body, Client as HttpClient, Request, RequestBuilder, Response, StatusCode};
+use semver::Version;
 use serde::Deserialize;
 use tokio::time::sleep;
 use tokio_retry::strategy::jitter;
@@ -56,6 +59,7 @@ const HEADER_WAREHOUSE: &str = "X-DATABEND-WAREHOUSE";
 const HEADER_STAGE_NAME: &str = "X-DATABEND-STAGE-NAME";
 const HEADER_ROUTE_HINT: &str = "X-DATABEND-ROUTE-HINT";
 const TXN_STATE_ACTIVE: &str = "Active";
+const HEADER_SQL: &str = "X-DATABEND-SQL";
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -79,11 +83,11 @@ pub struct APIClient {
 
     disable_login: bool,
     disable_session_token: bool,
-    session_token_info: Option<Arc<parking_lot::Mutex<(SessionTokenInfo, Instant)>>>,
+    session_token_info: Option<Arc<Mutex<(SessionTokenInfo, Instant)>>>,
 
     closed: AtomicBool,
 
-    server_version: Option<String>,
+    server_version: Option<Version>,
 
     wait_time_secs: Option<i64>,
     max_rows_in_buffer: Option<i64>,
@@ -97,6 +101,8 @@ pub struct APIClient {
     presign: Mutex<PresignMode>,
     last_node_id: Mutex<Option<String>>,
     last_query_id: Mutex<Option<String>>,
+
+    capability: Capability,
 }
 
 impl APIClient {
@@ -109,6 +115,10 @@ impl APIClient {
         let client = Arc::new(client);
         client.check_presign().await?;
         Ok(client)
+    }
+
+    pub fn capability(&self) -> &Capability {
+        &self.capability
     }
 
     fn set_presign_mode(&self, mode: PresignMode) {
@@ -656,6 +666,32 @@ impl APIClient {
         Ok(())
     }
 
+    pub async fn streaming_load(
+        &self,
+        sql: &str,
+        data: Reader,
+        file_name: &str,
+    ) -> Result<LoadResponse> {
+        let body = Body::wrap_stream(ReaderStream::new(data));
+        let part = Part::stream(body).file_name(file_name.to_string());
+        let endpoint = self.endpoint.join("v1/streaming_load")?;
+        let mut builder = self.cli.put(endpoint.clone());
+        builder = self.wrap_auth_or_session_token(builder)?;
+        let query_id = self.gen_query_id();
+        let mut headers = self.make_headers(Some(&query_id))?;
+        headers.insert(HEADER_SQL, sql.parse()?);
+        let form = Form::new().part("upload", part);
+        let resp = builder.headers(headers).multipart(form).send().await?;
+        let status = resp.status();
+        if status != 200 {
+            return Err(
+                Error::response_error(status, &resp.bytes().await?).with_context("streaming_load")
+            );
+        }
+        let resp = resp.json::<LoadResponse>().await?;
+        Ok(resp)
+    }
+
     async fn login(&mut self) -> Result<()> {
         let endpoint = self.endpoint.join("/v1/session/login")?;
         let headers = self.make_headers(None)?;
@@ -683,12 +719,18 @@ impl APIClient {
         match response {
             LoginResponseResult::Err { error } => return Err(Error::AuthFailure(error)),
             LoginResponseResult::Ok(info) => {
-                self.server_version = Some(info.version.clone());
+                let server_version = info
+                    .version
+                    .parse()
+                    .map_err(|e| Error::Decode(format!("invalid server version: {e}")))?;
+                self.capability = Capability::from_server_version(&server_version);
+                self.server_version = Some(server_version.clone());
                 if let Some(tokens) = info.tokens {
-                    info!("login success with session token");
+                    info!("login success with session token version = {server_version}",);
                     self.session_token_info = Some(Arc::new(Mutex::new((tokens, Instant::now()))))
+                } else {
+                    info!("login success, version = {server_version}");
                 }
-                info!("login success without session token");
             }
         }
         Ok(())
@@ -969,6 +1011,7 @@ impl Default for APIClient {
             closed: Default::default(),
             last_query_id: Default::default(),
             server_version: None,
+            capability: Default::default(),
         }
     }
 }

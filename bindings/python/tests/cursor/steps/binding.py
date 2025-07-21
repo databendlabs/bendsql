@@ -234,6 +234,11 @@ def _(context):
         )
 
 
-@then("Load file and Select should be equal")
+@then("Load file with Stage and Select should be equal")
+def _(context):
+    print("SKIP")
+
+
+@then("Load file with Streaming and Select should be equal")
 def _(context):
     print("SKIP")

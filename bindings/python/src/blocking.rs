@@ -14,17 +14,17 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 
-use databend_driver::SchemaRef;
+use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
+use crate::utils::{options_as_ref, to_sql_params, wait_for_future};
+use databend_driver::{LoadMethod, SchemaRef};
 use pyo3::exceptions::{PyAttributeError, PyException, PyStopIteration};
 use pyo3::types::{PyList, PyTuple};
 use pyo3::{prelude::*, IntoPyObjectExt};
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
-
-use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
-use crate::utils::{options_as_ref, to_sql_params, wait_for_future};
 
 #[pyclass(module = "databend_driver")]
 pub struct BlockingDatabendClient(databend_driver::Client);
@@ -157,28 +157,41 @@ impl BlockingDatabendConnection {
                 .iter()
                 .map(|v| v.iter().map(|s| s.as_ref()).collect())
                 .collect();
-            this.stream_load(&sql, data).await.map_err(DriverError::new)
+            this.stream_load(&sql, data, LoadMethod::Streaming)
+                .await
+                .map_err(DriverError::new)
         })?;
         Ok(ServerStats::new(ret))
     }
 
-    #[pyo3(signature = (sql, fp, format_options=None, copy_options=None))]
+    #[pyo3(signature = (sql, fp, method=None, format_options=None, copy_options=None))]
     pub fn load_file<'p>(
         &'p self,
         py: Python<'p>,
         sql: String,
         fp: String,
+        method: Option<String>,
         format_options: Option<BTreeMap<String, String>>,
         copy_options: Option<BTreeMap<String, String>>,
     ) -> PyResult<ServerStats> {
         let this = self.0.clone();
-        let ret = wait_for_future(py, async move {
-            let format_options = options_as_ref(&format_options);
-            let copy_options = options_as_ref(&copy_options);
-            this.load_file(&sql, Path::new(&fp), format_options, copy_options)
-                .await
-                .map_err(DriverError::new)
-        })?;
+        let ret = if format_options.is_some() {
+            wait_for_future(py, async move {
+                let format_options = options_as_ref(&format_options);
+                let copy_options = options_as_ref(&copy_options);
+                this.load_file_with_options(&sql, Path::new(&fp), format_options, copy_options)
+                    .await
+                    .map_err(DriverError::new)
+            })?
+        } else {
+            let load_method = LoadMethod::from_str(&method.unwrap_or_else(|| "stage".to_string()))
+                .map_err(DriverError::new)?;
+            wait_for_future(py, async move {
+                this.load_file(&sql, Path::new(&fp), load_method)
+                    .await
+                    .map_err(DriverError::new)
+            })?
+        };
         Ok(ServerStats::new(ret))
     }
 
@@ -307,7 +320,7 @@ impl BlockingDatabendCursor {
     pub fn executemany<'p>(
         &'p mut self,
         py: Python<'p>,
-        operation: String,
+        sql: String,
         seq_of_parameters: Vec<Bound<'p, PyAny>>,
     ) -> PyResult<PyObject> {
         self.reset();
@@ -316,9 +329,10 @@ impl BlockingDatabendCursor {
             if param.downcast::<PyList>().is_ok() || param.downcast::<PyTuple>().is_ok() {
                 let bytes = format_csv(seq_of_parameters)?;
                 let size = bytes.len() as u64;
+                let sql = format!("{sql} from @_databend_load file_format=(type=csv)");
                 let reader = Box::new(std::io::Cursor::new(bytes));
                 let stats = wait_for_future(py, async move {
-                    conn.load_data(&operation, reader, size, None, None)
+                    conn.load_data(&sql, reader, size, LoadMethod::Streaming)
                         .await
                         .map_err(DriverError::new)
                 })?;
