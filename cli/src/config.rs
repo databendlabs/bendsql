@@ -200,7 +200,12 @@ impl Settings {
             "max_width" => self.max_width = cmd_value.parse()?,
             "max_col_width" => self.max_col_width = cmd_value.parse()?,
             "quote_string" => self.quote_string = cmd_value.parse()?,
-            "sql_delimiter" => self.sql_delimiter = cmd_value.chars().next().unwrap(),
+            "sql_delimiter" => {
+                if cmd_value.len() != 1 {
+                    return Err(anyhow!("SQL delimiter must be a single character"));
+                }
+                self.sql_delimiter = cmd_value.chars().next().unwrap()
+            }
             _ => return Err(anyhow!("Unknown command: {}", cmd_name)),
         }
         Ok(())
