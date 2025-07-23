@@ -352,7 +352,7 @@ impl Session {
                     let queries = self.append_query(&line);
                     for query in queries {
                         if !query.starts_with('!') {
-                            let _ = rl.add_history_entry(&format!(
+                            let _ = rl.add_history_entry(format!(
                                 "{}{}",
                                 query, self.settings.sql_delimiter
                             ));
