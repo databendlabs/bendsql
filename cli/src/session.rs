@@ -351,7 +351,13 @@ impl Session {
                 Ok(line) => {
                     let queries = self.append_query(&line);
                     for query in queries {
-                        let _ = rl.add_history_entry(&query);
+                        if !query.starts_with('!') {
+                            let _ = rl.add_history_entry(format!(
+                                "{}{}",
+                                query, self.settings.sql_delimiter
+                            ));
+                        }
+
                         match self.handle_query(true, &query).await {
                             Ok(None) => {
                                 break 'F;
@@ -505,7 +511,8 @@ impl Session {
                             // push to current and continue the tokenizer
                             let (sql, remain) = self.query.split_at(token.span.end as usize);
                             if is_valid && !sql.is_empty() && sql.trim() != delimiter.to_string() {
-                                queries.push(sql.trim_end_matches(delimiter).to_string());
+                                let sql = sql.trim_end_matches(delimiter);
+                                queries.push(sql.to_string());
                             }
                             self.query = remain.to_string();
                             continue 'Parser;
