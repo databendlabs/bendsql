@@ -22,7 +22,7 @@ pub struct Capability {
 impl Capability {
     pub fn from_server_version(ver: &Version) -> Capability {
         Capability {
-            streaming_load: ver > &Version::new(1, 2, 778),
+            streaming_load: ver > &Version::new(1, 2, 781),
         }
     }
 }
