@@ -20,7 +20,6 @@ use tokio_stream::StreamExt;
 
 use crate::common::DEFAULT_DSN;
 
-
 async fn prepare_client(presigned: bool) -> Option<Client> {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     let client = if presigned {
@@ -153,7 +152,6 @@ async fn load_csv_with_presign() {
 async fn load_csv_without_presign() {
     if let Some(client) = prepare_client(false).await {
         for m in [Some(LoadMethod::Streaming), Some(LoadMethod::Stage)] {
-            println!("load method={:?}", m);
             let table = prepare_table(&client, "load_csv_without_presign", m).await;
             prepare_data_with_file(&table, "csv", &client, m).await;
             check_result(&table, &client).await;
