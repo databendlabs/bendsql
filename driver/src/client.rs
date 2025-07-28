@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use once_cell::sync::Lazy;
 use std::collections::BTreeMap;
 use std::path::Path;
-
-use once_cell::sync::Lazy;
+use std::str::FromStr;
 use url::Url;
 
 use crate::conn::IConnection;
@@ -35,6 +35,24 @@ static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     version.to_string()
 });
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LoadMethod {
+    Stage,
+    Streaming,
+}
+
+impl FromStr for LoadMethod {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "stage" => Ok(LoadMethod::Stage),
+            "streaming" => Ok(LoadMethod::Streaming),
+            _ => Err(Error::BadArgument(format!("invalid load method: {s}"))),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Client {
@@ -181,28 +199,34 @@ impl Connection {
         sql: &str,
         data: Reader,
         size: u64,
+        method: LoadMethod,
+    ) -> Result<ServerStats> {
+        self.inner.load_data(sql, data, size, method).await
+    }
+
+    pub async fn load_file(&self, sql: &str, fp: &Path, method: LoadMethod) -> Result<ServerStats> {
+        self.inner.load_file(sql, fp, method).await
+    }
+
+    pub async fn load_file_with_options(
+        &self,
+        sql: &str,
+        fp: &Path,
         file_format_options: Option<BTreeMap<&str, &str>>,
         copy_options: Option<BTreeMap<&str, &str>>,
     ) -> Result<ServerStats> {
         self.inner
-            .load_data(sql, data, size, file_format_options, copy_options)
+            .load_file_with_options(sql, fp, file_format_options, copy_options)
             .await
     }
 
-    pub async fn load_file(
+    pub async fn stream_load(
         &self,
         sql: &str,
-        fp: &Path,
-        format_options: Option<BTreeMap<&str, &str>>,
-        copy_options: Option<BTreeMap<&str, &str>>,
+        data: Vec<Vec<&str>>,
+        method: LoadMethod,
     ) -> Result<ServerStats> {
-        self.inner
-            .load_file(sql, fp, format_options, copy_options)
-            .await
-    }
-
-    pub async fn stream_load(&self, sql: &str, data: Vec<Vec<&str>>) -> Result<ServerStats> {
-        self.inner.stream_load(sql, data).await
+        self.inner.stream_load(sql, data, method).await
     }
 
     // PUT file://<path_to_file>/<filename> internalStage|externalStage

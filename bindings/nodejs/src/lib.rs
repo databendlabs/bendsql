@@ -15,14 +15,12 @@
 #[macro_use]
 extern crate napi_derive;
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::Path,
-};
-
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use databend_driver::LoadMethod;
 use napi::{bindgen_prelude::*, Env};
 use once_cell::sync::Lazy;
+use std::str::FromStr;
+use std::{collections::HashMap, path::Path};
 use tokio_stream::StreamExt;
 
 static VERSION: Lazy<String> = Lazy::new(|| {
@@ -174,7 +172,7 @@ impl Connection {
     pub async fn stream_load(&self, sql: String, data: Vec<Vec<&str>>) -> Result<ServerStats> {
         let ss = self
             .inner
-            .stream_load(&sql, data)
+            .stream_load(&sql, data, LoadMethod::Streaming)
             .await
             .map_err(format_napi_error)?;
         Ok(ServerStats(ss))
@@ -187,21 +185,23 @@ impl Connection {
         &self,
         sql: String,
         file: String,
-        format_options: Option<BTreeMap<String, String>>,
-        copy_options: Option<BTreeMap<String, String>>,
+        method: Option<String>,
     ) -> Result<ServerStats> {
-        let format_options = format_options
-            .as_ref()
-            .map(|opts| opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect());
-        let copy_options = copy_options
-            .as_ref()
-            .map(|opts| opts.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect());
+        let method = LoadMethod::from_str(&method.unwrap_or_else(|| "stage".to_string()))
+            .map_err(format_napi_error)?;
         let ss = self
             .inner
-            .load_file(&sql, Path::new(&file), format_options, copy_options)
+            .load_file(&sql, Path::new(&file), method)
             .await
             .map_err(format_napi_error)?;
         Ok(ServerStats(ss))
+    }
+
+    /// Close the Connection and release resources.
+    #[napi]
+    pub async fn close(&self) -> Result<()> {
+        self.inner.close().await.map_err(format_napi_error)?;
+        Ok(())
     }
 }
 

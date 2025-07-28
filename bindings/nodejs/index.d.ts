@@ -53,7 +53,7 @@ export declare class Connection {
    * Load file with stage attachment.
    * The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
    */
-  loadFile(sql: string, file: string, formatOptions?: Record<string, string> | undefined | null, copyOptions?: Record<string, string> | undefined | null): Promise<ServerStats>
+  loadFile(sql: string, file: string, method?: string | undefined | null): Promise<ServerStats>
 }
 export declare class ConnectionInfo {
   get handler(): string

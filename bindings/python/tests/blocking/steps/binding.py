@@ -161,15 +161,17 @@ def _(context):
     assert ret == expected, f"ret: {ret}"
 
 
-@then("Load file and Select should be equal")
-def _(context):
+def test_load_file(context, load_method):
     progress = context.conn.load_file(
-        "INSERT INTO test VALUES",
+        "INSERT INTO test VALUES FROM @_databend_load file_format = (type=csv)",
         "tests/data/test.csv",
-        {"type": "CSV"},
     )
-    assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
-    assert progress.write_bytes == 194, f"progress.write_bytes: {progress.write_bytes}"
+    assert progress.write_rows == 3, (
+        f"{load_method} progress.write_rows: {progress.write_rows}"
+    )
+    assert progress.write_bytes == 194, (
+        f"{load_method}: progress.write_bytes: {progress.write_bytes}"
+    )
 
     rows = context.conn.query_iter("SELECT * FROM test")
     ret = [row.values() for row in rows]
@@ -178,7 +180,17 @@ def _(context):
         (-2, 2, 2.0, '"', None, date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
         (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
     ]
-    assert ret == expected, f"ret: {ret}"
+    assert ret == expected, f"{load_method} ret: {ret}"
+
+
+@then("Load file with Stage and Select should be equal")
+def _(context):
+    test_load_file(context, "stage")
+
+
+@then("Load file with Streaming and Select should be equal")
+def _(context):
+    test_load_file(context, "streaming")
 
 
 @then("Temp table should work with cluster")

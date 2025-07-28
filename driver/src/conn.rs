@@ -23,6 +23,7 @@ use tokio::io::AsyncRead;
 use tokio::io::BufReader;
 use tokio_stream::StreamExt;
 
+use crate::client::LoadMethod;
 use databend_client::StageLocation;
 use databend_client::{presign_download_from_stage, PresignedResponse};
 use databend_driver_core::error::{Error, Result};
@@ -118,19 +119,25 @@ pub trait IConnection: Send + Sync {
         sql: &str,
         data: Reader,
         size: u64,
+        method: LoadMethod,
+    ) -> Result<ServerStats>;
+
+    async fn load_file(&self, sql: &str, fp: &Path, method: LoadMethod) -> Result<ServerStats>;
+
+    async fn load_file_with_options(
+        &self,
+        sql: &str,
+        fp: &Path,
         file_format_options: Option<BTreeMap<&str, &str>>,
         copy_options: Option<BTreeMap<&str, &str>>,
     ) -> Result<ServerStats>;
 
-    async fn load_file(
+    async fn stream_load(
         &self,
         sql: &str,
-        fp: &Path,
-        format_options: Option<BTreeMap<&str, &str>>,
-        copy_options: Option<BTreeMap<&str, &str>>,
+        data: Vec<Vec<&str>>,
+        _method: LoadMethod,
     ) -> Result<ServerStats>;
-
-    async fn stream_load(&self, sql: &str, data: Vec<Vec<&str>>) -> Result<ServerStats>;
 
     // PUT file://<path_to_file>/<filename> internalStage|externalStage
     async fn put_files(&self, local_file: &str, stage: &str) -> Result<RowStatsIterator> {

@@ -309,10 +309,34 @@ Then("Stream load and Select should be equal", async function () {
   assert.deepEqual(ret, expected);
 });
 
-Then("Load file and Select should be equal", async function () {
-  const progress = await this.conn.loadFile(`INSERT INTO test VALUES`, "tests/data/test.csv", {
-    type: "CSV",
-  });
+Then("Load file with Stage and Select should be equal", async function () {
+  const progress = await this.conn.loadFile(
+    `INSERT INTO test VALUES from @_databend_load file_format=(type=csv)`,
+    "tests/data/test.csv",
+    "stage",
+  );
+  assert.equal(progress.writeRows, 3);
+  assert.equal(progress.writeBytes, 194);
+
+  const rows = await this.conn.queryIter("SELECT * FROM test");
+  const ret = [];
+  for await (const row of rows) {
+    ret.push(row.values());
+  }
+  const expected = [
+    [-1, 1, 1.0, "'", null, new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
+    [-2, 2, 2.0, '"', null, new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
+    [-3, 3, 3.0, "\\", "NULL", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
+  ];
+  assert.deepEqual(ret, expected);
+});
+
+Then("Load file with Streaming and Select should be equal", async function () {
+  const progress = await this.conn.loadFile(
+    `INSERT INTO test VALUES from @_databend_load file_format=(type=csv)`,
+    "tests/data/test.csv",
+    "streaming",
+  );
   assert.equal(progress.writeRows, 3);
   assert.equal(progress.writeBytes, 194);
 

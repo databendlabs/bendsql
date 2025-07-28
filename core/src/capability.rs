@@ -12,30 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod client;
+use semver::Version;
 
-mod auth;
-mod error;
-mod error_code;
-mod global_cookie_store;
-mod login;
-mod pages;
-mod presign;
-mod request;
-mod response;
+#[derive(Default, Debug)]
+pub struct Capability {
+    pub streaming_load: bool,
+}
 
-mod capability;
-mod session;
-mod stage;
-
-pub use auth::SensitiveString;
-pub use client::APIClient;
-pub use error::Error;
-pub use pages::Page;
-pub use pages::Pages;
-pub use presign::presign_download_from_stage;
-pub use presign::presign_upload_to_stage;
-pub use presign::PresignedResponse;
-pub use response::QueryStats;
-pub use response::SchemaField;
-pub use stage::StageLocation;
+impl Capability {
+    pub fn from_server_version(ver: &Version) -> Capability {
+        Capability {
+            streaming_load: ver > &Version::new(1, 2, 781),
+        }
+    }
+}

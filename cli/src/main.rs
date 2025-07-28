@@ -24,17 +24,15 @@ mod session;
 mod trace;
 mod web;
 
-use std::{
-    collections::BTreeMap,
-    io::{stdin, IsTerminal},
-};
+use std::io::{stdin, IsTerminal};
 
 use anyhow::{anyhow, Result};
-use clap::{ArgAction, CommandFactory, Parser, ValueEnum};
+use clap::{ArgAction, CommandFactory, Parser};
 use databend_client::SensitiveString;
 use log::info;
 use once_cell::sync::Lazy;
 
+use crate::config::ClapLoadMethod;
 use crate::{
     args::ConnectionArgs,
     config::{Config, OutputFormat, OutputQuoteStyle, Settings, TimeOption},
@@ -49,59 +47,6 @@ static VERSION: Lazy<String> = Lazy::new(|| {
         None => format!("{version}-{sha}({timestamp})"),
     }
 });
-
-/// Supported file format and options:
-/// https://databend.rs/doc/sql-reference/file-format-options
-#[derive(ValueEnum, Clone, Debug, PartialEq)]
-pub enum InputFormat {
-    CSV,
-    TSV,
-    NDJSON,
-    Parquet,
-    XML,
-}
-
-impl InputFormat {
-    fn get_options<'o>(&self, opts: &'o Vec<(String, String)>) -> BTreeMap<&'o str, &'o str> {
-        let mut options = BTreeMap::new();
-        match self {
-            InputFormat::CSV => {
-                options.insert("type", "CSV");
-                options.insert("record_delimiter", "\n");
-                options.insert("field_delimiter", ",");
-                options.insert("quote", "\"");
-                options.insert("skip_header", "0");
-            }
-            InputFormat::TSV => {
-                options.insert("type", "TSV");
-                options.insert("record_delimiter", "\n");
-                options.insert("field_delimiter", "\t");
-            }
-            InputFormat::NDJSON => {
-                options.insert("type", "NDJSON");
-                options.insert("null_field_as", "NULL");
-                options.insert("missing_field_as", "NULL");
-            }
-            InputFormat::Parquet => {
-                options.insert("type", "Parquet");
-            }
-            InputFormat::XML => {
-                options.insert("type", "XML");
-                options.insert("row_tag", "row");
-            }
-        }
-        for (k, v) in opts {
-            // handle escaped newline chars in terminal for better usage
-            let _ = match v.as_str() {
-                "\\r\\n" => options.insert(k, "\r\n"),
-                "\\r" => options.insert(k, "\r"),
-                "\\n" => options.insert(k, "\n"),
-                _ => options.insert(k, v),
-            };
-        }
-        options
-    }
-}
 
 #[derive(Debug, Parser, PartialEq)]
 #[command(version = VERSION.as_str())]
@@ -179,11 +124,8 @@ struct Args {
     #[clap(short = 'd', long, help = "Data to load, @file or @- for stdin")]
     data: Option<String>,
 
-    #[clap(short = 'f', long, default_value = "csv", help = "Data format to load")]
-    format: InputFormat,
-
-    #[clap(long, value_parser = parse_key_val::<String, String>, help = "Data format options")]
-    format_opt: Vec<(String, String)>,
+    #[clap(long, value_enum, default_value_t = ClapLoadMethod::Stage, help = "method to load data to table")]
+    load_method: ClapLoadMethod,
 
     #[clap(short = 'o', long, help = "Output format")]
     output: Option<OutputFormat>,
@@ -421,16 +363,16 @@ pub async fn main() -> Result<()> {
                 session.handle_reader(std::io::Cursor::new(query)).await?;
             }
             Some(data) => {
-                let options = args.format.get_options(&args.format_opt);
+                let load_method = args.load_method.into();
                 if data.starts_with('@') {
                     match data.strip_prefix('@') {
-                        Some("-") => session.stream_load_stdin(&query, options).await?,
+                        Some("-") => session.stream_load_stdin(&query, load_method).await?,
                         Some(fname) => {
                             let path = std::path::Path::new(fname);
                             if !path.exists() {
                                 return Err(anyhow!("file not found: {fname}"));
                             }
-                            session.stream_load_file(&query, path, options).await?
+                            session.stream_load_file(&query, path, load_method).await?
                         }
                         None => {
                             return Err(anyhow!("invalid data input: {data}"));

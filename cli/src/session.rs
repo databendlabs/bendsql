@@ -12,12 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
 use std::io::BufRead;
 use std::net::TcpListener;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::ast::quote_string_in_box_display;
+use crate::ast::QueryKind;
+use crate::config::ExpandMode;
+use crate::config::Settings;
+use crate::config::TimeOption;
+use crate::display::INTERRUPTED_MESSAGE;
+use crate::display::{format_write_progress, ChunkDisplay, FormatDisplay};
+use crate::helper::CliHelper;
+use crate::web::start_server;
+use crate::VERSION;
 use anyhow::anyhow;
 use anyhow::Result;
 use async_recursion::async_recursion;
@@ -25,7 +34,7 @@ use chrono::NaiveDateTime;
 use databend_common_ast::parser::all_reserved_keywords;
 use databend_common_ast::parser::token::TokenKind;
 use databend_common_ast::parser::token::Tokenizer;
-use databend_driver::{Client, Connection, ServerStats, TryFromRow};
+use databend_driver::{Client, Connection, LoadMethod, ServerStats, TryFromRow};
 use log::error;
 use once_cell::sync::Lazy;
 use rustyline::config::Builder;
@@ -39,17 +48,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
-
-use crate::ast::quote_string_in_box_display;
-use crate::ast::QueryKind;
-use crate::config::ExpandMode;
-use crate::config::Settings;
-use crate::config::TimeOption;
-use crate::display::INTERRUPTED_MESSAGE;
-use crate::display::{format_write_progress, ChunkDisplay, FormatDisplay};
-use crate::helper::CliHelper;
-use crate::web::start_server;
-use crate::VERSION;
 
 static PROMPT_SQL: &str = "select name, 'f' as type from system.functions union all select name, 'd' as type from system.databases union all select name, 't' as type from system.tables union all select name, 'c' as type from system.columns limit 10000";
 
@@ -642,11 +640,7 @@ impl Session {
         Ok(Some(ServerStats::default()))
     }
 
-    pub async fn stream_load_stdin(
-        &mut self,
-        query: &str,
-        options: BTreeMap<&str, &str>,
-    ) -> Result<()> {
+    pub async fn stream_load_stdin(&mut self, query: &str, method: LoadMethod) -> Result<()> {
         let dir = std::env::temp_dir();
         // TODO:(everpcpc) write by chunks
         let mut lines = std::io::stdin().lock().lines();
@@ -670,7 +664,7 @@ impl Session {
             }
             file.flush().await?;
         }
-        self.stream_load_file(query, &tmp_file, options).await?;
+        self.stream_load_file(query, &tmp_file, method).await?;
         remove_file(tmp_file).await?;
         Ok(())
     }
@@ -679,7 +673,7 @@ impl Session {
         &mut self,
         query: &str,
         file_path: &Path,
-        options: BTreeMap<&str, &str>,
+        method: LoadMethod,
     ) -> Result<()> {
         let start = Instant::now();
         let file = File::open(file_path).await?;
@@ -687,7 +681,7 @@ impl Session {
 
         let ss = self
             .conn
-            .load_data(query, Box::new(file), metadata.len(), Some(options), None)
+            .load_data(query, Box::new(file), metadata.len(), method)
             .await?;
 
         // TODO:(everpcpc) show progress

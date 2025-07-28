@@ -12,19 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use async_trait::async_trait;
+use log::info;
 use std::collections::{BTreeMap, VecDeque};
 use std::marker::PhantomData;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-
-use async_trait::async_trait;
-use log::info;
+use std::time::Instant;
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio_stream::Stream;
 
+use crate::client::LoadMethod;
+use crate::conn::{ConnectionInfo, IConnection, Reader};
 use databend_client::APIClient;
 use databend_client::Pages;
 use databend_driver_core::error::{Error, Result};
@@ -32,11 +34,87 @@ use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
 use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
 use databend_driver_core::schema::{Schema, SchemaRef};
 
-use crate::conn::{ConnectionInfo, IConnection, Reader};
+const LOAD_PLACEHOLDER: &str = "@_databend_load";
 
 #[derive(Clone)]
 pub struct RestAPIConnection {
     client: Arc<APIClient>,
+}
+
+impl RestAPIConnection {
+    fn gen_temp_stage_location(&self) -> Result<String> {
+        let now = chrono::Utc::now()
+            .timestamp_nanos_opt()
+            .ok_or_else(|| Error::IO("Failed to get current timestamp".to_string()))?;
+        Ok(format!("@~/client/load/{now}"))
+    }
+
+    async fn load_data_with_stage(
+        &self,
+        sql: &str,
+        data: Reader,
+        size: u64,
+    ) -> Result<ServerStats> {
+        let location = self.gen_temp_stage_location()?;
+        self.upload_to_stage(&location, data, size).await?;
+        if self.client.capability().streaming_load {
+            let sql = sql.replace(LOAD_PLACEHOLDER, &location);
+            let page = self.client.query_all(&sql).await?;
+            Ok(ServerStats::from(page.stats))
+        } else {
+            let file_format_options = Self::default_file_format_options();
+            let copy_options = Self::default_copy_options();
+            let stats = self
+                .client
+                .insert_with_stage(sql, &location, file_format_options, copy_options)
+                .await?;
+            Ok(ServerStats::from(stats))
+        }
+    }
+
+    async fn load_data_with_streaming(
+        &self,
+        sql: &str,
+        data: Reader,
+        size: u64,
+    ) -> Result<ServerStats> {
+        let start = Instant::now();
+        let response = self
+            .client
+            .streaming_load(sql, data, "<no_filename>")
+            .await?;
+        Ok(ServerStats {
+            total_rows: 0,
+            total_bytes: 0,
+            read_rows: response.stats.rows,
+            read_bytes: size as usize,
+            write_rows: response.stats.rows,
+            write_bytes: response.stats.bytes,
+            running_time_ms: start.elapsed().as_millis() as f64,
+            spill_file_nums: 0,
+            spill_bytes: 0,
+        })
+    }
+    async fn load_data_with_options(
+        &self,
+        sql: &str,
+        data: Reader,
+        size: u64,
+        file_format_options: Option<BTreeMap<&str, &str>>,
+        copy_options: Option<BTreeMap<&str, &str>>,
+    ) -> Result<ServerStats> {
+        let location = self.gen_temp_stage_location()?;
+        let file_format_options =
+            file_format_options.unwrap_or_else(Self::default_file_format_options);
+        let copy_options = copy_options.unwrap_or_else(Self::default_copy_options);
+        self.upload_to_stage(&location, Box::new(data), size)
+            .await?;
+        let stats = self
+            .client
+            .insert_with_stage(sql, &location, file_format_options, copy_options)
+            .await?;
+        Ok(ServerStats::from(stats))
+    }
 }
 
 #[async_trait]
@@ -104,65 +182,50 @@ impl IConnection for RestAPIConnection {
         sql: &str,
         data: Reader,
         size: u64,
-        file_format_options: Option<BTreeMap<&str, &str>>,
-        copy_options: Option<BTreeMap<&str, &str>>,
+        mut method: LoadMethod,
     ) -> Result<ServerStats> {
-        info!(
-            "load data: {}, size: {}, format: {:?}, copy: {:?}",
-            sql, size, file_format_options, copy_options
-        );
-        let now = chrono::Utc::now()
-            .timestamp_nanos_opt()
-            .ok_or_else(|| Error::IO("Failed to get current timestamp".to_string()))?;
-        let stage = format!("@~/client/load/{now}");
-
-        let file_format_options =
-            file_format_options.unwrap_or_else(Self::default_file_format_options);
-        let copy_options = copy_options.unwrap_or_else(Self::default_copy_options);
-
-        self.upload_to_stage(&stage, data, size).await?;
-        let stats = self
-            .client
-            .insert_with_stage(sql, &stage, file_format_options, copy_options)
-            .await?;
-        Ok(ServerStats::from(stats))
+        let sql = sql.trim_end();
+        let sql = sql.trim_end_matches(';');
+        info!("load data: {}, size: {}, method: {method:?}", sql, size);
+        if !self.client.capability().streaming_load {
+            method = LoadMethod::Stage
+        };
+        match method {
+            LoadMethod::Streaming => self.load_data_with_streaming(sql, data, size).await,
+            LoadMethod::Stage => self.load_data_with_stage(sql, data, size).await,
+        }
     }
 
-    async fn load_file(
-        &self,
-        sql: &str,
-        fp: &Path,
-        format_options: Option<BTreeMap<&str, &str>>,
-        copy_options: Option<BTreeMap<&str, &str>>,
-    ) -> Result<ServerStats> {
-        info!(
-            "load file: {}, file: {:?}, format: {:?}, copy: {:?}",
-            sql, fp, format_options, copy_options
-        );
+    async fn load_file(&self, sql: &str, fp: &Path, method: LoadMethod) -> Result<ServerStats> {
+        info!("load file: {}, file: {:?}", sql, fp,);
         let file = File::open(fp).await?;
         let metadata = file.metadata().await?;
         let size = metadata.len();
         let data = BufReader::new(file);
-        let mut format_options = format_options.unwrap_or_else(Self::default_file_format_options);
-        if !format_options.contains_key("type") {
-            let file_type = fp
-                .extension()
-                .ok_or_else(|| Error::BadArgument("file type not specified".to_string()))?
-                .to_str()
-                .ok_or_else(|| Error::BadArgument("file type empty".to_string()))?;
-            format_options.insert("type", file_type);
-        }
-        self.load_data(
-            sql,
-            Box::new(data),
-            size,
-            Some(format_options),
-            copy_options,
-        )
-        .await
+        self.load_data(sql, Box::new(data), size, method).await
     }
 
-    async fn stream_load(&self, sql: &str, data: Vec<Vec<&str>>) -> Result<ServerStats> {
+    async fn load_file_with_options(
+        &self,
+        sql: &str,
+        fp: &Path,
+        file_format_options: Option<BTreeMap<&str, &str>>,
+        copy_options: Option<BTreeMap<&str, &str>>,
+    ) -> Result<ServerStats> {
+        let file = File::open(fp).await?;
+        let metadata = file.metadata().await?;
+        let size = metadata.len();
+        let data = BufReader::new(file);
+        self.load_data_with_options(sql, Box::new(data), size, file_format_options, copy_options)
+            .await
+    }
+
+    async fn stream_load(
+        &self,
+        sql: &str,
+        data: Vec<Vec<&str>>,
+        method: LoadMethod,
+    ) -> Result<ServerStats> {
         info!("stream load: {}, length: {:?}", sql, data.len());
         let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
         for row in data {
@@ -172,7 +235,13 @@ impl IConnection for RestAPIConnection {
         let bytes = wtr.into_inner().map_err(|e| Error::IO(e.to_string()))?;
         let size = bytes.len() as u64;
         let reader = Box::new(std::io::Cursor::new(bytes));
-        let stats = self.load_data(sql, reader, size, None, None).await?;
+        let stats = if self.client.capability().streaming_load {
+            let sql = format!("{sql} from @_databend_load file_format = (type = csv)");
+            self.load_data(&sql, reader, size, method).await?
+        } else {
+            self.load_data_with_options(sql, reader, size, None, None)
+                .await?
+        };
         Ok(stats)
     }
 }

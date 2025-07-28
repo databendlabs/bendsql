@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
-
-use pyo3::prelude::*;
-use pyo3_async_runtimes::tokio::future_into_py;
 
 use crate::{
     types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION},
-    utils::{options_as_ref, to_sql_params},
+    utils::to_sql_params,
 };
+use databend_driver::LoadMethod;
+use pyo3::prelude::*;
+use pyo3_async_runtimes::tokio::future_into_py;
 
 #[pyclass(module = "databend_driver")]
 pub struct AsyncDatabendClient(databend_driver::Client);
@@ -173,28 +173,27 @@ impl AsyncDatabendConnection {
                 .map(|v| v.iter().map(|s| s.as_ref()).collect())
                 .collect();
             let ss = this
-                .stream_load(&sql, data)
+                .stream_load(&sql, data, LoadMethod::Streaming)
                 .await
                 .map_err(DriverError::new)?;
             Ok(ServerStats::new(ss))
         })
     }
 
-    #[pyo3(signature = (sql, fp, format_options, copy_options=None))]
+    #[pyo3(signature = (sql, fp, method=None))]
     pub fn load_file<'p>(
         &'p self,
         py: Python<'p>,
         sql: String,
         fp: String,
-        format_options: Option<BTreeMap<String, String>>,
-        copy_options: Option<BTreeMap<String, String>>,
+        method: Option<String>,
     ) -> PyResult<Bound<'p, PyAny>> {
         let this = self.0.clone();
+        let load_method = LoadMethod::from_str(&method.unwrap_or_else(|| "stage".to_string()))
+            .map_err(DriverError::new)?;
         future_into_py(py, async move {
-            let format_options = options_as_ref(&format_options);
-            let copy_options = options_as_ref(&copy_options);
             let ss = this
-                .load_file(&sql, Path::new(&fp), format_options, copy_options)
+                .load_file(&sql, Path::new(&fp), load_method)
                 .await
                 .map_err(DriverError::new)?;
             Ok(ServerStats::new(ss))

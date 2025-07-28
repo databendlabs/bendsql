@@ -22,6 +22,7 @@ pub mod rest_api;
 
 pub use client::Client;
 pub use client::Connection;
+pub use client::LoadMethod;
 pub use conn::ConnectionInfo;
 pub use params::Param;
 pub use params::Params;
