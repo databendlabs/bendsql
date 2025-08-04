@@ -182,17 +182,33 @@ impl IConnection for RestAPIConnection {
         sql: &str,
         data: Reader,
         size: u64,
-        mut method: LoadMethod,
+        method: LoadMethod,
     ) -> Result<ServerStats> {
         let sql = sql.trim_end();
         let sql = sql.trim_end_matches(';');
         info!("load data: {}, size: {}, method: {method:?}", sql, size);
-        if !self.client.capability().streaming_load {
-            method = LoadMethod::Stage
+        let sql_low = sql.to_lowercase();
+        let has_place_holder = sql_low.contains(LOAD_PLACEHOLDER);
+        let sql = match (self.client.capability().streaming_load, has_place_holder) {
+            (false, false) => {
+                // todo: deprecate this later
+                return self
+                    .load_data_with_options(sql, data, size, None, None)
+                    .await;
+            }
+            (false, true) => return Err(Error::BadArgument(
+                "Please upgrade your server to >= 1.2.781 to support insert from @_databend_load"
+                    .to_string(),
+            )),
+            (true, false) => {
+                format!("{sql} from @_databend_load file_format=(type=csv)")
+            }
+            (true, true) => sql.to_string(),
         };
+
         match method {
-            LoadMethod::Streaming => self.load_data_with_streaming(sql, data, size).await,
-            LoadMethod::Stage => self.load_data_with_stage(sql, data, size).await,
+            LoadMethod::Streaming => self.load_data_with_streaming(&sql, data, size).await,
+            LoadMethod::Stage => self.load_data_with_stage(&sql, data, size).await,
         }
     }
 
