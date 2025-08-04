@@ -14,7 +14,7 @@ services:
     ports:
       - "28101:28101"
     healthcheck:
-      test: "/databend-metactl status || exit 1"
+      test: "databend-metactl status || exit 1"
       interval: 2s
       retries: 10
       start_period: 2s
