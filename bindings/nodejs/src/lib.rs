@@ -172,7 +172,7 @@ impl Connection {
     pub async fn stream_load(&self, sql: String, data: Vec<Vec<&str>>) -> Result<ServerStats> {
         let ss = self
             .inner
-            .stream_load(&sql, data, LoadMethod::Streaming)
+            .stream_load(&sql, data, LoadMethod::Stage)
             .await
             .map_err(format_napi_error)?;
         Ok(ServerStats(ss))
