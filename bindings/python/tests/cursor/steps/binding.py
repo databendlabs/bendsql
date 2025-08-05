@@ -109,13 +109,13 @@ async def _(context):
     # Array
     context.cursor.execute("select [10::Decimal(15,2), 1.1+2.3]")
     row = context.cursor.fetchone()
-    expected = ([Decimal("10.00"), Decimal("3.40")],)
+    expected = ([Decimal("10.00"), Decimal("3.40")], )
     assert row.values() == expected, f"Array: {row.values()}"
 
     # Map
     context.cursor.execute("select {'xx':to_date('2020-01-01')}")
     row = context.cursor.fetchone()
-    expected = {"xx": date(2020, 1, 1)}
+    expected = ({"xx": date(2020, 1, 1)}, )
     assert row.values() == expected, f"Map: {row.values()}"
 
     # Tuple
