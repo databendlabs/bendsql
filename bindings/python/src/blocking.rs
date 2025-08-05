@@ -20,7 +20,7 @@ use std::sync::Arc;
 use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
 use crate::utils::{options_as_ref, to_sql_params, wait_for_future};
 use databend_driver::{LoadMethod, SchemaRef};
-use pyo3::exceptions::{PyAttributeError, PyException, PyStopIteration};
+use pyo3::exceptions::{PyAttributeError, PyStopIteration};
 use pyo3::types::{PyList, PyTuple};
 use pyo3::{prelude::*, IntoPyObjectExt};
 use tokio::sync::Mutex;
@@ -157,7 +157,7 @@ impl BlockingDatabendConnection {
                 .iter()
                 .map(|v| v.iter().map(|s| s.as_ref()).collect())
                 .collect();
-            this.stream_load(&sql, data, LoadMethod::Streaming)
+            this.stream_load(&sql, data, LoadMethod::Stage)
                 .await
                 .map_err(DriverError::new)
         })?;
@@ -327,12 +327,13 @@ impl BlockingDatabendCursor {
         let conn = self.conn.clone();
         if let Some(param) = seq_of_parameters.first() {
             if param.downcast::<PyList>().is_ok() || param.downcast::<PyTuple>().is_ok() {
-                let bytes = format_csv(seq_of_parameters)?;
-                let size = bytes.len() as u64;
-                let sql = format!("{sql} from @_databend_load file_format=(type=csv)");
-                let reader = Box::new(std::io::Cursor::new(bytes));
+                let strings = to_csv_strings(seq_of_parameters)?;
+                let strs = strings
+                    .iter()
+                    .map(|v| v.iter().map(|s| s.as_str()).collect::<Vec<_>>())
+                    .collect::<Vec<_>>();
                 let stats = wait_for_future(py, async move {
-                    conn.load_data(&sql, reader, size, LoadMethod::Streaming)
+                    conn.stream_load(&sql, strs, LoadMethod::Stage)
                         .await
                         .map_err(DriverError::new)
                 })?;
@@ -420,25 +421,19 @@ impl BlockingDatabendCursor {
     }
 }
 
-fn format_csv(parameters: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<u8>> {
-    let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
+fn to_csv_strings(parameters: Vec<Bound<'_, PyAny>>) -> PyResult<Vec<Vec<String>>> {
+    let mut rows = Vec::with_capacity(parameters.len());
     for row in parameters {
         let iter = row.try_iter()?;
-        let data = iter
+        let row = iter
             .map(|v| match v {
                 Ok(v) => to_csv_field(v),
                 Err(e) => Err(e),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        wtr.write_record(data)
-            .map_err(|e| PyException::new_err(e.to_string()))
-            .unwrap();
+        rows.push(row);
     }
-    let bytes = wtr
-        .into_inner()
-        .map_err(|e| PyException::new_err(e.to_string()))
-        .unwrap();
-    Ok(bytes)
+    Ok(rows)
 }
 
 fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {

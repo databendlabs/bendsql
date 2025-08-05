@@ -198,13 +198,13 @@ async def test_load_file(context, load_method):
     assert ret == expected, f"{load_method} ret: {ret}"
 
 
-@then("Load file with stage and Select should be equal")
+@then("Load file with Stage and Select should be equal")
 @async_run_until_complete
 async def _(context):
     await test_load_file(context, "stage")
 
 
-@then("Load file with streaming and Select should be equal")
+@then("Load file with Streaming and Select should be equal")
 @async_run_until_complete
 async def _(context):
     await test_load_file(context, "streaming")
