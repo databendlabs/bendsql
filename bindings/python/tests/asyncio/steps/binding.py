@@ -96,6 +96,8 @@ async def _(context):
     # Interval
     row = await context.conn.query_row("select to_interval('1 hours')")
     assert row.values() == (timedelta(hours=1),), f"Interval: {row.values()}"
+    row = await context.conn.query_row("select to_interval('1 microseconds')")
+    assert row.values() == (timedelta(microseconds=1),), f"Interval: {row.values()}"
 
     # Decimal
     row = await context.conn.query_row("SELECT 15.7563::Decimal(8,4), 2.0+3.0")

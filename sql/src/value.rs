@@ -1415,6 +1415,17 @@ fn parse_identifier(s: &[u8]) -> (String, usize) {
     (identifier, pos)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_string_basic_positive() {
+        let interval = Interval::from_string("1 microseconds").unwrap();
+        assert_eq!(interval.micros, 1);
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum DatePartSpecifier {
     Millennium,
