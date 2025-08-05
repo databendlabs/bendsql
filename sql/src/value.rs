@@ -1342,8 +1342,8 @@ fn parse_number(bytes: &[u8]) -> Result<(i64, i64, usize)> {
             }
         }
         if time_bytes.len() > time_pos {
-            let (seconds, nanos, next_pos) = parse_time_part_with_nanos(&time_bytes[time_pos..])?;
-            total_micros += seconds * MICROS_PER_SEC + nanos;
+            let (seconds, micros, next_pos) = parse_time_part_with_macros(&time_bytes[time_pos..])?;
+            total_micros += seconds * MICROS_PER_SEC + micros;
             time_pos += next_pos;
         }
         return Ok((total_micros, 0, pos + time_pos));
@@ -1369,7 +1369,7 @@ fn parse_time_part(bytes: &[u8]) -> Result<(i64, i64, usize)> {
     Ok((number, 0, pos))
 }
 
-fn parse_time_part_with_nanos(bytes: &[u8]) -> Result<(i64, i64, usize)> {
+fn parse_time_part_with_macros(bytes: &[u8]) -> Result<(i64, i64, usize)> {
     let mut number: i64 = 0;
     let mut fraction: i64 = 0;
     let mut pos = 0;
@@ -1384,7 +1384,7 @@ fn parse_time_part_with_nanos(bytes: &[u8]) -> Result<(i64, i64, usize)> {
 
     if pos < bytes.len() && bytes[pos] == b'.' {
         pos += 1;
-        let mut mult: i64 = 100000000;
+        let mut mult: i64 = 100000;
         while pos < bytes.len() && bytes[pos].is_ascii_digit() {
             if mult > 0 {
                 fraction += (bytes[pos] - b'0') as i64 * mult;
