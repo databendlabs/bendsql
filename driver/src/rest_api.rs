@@ -242,7 +242,7 @@ impl IConnection for RestAPIConnection {
         data: Vec<Vec<&str>>,
         method: LoadMethod,
     ) -> Result<ServerStats> {
-        info!("stream load: {}, length: {:?}", sql, data.len());
+        info!("stream load: {}; rows: {:?}", sql, data.len());
         let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
         for row in data {
             wtr.write_record(row)
