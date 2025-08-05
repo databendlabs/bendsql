@@ -109,7 +109,7 @@ async def _(context):
     # Array
     context.cursor.execute("select [10::Decimal(15,2), 1.1+2.3]")
     row = context.cursor.fetchone()
-    expected = [Decimal("10.00"), Decimal("3.40")]
+    expected = ([Decimal("10.00"), Decimal("3.40")],)
     assert row.values() == expected, f"Array: {row.values()}"
 
     # Map
