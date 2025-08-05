@@ -109,22 +109,24 @@ async def _(context):
     # Array
     context.cursor.execute("select [10::Decimal(15,2), 1.1+2.3]")
     row = context.cursor.fetchone()
-    expected = ([Decimal("10.00"), Decimal("3.40")], )
+    expected = ([Decimal("10.00"), Decimal("3.40")],)
     assert row.values() == expected, f"Array: {row.values()}"
 
     # Map
     context.cursor.execute("select {'xx':to_date('2020-01-01')}")
     row = context.cursor.fetchone()
-    expected = ({"xx": date(2020, 1, 1)}, )
+    expected = ({"xx": date(2020, 1, 1)},)
     assert row.values() == expected, f"Map: {row.values()}"
 
     # Tuple
     context.cursor.execute("select (10, '20', to_datetime('2024-04-16 12:34:56.789'))")
     row = context.cursor.fetchone()
     expected = (
-        10,
-        "20",
-        datetime(2024, 4, 16, 12, 34, 56, 789000),
+        (
+            10,
+            "20",
+            datetime(2024, 4, 16, 12, 34, 56, 789000),
+        ),
     )
     assert row.values() == expected, f"Tuple: {row.values()}"
 

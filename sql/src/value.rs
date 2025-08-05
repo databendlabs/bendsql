@@ -1979,3 +1979,14 @@ impl months_days_micros {
         (self.0 & MICROS_MASK) as i64
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_from_string_basic_positive() {
+        let interval = Interval::from_string("0:00:00.000001").unwrap();
+        assert_eq!(interval.micros, 1);
+    }
+}
