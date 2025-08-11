@@ -514,7 +514,7 @@ impl Row {
     }
 
     #[napi]
-    pub fn values(&self) -> Vec<Value> {
+    pub fn values(&self) -> Vec<Value<'_>> {
         self.inner
             .values()
             .iter()
@@ -523,7 +523,7 @@ impl Row {
     }
 
     #[napi]
-    pub fn data(&self) -> HashMap<String, Value> {
+    pub fn data(&self) -> HashMap<String, Value<'_>> {
         let mut map = HashMap::new();
         let schema = self.inner.schema();
         for (name, value) in schema
