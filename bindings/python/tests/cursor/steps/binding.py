@@ -87,7 +87,7 @@ def _(context, input, output):
 
 
 @then("Select types should be expected native types")
-async def _(context):
+def _(context):
     # Binary
     context.cursor.execute("select to_binary('xyz')")
     row = context.cursor.fetchone()

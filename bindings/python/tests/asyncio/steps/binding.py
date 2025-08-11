@@ -17,12 +17,10 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal
 
 from behave import given, when, then
-from behave.api.async_step import async_run_until_complete
 import databend_driver
 
 
 @given("A new Databend Driver Client")
-@async_run_until_complete
 async def _(context):
     dsn = os.getenv(
         "TEST_DATABEND_DSN",
@@ -34,7 +32,6 @@ async def _(context):
 
 
 @when("Create a test table")
-@async_run_until_complete
 async def _(context):
     await context.conn.exec("DROP TABLE IF EXISTS test")
     await context.conn.exec(
@@ -53,7 +50,6 @@ async def _(context):
 
 
 @then("Select string {input} should be equal to {output}")
-@async_run_until_complete
 async def _(context, input, output):
     row = await context.conn.query_row("SELECT ?", input)
     value = row.values()[0]
@@ -61,7 +57,6 @@ async def _(context, input, output):
 
 
 @then("Select params binding")
-@async_run_until_complete
 async def _(context):
     # Test with positional parameters
     row = await context.conn.query_row("SELECT ?, ?, ?, ?", (3, False, 4, "55"))
@@ -79,7 +74,6 @@ async def _(context):
 
 
 @then("Select types should be expected native types")
-@async_run_until_complete
 async def _(context):
     # Binary
     row = await context.conn.query_row("select to_binary(?)", "xyz")
@@ -124,7 +118,6 @@ async def _(context):
 
 
 @then("Select numbers should iterate all rows")
-@async_run_until_complete
 async def _(context):
     rows = await context.conn.query_iter("SELECT number FROM numbers(5)")
     ret = [row.values()[0] for row in rows]
@@ -133,7 +126,6 @@ async def _(context):
 
 
 @then("Insert and Select should be equal")
-@async_run_until_complete
 async def _(context):
     await context.conn.exec(
         r"""
@@ -154,7 +146,6 @@ async def _(context):
 
 
 @then("Stream load and Select should be equal")
-@async_run_until_complete
 async def _(context):
     values = [
         ["-1", "1", "1.0", "'", "\\N", "2011-03-06", "2011-03-06T06:20:00Z"],
@@ -199,19 +190,16 @@ async def test_load_file(context, load_method):
 
 
 @then("Load file with Stage and Select should be equal")
-@async_run_until_complete
 async def _(context):
     await test_load_file(context, "stage")
 
 
 @then("Load file with Streaming and Select should be equal")
-@async_run_until_complete
 async def _(context):
     await test_load_file(context, "streaming")
 
 
 @then("Temp table should work with cluster")
-@async_run_until_complete
 async def _(context):
     conn = await context.client.get_conn()
     for i in range(10):
