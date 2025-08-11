@@ -77,7 +77,7 @@ def _(context):
 
 
 @then("Select types should be expected native types")
-async def _(context):
+def _(context):
     # Binary
     row = context.conn.query_row("select to_binary('xyz')")
     assert row.values() == (b"xyz",), f"Binary: {row.values()}"
