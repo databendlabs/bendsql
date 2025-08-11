@@ -150,23 +150,23 @@ prompt = ":) "
 
 - Settings section
 
-| Parameter            | Description                                                                         |
-| -------------------- | ----------------------------------------------------------------------------------- |
-| `display_pretty_sql` | Whether to display SQL queries in a formatted way.                                  |
-| `prompt`             | The prompt to display before asking for input.                                      |
-| `progress_color`     | The color to use for the progress bar.                                              |
-| `show_progress`      | Whether to show a progress bar when executing queries.                              |
-| `show_stats`         | Whether to show statistics after executing queries.                                 |
-| `no_auto_complete`   | Whether to disable loading tables and fields for auto-completion on startup.        |
-| `max_display_rows`   | The maximum number of rows to display in table output format.                       |
-| `max_width`          | Limit display render box max width, 0 means default to the size of the terminal.    |
-| `max_col_width`      | Limit display render each column max width, smaller than 3 means disable the limit. |
-| `output_format`      | The output format to use.                                                           |
-| `expand`             | Expand table format display, default auto, could be on/off/auto.                    |
-| `time`               | Whether to show the time elapsed when executing queries.                            |
-| `multi_line`         | Whether to allow multi-line input.                                                  |
-| `quote_string`       | Whether to quote string values in table output format, default false.               |
-| `sql_delimiter`      | SQL delimiter, default `;`.                                                         |
+| Parameter            | Description                                                                                                         |
+| -------------------- |---------------------------------------------------------------------------------------------------------------------|
+| `display_pretty_sql` | Whether to display SQL queries in a formatted way.                                                                  |
+| `prompt`             | The prompt to display before asking for input.                                                                      |
+| `progress_color`     | The color to use for the progress bar.                                                                              |
+| `show_progress`      | Whether to show a progress bar when executing queries.                                                              |
+| `show_stats`         | Whether to show statistics after executing queries.                                                                 |
+| `no_auto_complete`   | Whether to disable loading tables and fields for auto-completion on startup.                                        |
+| `max_display_rows`   | The maximum number of rows to display in table output format.                                                       |
+| `max_width`          | Limit display render box max width, 0 means default to the size of the terminal. 65535 means no limit for max_width |
+| `max_col_width`      | Limit display render each column max width, smaller than 3 means disable the limit.                                 |
+| `output_format`      | The output format to use.                                                                                           |
+| `expand`             | Expand table format display, default auto, could be on/off/auto.                                                    |
+| `time`               | Whether to show the time elapsed when executing queries.                                                            |
+| `multi_line`         | Whether to allow multi-line input.                                                                                  |
+| `quote_string`       | Whether to quote string values in table output format, default false.                                               |
+| `sql_delimiter`      | SQL delimiter, default `;`.                                                                                         |
 
 ## Commands in REPL
 

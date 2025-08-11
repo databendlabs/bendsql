@@ -526,7 +526,9 @@ fn create_table(
 
     let w = terminal_size();
     if max_width != 0 && max_width <= u16::MAX as usize {
-        if let Some((w, _)) = w {
+        if max_width == u16::MAX as usize {
+            table.set_content_arrangement(comfy_table::ContentArrangement::Disabled);
+        } else if let Some((w, _)) = w {
             let max_width = max_width.min(w.0 as usize);
             table.set_width(max_width as _);
         }
