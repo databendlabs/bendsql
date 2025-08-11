@@ -445,7 +445,7 @@ struct TypeDesc<'t> {
     args: Vec<TypeDesc<'t>>,
 }
 
-fn parse_type_desc(s: &str) -> Result<TypeDesc> {
+fn parse_type_desc(s: &str) -> Result<TypeDesc<'_>> {
     let mut name = "";
     let mut args = vec![];
     let mut depth = 0;
