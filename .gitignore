@@ -10,3 +10,5 @@ venv/
 /dist
 
 **/.DS_Store
+
+CLAUDE.md
