@@ -475,6 +475,10 @@ impl APIClient {
         let request = builder.build()?;
 
         let response = self.query_request_helper(request, false, true).await?;
+        let status = response.status();
+        if status != 200 {
+            return Err(Error::response_error(status, &response.bytes().await?));
+        }
         let body = response.bytes().await?;
         let resp: QueryResponse = json_from_slice(&body).map_err(|e| {
             if let Error::Logic(status, ec) = &e {
