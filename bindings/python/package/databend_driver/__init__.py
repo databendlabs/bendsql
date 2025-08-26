@@ -29,14 +29,12 @@ __all__ = [
     "InternalError",
     "ProgrammingError",
     "NotSupportedError",
-
     # Client classes
     "AsyncDatabendClient",
     "AsyncDatabendConnection",
     "BlockingDatabendClient",
     "BlockingDatabendConnection",
     "BlockingDatabendCursor",
-
     # Data types
     "ConnectionInfo",
     "Schema",
