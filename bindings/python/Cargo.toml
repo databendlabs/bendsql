@@ -14,14 +14,14 @@ doc = false
 
 [dependencies]
 chrono = { workspace = true }
+databend-client = { workspace = true }
 databend-driver = { workspace = true, features = ["rustls", "flight-sql"] }
 databend-driver-core = { workspace = true }
-databend-client = { workspace = true }
 tokio-stream = { workspace = true }
 
 ctor = "0.2"
+http = "1.0"
 once_cell = "1.21"
 pyo3 = { version = "0.24.2", features = ["abi3-py37", "chrono"] }
 pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
-reqwest = "0.12"
 tokio = "1.44"

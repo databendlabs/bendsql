@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use databend_driver_core::error::Error as CoreError;
+use http::StatusCode;
 use pyo3::{create_exception, exceptions::PyException, prelude::*};
-use reqwest::StatusCode;
 
 // PEP-249 compliant exception hierarchy
 
