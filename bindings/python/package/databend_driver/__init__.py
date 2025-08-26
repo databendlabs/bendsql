@@ -27,33 +27,33 @@ from ._databend_driver import (
     IntegrityError,
     InternalError,
     ProgrammingError,
-    NotSupportedError
+    NotSupportedError,
 )
 
 # Export for convenience at module level
 __all__ = [
     # Exception classes - PEP 249 compliant
-    'Warning',
-    'Error',
-    'InterfaceError',
-    'DatabaseError',
-    'DataError',
-    'OperationalError',
-    'IntegrityError',
-    'InternalError',
-    'ProgrammingError',
-    'NotSupportedError',
+    "Warning",
+    "Error",
+    "InterfaceError",
+    "DatabaseError",
+    "DataError",
+    "OperationalError",
+    "IntegrityError",
+    "InternalError",
+    "ProgrammingError",
+    "NotSupportedError",
     # Client classes
-    'AsyncDatabendClient',
-    'AsyncDatabendConnection',
-    'BlockingDatabendClient',
-    'BlockingDatabendConnection',
-    'BlockingDatabendCursor',
+    "AsyncDatabendClient",
+    "AsyncDatabendConnection",
+    "BlockingDatabendClient",
+    "BlockingDatabendConnection",
+    "BlockingDatabendCursor",
     # Data types
-    'ConnectionInfo',
-    'Schema',
-    'Field',
-    'Row',
-    'RowIterator',
-    'ServerStats'
+    "ConnectionInfo",
+    "Schema",
+    "Field",
+    "Row",
+    "RowIterator",
+    "ServerStats",
 ]
