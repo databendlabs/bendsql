@@ -37,9 +37,9 @@ create_exception!(databend_driver, ProgrammingError, DatabaseError);
 create_exception!(databend_driver, NotSupportedError, DatabaseError);
 
 /// Map error code to appropriate PEP-249 exception based on actual Databend error code definitions
-/// 
-/// This mapping is based on real error code definitions from Databend source code 
-/// (src/common/exception/src/exception_code.rs) and categorized according to error 
+///
+/// This mapping is based on real error code definitions from Databend source code
+/// (src/common/exception/src/exception_code.rs) and categorized according to error
 /// nature and PEP-249 standards
 fn map_error_code_to_exception(error_code: u16, error_msg: String) -> PyErr {
     match error_code {
