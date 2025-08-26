@@ -75,3 +75,6 @@ docs/_build/
 docs
 
 .ruff_cache/
+
+# Uv
+uv.lock

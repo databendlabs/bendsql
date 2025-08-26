@@ -14,6 +14,7 @@
 
 mod asyncio;
 mod blocking;
+mod exceptions;
 mod types;
 mod utils;
 
@@ -24,7 +25,7 @@ use crate::blocking::{BlockingDatabendClient, BlockingDatabendConnection, Blocki
 use crate::types::{ConnectionInfo, Field, Row, RowIterator, Schema, ServerStats};
 
 #[pymodule]
-fn _databend_driver(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _databend_driver(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AsyncDatabendClient>()?;
     m.add_class::<AsyncDatabendConnection>()?;
     m.add_class::<BlockingDatabendClient>()?;
@@ -36,5 +37,9 @@ fn _databend_driver(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Field>()?;
     m.add_class::<RowIterator>()?;
     m.add_class::<ServerStats>()?;
+
+    // Register PEP-249 compliant exceptions
+    exceptions::register_exceptions(py, m)?;
+
     Ok(())
 }

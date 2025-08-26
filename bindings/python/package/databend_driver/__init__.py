@@ -15,3 +15,45 @@
 # flake8: noqa
 
 from ._databend_driver import *
+
+# PEP-249 compliant exception hierarchy
+from ._databend_driver import (
+    Warning,
+    Error,
+    InterfaceError,
+    DatabaseError,
+    DataError,
+    OperationalError,
+    IntegrityError,
+    InternalError,
+    ProgrammingError,
+    NotSupportedError
+)
+
+# Export for convenience at module level
+__all__ = [
+    # Exception classes - PEP 249 compliant
+    'Warning',
+    'Error',
+    'InterfaceError',
+    'DatabaseError',
+    'DataError',
+    'OperationalError',
+    'IntegrityError',
+    'InternalError',
+    'ProgrammingError',
+    'NotSupportedError',
+    # Client classes
+    'AsyncDatabendClient',
+    'AsyncDatabendConnection',
+    'BlockingDatabendClient',
+    'BlockingDatabendConnection',
+    'BlockingDatabendCursor',
+    # Data types
+    'ConnectionInfo',
+    'Schema',
+    'Field',
+    'Row',
+    'RowIterator',
+    'ServerStats'
+]
