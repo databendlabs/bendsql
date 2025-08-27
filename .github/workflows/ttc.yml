@@ -62,7 +62,11 @@ jobs:
           path: dist/arm64/ttc-server
       - name: check dist
         run: |
-          ls --tree dist/
+          if command -v tree >/dev/null 2>&1; then
+            tree dist/
+          else
+            ls -la dist/
+          fi
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Set Docker tag
