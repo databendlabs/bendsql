@@ -25,6 +25,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
+use crate::exceptions::map_error_to_exception;
 use crate::utils::wait_for_future;
 
 pub static VERSION: Lazy<String> = Lazy::new(|| {
@@ -412,6 +413,6 @@ impl DriverError {
 
 impl From<DriverError> for PyErr {
     fn from(e: DriverError) -> Self {
-        PyException::new_err(format!("{}", e.0))
+        map_error_to_exception(e.0)
     }
 }
