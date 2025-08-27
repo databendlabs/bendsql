@@ -66,6 +66,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Set Docker tag
+        id: tag
         shell: bash
         run: |
           ref_v="${{ github.ref }}"
@@ -74,11 +75,11 @@ jobs:
           else
             DOCKER_TAG="latest"
           fi
-          echo "DOCKER_TAG=$DOCKER_TAG" >> $GITHUB_ENV
+          echo "tag=${DOCKER_TAG}" >> $GITHUB_OUTPUT
       - name: TTC Build and push
         uses: docker/build-push-action@v6
         with:
           push: true
           file: ./ttc/Dockerfile
           platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/databendlabs/ttc-rust:${{ env.DOCKER_TAG }}
+          tags: ghcr.io/databendlabs/ttc-rust:${{ steps.tag.outputs.tag }}
