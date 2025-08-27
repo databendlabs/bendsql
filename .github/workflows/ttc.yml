@@ -32,9 +32,12 @@ jobs:
         with:
           cache-key: ttc-${{ matrix.target }}
           target: ${{ matrix.target }}
+      - name: Install cross
+        run: |
+          cargo install cross
       - name: Build TTC
         run: |
-          cargo build --bin ttc-server --package databend-ttc --release --target ${{ matrix.target }}
+          cross build --bin ttc-server --package databend-ttc --release --target ${{ matrix.target }}
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
