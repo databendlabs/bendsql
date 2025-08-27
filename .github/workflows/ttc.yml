@@ -13,9 +13,6 @@ on:
       - 'driver/**'
       - 'ttc/**'
       - 'sql/**'
-  pull_request:
-    branches:
-      - main
 
 jobs:
   build:
