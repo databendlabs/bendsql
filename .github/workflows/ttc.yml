@@ -73,6 +73,12 @@ jobs:
             DOCKER_TAG="latest"
           fi
           echo "tag=${DOCKER_TAG}" >> $GITHUB_OUTPUT
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
       - name: TTC Build and push
         uses: docker/build-push-action@v6
         with:
