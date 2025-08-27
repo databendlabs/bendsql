@@ -80,6 +80,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           push: true
+          context: .
           file: ./ttc/Dockerfile
           platforms: linux/amd64,linux/arm64
           tags: ghcr.io/databendlabs/ttc-rust:${{ steps.tag.outputs.tag }}
