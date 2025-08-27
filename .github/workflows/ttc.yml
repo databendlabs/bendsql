@@ -54,12 +54,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ttc-binaries-x86_64-unknown-linux-musl
-          path: dist/amd64
+          path: dist/linux/amd64
       - name: Download build artifacts for aarch64-unknown-linux-musl
         uses: actions/download-artifact@v4
         with:
           name: ttc-binaries-aarch64-unknown-linux-musl
-          path: dist/arm64
+          path: dist/linux/arm64
       - name: Check artifacts
         run: |
           ls -R dist/
