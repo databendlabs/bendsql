@@ -52,4 +52,5 @@ jobs:
         with:
           push: true
           file: ./ttc/Dockerfile
+          platforms: linux/amd64,linux/arm64
           tags: datafuselabs/ttc-rust:${{ env.DOCKER_TAG }}

@@ -1,5 +1,5 @@
 # Dockerfile
-FROM rust:1.83.0-bullseye as builder
+FROM rust:1.83.0-bullseye AS builder
 
 # Set the current working directory inside the container
 WORKDIR /usr/src
