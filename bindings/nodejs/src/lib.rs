@@ -106,6 +106,21 @@ impl Connection {
         Ok(self.inner.format_sql(&sql, params))
     }
 
+    /// Get the last executed query ID
+    #[napi]
+    pub fn last_query_id(&self) -> Option<String> {
+        self.inner.last_query_id()
+    }
+
+    /// Kill a running query by its query ID
+    #[napi]
+    pub async fn kill_query(&self, query_id: String) -> Result<()> {
+        self.inner
+            .kill_query(&query_id)
+            .await
+            .map_err(format_napi_error)
+    }
+
     /// Execute a SQL query, return the number of affected rows.
     #[napi]
     pub async fn exec(&self, sql: String, params: Option<Params>) -> Result<i64> {
