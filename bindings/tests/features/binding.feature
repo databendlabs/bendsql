@@ -53,3 +53,11 @@ Feature: Databend Driver
     Scenario: Temp table
         Given A new Databend Driver Client
         Then Temp table should work with cluster
+
+    Scenario: Query ID tracking
+        Given A new Databend Driver Client
+        Then last_query_id should return query ID after execution
+
+    Scenario: Kill Query API Error Handling
+        Given A new Databend Driver Client
+        Then killQuery should return error for non-existent query ID

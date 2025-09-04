@@ -369,31 +369,31 @@ Then("Temp table should work with cluster", async function () {
 Then("last_query_id should return query ID after execution", async function () {
   // Initially no query ID
   assert.equal(this.conn.lastQueryId(), null);
-  
+
   // Execute a query
   await this.conn.queryRow("SELECT 1");
-  
+
   // Should have a query ID now
   const queryId1 = this.conn.lastQueryId();
   assert.notEqual(queryId1, null);
   assert.equal(typeof queryId1, "string");
   assert(queryId1.length > 0);
-  
+
   // Execute another query
   await this.conn.queryRow("SELECT 2");
-  
+
   // Should have a different query ID
   const queryId2 = this.conn.lastQueryId();
   assert.notEqual(queryId2, null);
   assert.equal(typeof queryId2, "string");
   assert.notEqual(queryId1, queryId2);
-  
+
   // Test with queryIter
   await this.conn.queryIter("SELECT number FROM numbers(3)");
   const queryId3 = this.conn.lastQueryId();
   assert.notEqual(queryId3, null);
   assert.notEqual(queryId2, queryId3);
-  
+
   // Test with exec
   await this.conn.exec("SELECT 42");
   const queryId4 = this.conn.lastQueryId();
@@ -403,19 +403,18 @@ Then("last_query_id should return query ID after execution", async function () {
 
 Then("killQuery should return error for non-existent query ID", async function () {
   // Test API signature
-  assert.equal(typeof this.conn.killQuery, 'function', "killQuery should be a function");
-  
+  assert.equal(typeof this.conn.killQuery, "function", "killQuery should be a function");
+
   // Test killing non-existent query with valid UUID format
   const nonExistentQueryId = "12345678-1234-1234-1234-123456789012";
-  
+
   try {
     await this.conn.killQuery(nonExistentQueryId);
     assert.fail("killQuery should have thrown an error for non-existent query ID");
   } catch (err) {
     // Should get an error for non-existent query
     assert.ok(err instanceof Error, "Should throw an Error object");
-    assert.ok(typeof err.message === 'string' && err.message.length > 0, 
-             "Should return meaningful error message");
+    assert.ok(typeof err.message === "string" && err.message.length > 0, "Should return meaningful error message");
     console.log("Expected error for non-existent query:", err.message);
   }
 });
