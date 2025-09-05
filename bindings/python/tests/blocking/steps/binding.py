@@ -262,17 +262,23 @@ def _(context):
 @then("killQuery should return error for non-existent query ID")
 def _(context):
     # Test API signature
-    assert hasattr(context.conn, 'kill_query'), "kill_query should be a method"
-    assert callable(getattr(context.conn, 'kill_query')), "kill_query should be callable"
+    assert hasattr(context.conn, "kill_query"), "kill_query should be a method"
+    assert callable(getattr(context.conn, "kill_query")), (
+        "kill_query should be callable"
+    )
 
     # Test killing non-existent query with valid UUID format
     non_existent_query_id = "12345678-1234-1234-1234-123456789012"
 
     try:
         context.conn.kill_query(non_existent_query_id)
-        assert False, "kill_query should have raised an exception for non-existent query ID"
+        assert False, (
+            "kill_query should have raised an exception for non-existent query ID"
+        )
     except Exception as err:
         # Should get an error for non-existent query
         assert isinstance(err, Exception), "Should raise an Exception"
-        assert isinstance(err.args[0], str) and len(err.args[0]) > 0, "Should return meaningful error message"
+        assert isinstance(err.args[0], str) and len(err.args[0]) > 0, (
+            "Should return meaningful error message"
+        )
         print(f"Expected error for non-existent query: {err}")
