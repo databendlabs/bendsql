@@ -202,7 +202,7 @@ Examples:
 
 - `databend://root:@localhost:8000/?sslmode=disable&presign=detect`
 
-- `databend://user1:password1@tnxxxx--default.gw.aws-us-east-2.default.databend.com:443/benchmark?enable_dphyp=1`
+- `databend://user1:password1@tnxxxx.gw.aws-us-east-2.default.databend.com:443/benchmark?warehouse=default&enable_dphyp=1`
 
 - `databend+flight://root:@localhost:8900/database1?connect_timeout=10`
 
