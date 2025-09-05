@@ -1,7 +1,7 @@
 {
   "name": "@databend-driver/lib-linux-arm64-musl",
   "repository": "https://github.com/databendlabs/bendsql.git",
-  "version": "0.28.2",
+  "version": "0.28.3",
   "os": [
     "linux"
   ],
