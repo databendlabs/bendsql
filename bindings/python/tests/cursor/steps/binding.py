@@ -244,3 +244,13 @@ def _(context):
 @then("Load file with Streaming and Select should be equal")
 def _(context):
     print("SKIP")
+
+
+@then("last_query_id should return query ID after execution")
+def _(context):
+    print("SKIP ")
+
+
+@then("killQuery should return error for non-existent query ID")
+def _(context):
+    print("SKIP")

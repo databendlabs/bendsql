@@ -67,6 +67,22 @@ impl AsyncDatabendConnection {
         })
     }
 
+    pub fn last_query_id(&self) -> Option<String> {
+        self.0.last_query_id()
+    }
+
+    pub fn kill_query<'p>(
+        &'p self,
+        py: Python<'p>,
+        query_id: String,
+    ) -> PyResult<Bound<'p, PyAny>> {
+        let this = self.0.clone();
+        future_into_py(py, async move {
+            this.kill_query(&query_id).await.map_err(DriverError::new)?;
+            Ok(())
+        })
+    }
+
     pub fn close<'p>(&'p self, py: Python<'p>) -> PyResult<Bound<'p, PyAny>> {
         let this = self.0.clone();
         future_into_py(py, async move {
