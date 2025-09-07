@@ -167,8 +167,23 @@ async def _(context):
 
 
 async def test_load_file(context, load_method):
+    await context.conn.exec("CREATE OR REPLACE DATABASE db1")
+    await context.conn.exec("use db1")
+    await context.conn.exec(
+        """
+        CREATE OR REPLACE TABLE test1 (
+            i64 Int64,
+            u64 UInt64,
+            f64 Float64,
+            s   String,
+            s2  String,
+            d   Date,
+            t   DateTime
+        )
+        """
+    )
     progress = await context.conn.load_file(
-        "INSERT INTO test VALUES from @_databend_load file_format = (type=csv)",
+        "INSERT INTO test1 VALUES from @_databend_load file_format = (type=csv)",
         "tests/data/test.csv",
         load_method,
     )
@@ -179,7 +194,7 @@ async def test_load_file(context, load_method):
         f"{load_method} progress.write_bytes: {progress.write_bytes}"
     )
 
-    rows = await context.conn.query_iter("SELECT * FROM test")
+    rows = await context.conn.query_iter("SELECT * FROM test1")
     ret = [row.values() for row in rows]
     expected = [
         (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),

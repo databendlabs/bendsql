@@ -162,8 +162,23 @@ def _(context):
 
 
 def test_load_file(context, load_method):
+    context.conn.exec("CREATE OR REPLACE DATABASE db1")
+    context.conn.exec("use db1")
+    context.conn.exec(
+        """
+        CREATE OR REPLACE TABLE test1 (
+            i64 Int64,
+            u64 UInt64,
+            f64 Float64,
+            s   String,
+            s2  String,
+            d   Date,
+            t   DateTime
+        )
+        """
+    )
     progress = context.conn.load_file(
-        "INSERT INTO test VALUES FROM @_databend_load file_format = (type=csv)",
+        "INSERT INTO test1 VALUES FROM @_databend_load file_format = (type=csv)",
         "tests/data/test.csv",
     )
     assert progress.write_rows == 3, (
@@ -173,7 +188,7 @@ def test_load_file(context, load_method):
         f"{load_method}: progress.write_bytes: {progress.write_bytes}"
     )
 
-    rows = context.conn.query_iter("SELECT * FROM test")
+    rows = context.conn.query_iter("SELECT * FROM test1")
     ret = [row.values() for row in rows]
     expected = [
         (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),

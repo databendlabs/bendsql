@@ -12,11 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-
 use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth};
 use crate::capability::Capability;
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
@@ -36,6 +31,8 @@ use crate::{
     QueryStats,
 };
 use crate::{Page, Pages};
+use base64::engine::general_purpose::URL_SAFE;
+use base64::Engine;
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -45,7 +42,11 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::multipart::{Form, Part};
 use reqwest::{Body, Client as HttpClient, Request, RequestBuilder, Response, StatusCode};
 use semver::Version;
-use serde::Deserialize;
+use serde::{de, Deserialize};
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tokio_retry::strategy::jitter;
 use tokio_stream::StreamExt;
@@ -60,6 +61,7 @@ const HEADER_STAGE_NAME: &str = "X-DATABEND-STAGE-NAME";
 const HEADER_ROUTE_HINT: &str = "X-DATABEND-ROUTE-HINT";
 const TXN_STATE_ACTIVE: &str = "Active";
 const HEADER_SQL: &str = "X-DATABEND-SQL";
+const HEADER_QUERY_CONTEXT: &str = "X-DATABEND-QUERY-CONTEXT";
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -670,6 +672,31 @@ impl APIClient {
         Ok(())
     }
 
+    // use base64 encode whenever possible for safety
+    // but also accept raw JSON for test/debug/one-shot operations
+    pub fn decode_json_header<T>(key: &str, value: &str) -> Result<T, String>
+    where
+        T: de::DeserializeOwned,
+    {
+        if value.starts_with("{") {
+            serde_json::from_slice(value.as_bytes())
+                .map_err(|e| format!("Invalid value {value} for {key} JSON decode error: {e}",))?
+        } else {
+            let json = URL_SAFE.decode(value).map_err(|e| {
+                format!(
+                    "Invalid value {} for {key}, base64 decode error: {}",
+                    value, e
+                )
+            })?;
+            serde_json::from_slice(&json).map_err(|e| {
+                format!(
+                    "Invalid value {value} for {key}, JSON value {},  decode error: {e}",
+                    String::from_utf8_lossy(&json)
+                )
+            })
+        }
+    }
+
     pub async fn streaming_load(
         &self,
         sql: &str,
@@ -684,9 +711,23 @@ impl APIClient {
         let query_id = self.gen_query_id();
         let mut headers = self.make_headers(Some(&query_id))?;
         headers.insert(HEADER_SQL, sql.parse()?);
+        let mut session = serde_json::to_string(&*self.session_state.lock())
+            .expect("serialize session state should not fail");
+        headers.insert(HEADER_QUERY_CONTEXT, session.parse()?);
         let form = Form::new().part("upload", part);
         let resp = builder.headers(headers).multipart(form).send().await?;
         let status = resp.status();
+        if let Some(value) = resp.headers().get(HEADER_QUERY_CONTEXT) {
+            match Self::decode_json_header::<SessionState>(
+                HEADER_QUERY_CONTEXT,
+                value.to_str().unwrap(),
+            ) {
+                Ok(session) => *self.session_state.lock() = session,
+                Err(e) => {
+                    error!("Error decoding session state when streaming load: {e}");
+                }
+            }
+        };
         if status != 200 {
             return Err(
                 Error::response_error(status, &resp.bytes().await?).with_context("streaming_load")
