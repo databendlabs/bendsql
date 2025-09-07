@@ -711,7 +711,7 @@ impl APIClient {
         let query_id = self.gen_query_id();
         let mut headers = self.make_headers(Some(&query_id))?;
         headers.insert(HEADER_SQL, sql.parse()?);
-        let mut session = serde_json::to_string(&*self.session_state.lock())
+        let session = serde_json::to_string(&*self.session_state.lock())
             .expect("serialize session state should not fail");
         headers.insert(HEADER_QUERY_CONTEXT, session.parse()?);
         let form = Form::new().part("upload", part);
