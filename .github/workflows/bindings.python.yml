@@ -139,6 +139,21 @@ jobs:
         working-directory: bindings/python
         run: behave tests/cursor
 
+  compat:
+    name: Compat Test
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: wntrblm/nox@2025.05.01
+      - name: Run Nox
+        run: nox -f tests/nox/noxfile.py
+
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [check, build, integration]

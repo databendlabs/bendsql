@@ -19,6 +19,18 @@ from decimal import Decimal
 from behave import given, when, then
 import databend_driver
 
+DB_VERSION = os.getenv("DB_VERSION")
+if DB_VERSION is not None:
+    DB_VERSION = tuple(map(int, DB_VERSION.split(".")))
+else:
+    DB_VERSION = (100, 0, 0)
+
+DRIVER_VERSION = os.getenv("DRIVER_VERSION")
+if DRIVER_VERSION is not None:
+    DRIVER_VERSION = tuple(map(int, DRIVER_VERSION.split(".")))
+else:
+    DRIVER_VERSION = (100, 0, 0)
+
 
 @given("A new Databend Driver Client")
 async def _(context):
@@ -167,8 +179,10 @@ async def _(context):
 
 
 async def test_load_file(context, load_method):
-    await context.conn.exec("CREATE OR REPLACE DATABASE db1")
-    await context.conn.exec("use db1")
+    if DRIVER_VERSION >= (0, 28, 3) and DB_VERSION >= (1, 2, 792):
+        await context.conn.exec("CREATE OR REPLACE DATABASE db1")
+        await context.conn.exec("use db1")
+
     await context.conn.exec(
         """
         CREATE OR REPLACE TABLE test1 (
@@ -246,7 +260,10 @@ async def _(context):
 
 @then("last_query_id should return query ID after execution")
 async def _(context):
-    # Initially no query ID
+    if DRIVER_VERSION < (0, 28, 3):
+        return
+
+        # Initially no query ID
     assert context.conn.last_query_id() is None, "Initially should have no query ID"
 
     # Execute a query
@@ -283,6 +300,9 @@ async def _(context):
 
 @then("killQuery should return error for non-existent query ID")
 async def _(context):
+    if DRIVER_VERSION < (0, 28, 3):
+        return
+
     # Test API signature
     assert hasattr(context.conn, "kill_query"), "kill_query should be a method"
     assert callable(getattr(context.conn, "kill_query")), (
