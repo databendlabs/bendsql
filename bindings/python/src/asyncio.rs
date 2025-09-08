@@ -97,7 +97,14 @@ impl AsyncDatabendConnection {
         let this = self.0.clone();
         let params = to_sql_params(params);
         future_into_py(py, async move {
-            let res = this.exec(&sql, params).await.map_err(DriverError::new)?;
+            let res = if params.is_empty() {
+                this.exec(&sql).await.map_err(DriverError::new)?
+            } else {
+                this.exec(&sql)
+                    .bind(params)
+                    .await
+                    .map_err(DriverError::new)?
+            };
             Ok(res)
         })
     }
@@ -112,10 +119,15 @@ impl AsyncDatabendConnection {
         let this = self.0.clone();
         let params = to_sql_params(params);
         future_into_py(py, async move {
-            let row = this
-                .query_row(&sql, params)
-                .await
-                .map_err(DriverError::new)?;
+            let row = if params.is_empty() {
+                this.query_row(&sql).await.map_err(DriverError::new)?
+            } else {
+                this.query(&sql)
+                    .bind(params)
+                    .one()
+                    .await
+                    .map_err(DriverError::new)?
+            };
             Ok(row.map(Row::new))
         })
     }
@@ -130,13 +142,18 @@ impl AsyncDatabendConnection {
         let this = self.0.clone();
         let params = to_sql_params(params);
         future_into_py(py, async move {
-            let rows: Vec<Row> = this
-                .query_all(&sql, params)
-                .await
-                .map_err(DriverError::new)?
-                .into_iter()
-                .map(Row::new)
-                .collect();
+            let rows: Vec<Row> = {
+                let core_rows = if params.is_empty() {
+                    this.query_all(&sql).await.map_err(DriverError::new)?
+                } else {
+                    this.query(&sql)
+                        .bind(params)
+                        .all()
+                        .await
+                        .map_err(DriverError::new)?
+                };
+                core_rows.into_iter().map(Row::new).collect()
+            };
             Ok(rows)
         })
     }
@@ -152,10 +169,15 @@ impl AsyncDatabendConnection {
         let params = to_sql_params(params);
 
         future_into_py(py, async move {
-            let streamer = this
-                .query_iter(&sql, params)
-                .await
-                .map_err(DriverError::new)?;
+            let streamer = if params.is_empty() {
+                this.query_iter(&sql).await.map_err(DriverError::new)?
+            } else {
+                this.query(&sql)
+                    .bind(params)
+                    .iter()
+                    .await
+                    .map_err(DriverError::new)?
+            };
             Ok(RowIterator::new(streamer))
         })
     }

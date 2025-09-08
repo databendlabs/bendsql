@@ -23,6 +23,7 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
 use geozero::wkb::FromWkb;
 use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
+use hex;
 
 use crate::cursor_ext::{
     collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
@@ -578,6 +579,19 @@ impl TryFrom<Value> for String {
             Value::Geography(s) => Ok(s),
             Value::Interval(s) => Ok(s),
             Value::Variant(s) => Ok(s),
+            Value::Date(d) => {
+                let date =
+                    NaiveDate::from_num_days_from_ce_opt(d + DAYS_FROM_CE).ok_or_else(|| {
+                        ConvertError::new("date", format!("invalid date value: {}", d))
+                    })?;
+                Ok(date.format("%Y-%m-%d").to_string())
+            }
+            Value::Timestamp(ts) => {
+                let dt = DateTime::from_timestamp_micros(ts).ok_or_else(|| {
+                    ConvertError::new("timestamp", format!("invalid timestamp: {}", ts))
+                })?;
+                Ok(dt.format(TIMESTAMP_FORMAT).to_string())
+            }
             _ => Err(ConvertError::new("string", format!("{val:?}")).into()),
         }
     }
@@ -1977,6 +1991,238 @@ impl months_days_micros {
     #[inline]
     pub fn microseconds(&self) -> i64 {
         (self.0 & MICROS_MASK) as i64
+    }
+}
+
+// From implementations for basic types to Value
+impl From<&String> for Value {
+    fn from(s: &String) -> Self {
+        Value::String(s.clone())
+    }
+}
+
+impl From<String> for Value {
+    fn from(s: String) -> Self {
+        Value::String(s)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(s: &str) -> Self {
+        Value::String(s.to_string())
+    }
+}
+
+impl From<bool> for Value {
+    fn from(b: bool) -> Self {
+        Value::Boolean(b)
+    }
+}
+
+impl From<&bool> for Value {
+    fn from(b: &bool) -> Self {
+        Value::Boolean(*b)
+    }
+}
+
+impl From<u8> for Value {
+    fn from(n: u8) -> Self {
+        Value::Number(NumberValue::UInt8(n))
+    }
+}
+
+impl From<&u8> for Value {
+    fn from(n: &u8) -> Self {
+        Value::Number(NumberValue::UInt8(*n))
+    }
+}
+
+impl From<u16> for Value {
+    fn from(n: u16) -> Self {
+        Value::Number(NumberValue::UInt16(n))
+    }
+}
+
+impl From<&u16> for Value {
+    fn from(n: &u16) -> Self {
+        Value::Number(NumberValue::UInt16(*n))
+    }
+}
+
+impl From<u32> for Value {
+    fn from(n: u32) -> Self {
+        Value::Number(NumberValue::UInt32(n))
+    }
+}
+
+impl From<&u32> for Value {
+    fn from(n: &u32) -> Self {
+        Value::Number(NumberValue::UInt32(*n))
+    }
+}
+
+impl From<u64> for Value {
+    fn from(n: u64) -> Self {
+        Value::Number(NumberValue::UInt64(n))
+    }
+}
+
+impl From<&u64> for Value {
+    fn from(n: &u64) -> Self {
+        Value::Number(NumberValue::UInt64(*n))
+    }
+}
+
+impl From<i8> for Value {
+    fn from(n: i8) -> Self {
+        Value::Number(NumberValue::Int8(n))
+    }
+}
+
+impl From<&i8> for Value {
+    fn from(n: &i8) -> Self {
+        Value::Number(NumberValue::Int8(*n))
+    }
+}
+
+impl From<i16> for Value {
+    fn from(n: i16) -> Self {
+        Value::Number(NumberValue::Int16(n))
+    }
+}
+
+impl From<&i16> for Value {
+    fn from(n: &i16) -> Self {
+        Value::Number(NumberValue::Int16(*n))
+    }
+}
+
+impl From<i32> for Value {
+    fn from(n: i32) -> Self {
+        Value::Number(NumberValue::Int32(n))
+    }
+}
+
+impl From<&i32> for Value {
+    fn from(n: &i32) -> Self {
+        Value::Number(NumberValue::Int32(*n))
+    }
+}
+
+impl From<i64> for Value {
+    fn from(n: i64) -> Self {
+        Value::Number(NumberValue::Int64(n))
+    }
+}
+
+impl From<&i64> for Value {
+    fn from(n: &i64) -> Self {
+        Value::Number(NumberValue::Int64(*n))
+    }
+}
+
+impl From<f32> for Value {
+    fn from(n: f32) -> Self {
+        Value::Number(NumberValue::Float32(n))
+    }
+}
+
+impl From<&f32> for Value {
+    fn from(n: &f32) -> Self {
+        Value::Number(NumberValue::Float32(*n))
+    }
+}
+
+impl From<f64> for Value {
+    fn from(n: f64) -> Self {
+        Value::Number(NumberValue::Float64(n))
+    }
+}
+
+impl From<NaiveDate> for Value {
+    fn from(date: NaiveDate) -> Self {
+        let days = date.num_days_from_ce() - DAYS_FROM_CE;
+        Value::Date(days)
+    }
+}
+
+impl From<&NaiveDate> for Value {
+    fn from(date: &NaiveDate) -> Self {
+        let days = date.num_days_from_ce() - DAYS_FROM_CE;
+        Value::Date(days)
+    }
+}
+
+impl From<NaiveDateTime> for Value {
+    fn from(dt: NaiveDateTime) -> Self {
+        let timestamp_micros = dt.and_utc().timestamp_micros();
+        Value::Timestamp(timestamp_micros)
+    }
+}
+
+impl From<&NaiveDateTime> for Value {
+    fn from(dt: &NaiveDateTime) -> Self {
+        let timestamp_micros = dt.and_utc().timestamp_micros();
+        Value::Timestamp(timestamp_micros)
+    }
+}
+
+impl From<&f64> for Value {
+    fn from(n: &f64) -> Self {
+        Value::Number(NumberValue::Float64(*n))
+    }
+}
+
+// Implement conversion from Value to SQL string for parameter system
+impl Value {
+    pub fn to_sql_string(&self) -> String {
+        match self {
+            Value::Null => "NULL".to_string(),
+            Value::Boolean(b) => {
+                if *b {
+                    "TRUE".to_string()
+                } else {
+                    "FALSE".to_string()
+                }
+            }
+            Value::String(s) => format!("'{}'", s),
+            Value::Number(n) => n.to_string(),
+            Value::Timestamp(ts) => {
+                let dt = DateTime::from_timestamp_micros(*ts).unwrap();
+                format!("'{}'", dt.format(TIMESTAMP_FORMAT))
+            }
+            Value::Date(d) => {
+                let date = NaiveDate::from_num_days_from_ce_opt(*d + DAYS_FROM_CE).unwrap();
+                format!("'{}'", date.format("%Y-%m-%d"))
+            }
+            Value::Binary(b) => format!("'{}'", hex::encode(b)),
+            Value::Array(arr) => {
+                let items: Vec<String> = arr.iter().map(|v| v.to_sql_string()).collect();
+                format!("[{}]", items.join(", "))
+            }
+            Value::Map(map) => {
+                let items: Vec<String> = map
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k.to_sql_string(), v.to_sql_string()))
+                    .collect();
+                format!("{{{}}}", items.join(", "))
+            }
+            Value::Tuple(tuple) => {
+                let items: Vec<String> = tuple.iter().map(|v| v.to_sql_string()).collect();
+                format!("({})", items.join(", "))
+            }
+            Value::Bitmap(b) => format!("'{}'", b),
+            Value::Variant(v) => format!("'{}'", v),
+            Value::Geometry(g) => format!("'{}'", g),
+            Value::Geography(g) => format!("'{}'", g),
+            Value::Interval(i) => format!("'{}'", i),
+            Value::Vector(v) => {
+                let items: Vec<String> = v.iter().map(|f| f.to_string()).collect();
+                format!("[{}]", items.join(", "))
+            }
+            Value::EmptyArray => "[]".to_string(),
+            Value::EmptyMap => "{}".to_string(),
+        }
     }
 }
 

@@ -29,7 +29,7 @@ flight-sql = [
 arrow = { workspace = true }
 arrow-flight = { workspace = true, optional = true }
 arrow-schema = { workspace = true, optional = true }
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
 databend-client = { workspace = true }
 databend-driver-core = { workspace = true }
 databend-driver-macros = { workspace = true }

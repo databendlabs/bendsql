@@ -5,9 +5,9 @@ Databend unified SQL client for RestAPI and FlightSQL
 [![crates.io](https://img.shields.io/crates/v/databend-driver.svg)](https://crates.io/crates/databend-driver)
 ![License](https://img.shields.io/crates/l/databend-driver.svg)
 
-## usage
+## Usage
 
-### exec
+### Basic Operations
 
 ```rust
 use databend_driver::Client;
@@ -16,53 +16,139 @@ let dsn = "databend://root:@localhost:8000/default?sslmode=disable".to_string();
 let client = Client::new(dsn);
 let conn = client.get_conn().await.unwrap();
 
+// Execute DDL
 let sql_create = "CREATE TABLE books (
     title VARCHAR,
     author VARCHAR,
     date Date
 );";
 conn.exec(sql_create).await.unwrap();
+
+// Execute DML
 let sql_insert = "INSERT INTO books VALUES ('The Little Prince', 'Antoine de Saint-Exupéry', '1943-04-06');";
 conn.exec(sql_insert).await.unwrap();
+
 conn.close().await
 ```
 
-### query row
+### Query Operations
+
+#### Query Single Row
 
 ```rust
-let row = conn.query_row("SELECT * FROM books;", ()).await.unwrap();
-let (title,author,date): (String,String,i32) = row.unwrap().try_into().unwrap();
+// Simple query
+let row = conn.query_row("SELECT * FROM books").await.unwrap();
+let (title, author, date): (String, String, chrono::NaiveDate) = row.unwrap().try_into().unwrap();
 println!("{} {} {}", title, author, date);
+
+// Using Builder pattern for better flexibility
+let row = conn.query("SELECT * FROM books WHERE title = ?")
+    .bind(params!["The Little Prince"])
+    .one()
+    .await.unwrap();
 ```
 
-### query iter
+#### Query Multiple Rows
 
 ```rust
-let mut rows = conn.query_iter("SELECT * FROM books;").await.unwrap();
-while let Some(row) = rows.next().await {
-    let (title,author,date): (String,String,chrono::NaiveDate) = row.unwrap().try_into().unwrap();
+// Get all rows
+let rows = conn.query("SELECT * FROM books").all().await.unwrap();
+for row in rows {
+    let (title, author, date): (String, String, chrono::NaiveDate) = row.try_into().unwrap();
+    println!("{} {} {}", title, author, date);
+}
+
+// Stream processing for large datasets
+let mut iter = conn.query("SELECT * FROM books").iter().await.unwrap();
+while let Some(row) = iter.next().await {
+    let (title, author, date): (String, String, chrono::NaiveDate) = row.unwrap().try_into().unwrap();
     println!("{} {} {}", title, author, date);
 }
 ```
 
-### Parameter bindings
+### Parameter Bindings
+
+The driver supports multiple parameter binding styles:
 
 ```rust
-let row = conn
-    .query_row("SELECT $1, $2, $3, $4", (3, false, 4, "55"))
-    .await
-    .unwrap();
+// Positional parameters (PostgreSQL style)
+let row = conn.query("SELECT $1, $2, $3, $4")
+    .bind((3, false, 4, "55"))
+    .one()
+    .await.unwrap();
 
+// Named parameters
 let params = params! {a => 3, b => false, c => 4, d => "55"};
-let row = conn
-    .query_row("SELECT :a, :b, :c, :d", params)
-    .await
-    .unwrap();
+let row = conn.query("SELECT :a, :b, :c, :d")
+    .bind(params)
+    .one()
+    .await.unwrap();
 
-let row = conn
-    .query_row("SELECT ?, ?, ?, ?", (3, false, 4, "55"))
-    .await
-    .unwrap();
+// Question mark placeholders  
+let row = conn.query("SELECT ?, ?, ?, ?")
+    .bind((3, false, 4, "55"))
+    .one()
+    .await.unwrap();
+
+// Insert with parameters
+conn.exec("INSERT INTO books VALUES (?, ?, ?)")
+    .bind(("New Book", "Author Name", "2024-01-01"))
+    .await.unwrap();
+```
+
+### Builder Pattern API
+
+The driver provides a flexible Builder pattern for complex queries:
+
+```rust
+// Simple execution
+conn.exec("CREATE TABLE test (id INT)").await?;
+
+// Conditional parameter binding
+let mut query = conn.query("SELECT * FROM books");
+if let Some(author_filter) = author_name {
+    query = query.bind(params![author_filter]);
+}
+let books = query.all().await?;
+
+// Different execution modes
+let single_book = conn.query("SELECT * FROM books LIMIT 1").one().await?;
+let all_books = conn.query("SELECT * FROM books").all().await?;
+let book_stream = conn.query("SELECT * FROM books").iter().await?;
+let book_stats = conn.query("SELECT COUNT(*) FROM books").iter_ext().await?;
+```
+
+### ORM Support
+
+```rust
+use databend_driver::serde_bend;
+
+#[derive(serde_bend, Debug)]
+struct Book {
+    title: String,
+    author: String,
+    #[serde_bend(rename = "publication_date")]
+    date: chrono::NaiveDate,
+}
+
+// Query as typed objects
+let cursor = conn.query_as::<Book>("SELECT * FROM books WHERE author = ?")
+    .bind(params!["Antoine de Saint-Exupéry"])
+    .await?;
+
+let books = cursor.fetch_all().await?;
+for book in books {
+    println!("{:?}", book);
+}
+
+// Insert typed objects  
+let mut insert = conn.insert::<Book>("books").await?;
+insert.write(&Book {
+    title: "New Book".to_string(),
+    author: "New Author".to_string(), 
+    date: chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+}).await?;
+let inserted = insert.end().await?;
 ```
 
 ## Type Mapping
@@ -108,8 +194,25 @@ INSERT INTO example VALUES ('{"a": 1, "b": "hello"}');
 ```
 
 ```rust
-let row = conn.query_row("SELECT * FROM example limit 1;", ()).await.unwrap();
+let row = conn.query_row("SELECT * FROM example LIMIT 1").await.unwrap();
 let (data,): (String,) = row.unwrap().try_into().unwrap();
 let value: serde_json::Value = serde_json::from_str(&data).unwrap();
 println!("{:?}", value);
+```
+
+## Migration from Old API
+
+If you're upgrading from an older version, here's how to migrate:
+
+```rust
+// Old API
+conn.exec("INSERT INTO test VALUES (?)", params![1]).await?;
+conn.query_all("SELECT * FROM test WHERE id = ?", params![1]).await?;
+
+// New Builder API (recommended)
+conn.exec("INSERT INTO test VALUES (?)").bind(params![1]).await?;
+conn.query("SELECT * FROM test WHERE id = ?").bind(params![1]).all().await?;
+
+// Or use direct methods (compatible)
+conn.query_all("SELECT * FROM test").await?;
 ```

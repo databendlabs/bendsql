@@ -22,14 +22,14 @@ async fn set_timezone() {
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
 
-    let row = conn.query_row("select timezone()", ()).await.unwrap();
+    let row = conn.query_row("select timezone()").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();
     assert_eq!(val, "UTC");
 
-    conn.exec("set timezone='Europe/London'", ()).await.unwrap();
-    let row = conn.query_row("select timezone()", ()).await.unwrap();
+    conn.exec("set timezone='Europe/London'").await.unwrap();
+    let row = conn.query_row("select timezone()").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();
@@ -46,7 +46,7 @@ async fn set_timezone_with_dsn() {
     let client = Client::new(format!("{dsn}&timezone=Europe/London"));
     let conn = client.get_conn().await.unwrap();
 
-    let row = conn.query_row("select timezone()", ()).await.unwrap();
+    let row = conn.query_row("select timezone()").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();
@@ -61,10 +61,10 @@ async fn change_password() {
     }
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
-    let n = conn.exec("drop user if exists u1 ", ()).await.unwrap();
+    let n = conn.exec("drop user if exists u1 ").await.unwrap();
     assert_eq!(n, 0);
     let n = conn
-        .exec("create user u1 identified by 'p1' ", ())
+        .exec("create user u1 identified by 'p1' ")
         .await
         .unwrap();
     assert_eq!(n, 0);
@@ -74,12 +74,12 @@ async fn change_password() {
     let conn = client.get_conn().await.unwrap();
 
     let n = conn
-        .exec("alter user u1 identified by 'p2' ", ())
+        .exec("alter user u1 identified by 'p2' ")
         .await
         .unwrap();
     assert_eq!(n, 0);
 
-    let row = conn.query_row("select 1", ()).await.unwrap();
+    let row = conn.query_row("select 1").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (i64,) = row.try_into().unwrap();

@@ -22,7 +22,10 @@ pub mod rest_api;
 
 pub use client::Client;
 pub use client::Connection;
+pub use client::InsertCursor;
 pub use client::LoadMethod;
+pub use client::QueryCursor;
+pub use client::RowORM;
 pub use conn::ConnectionInfo;
 pub use params::Param;
 pub use params::Params;
@@ -38,6 +41,7 @@ pub use databend_driver_core::schema::{
 pub use databend_driver_core::value::Interval;
 pub use databend_driver_core::value::{NumberValue, Value};
 
+pub use databend_driver_macros::serde_bend;
 pub use databend_driver_macros::TryFromRow;
 
 #[doc(hidden)]

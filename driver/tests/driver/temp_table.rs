@@ -34,20 +34,17 @@ async fn test_temp_table(session_token_enabled: bool) {
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
 
-    let row = conn.query_row("select version()", ()).await.unwrap();
+    let row = conn.query_row("select version()").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();
     println!("version = {val}");
 
-    let _ = conn.exec("create temp table t1 (a int)", ()).await.unwrap();
-    let n = conn
-        .exec("insert into t1 values (1),(2)", ())
-        .await
-        .unwrap();
+    let _ = conn.exec("create temp table t1 (a int)").await.unwrap();
+    let n = conn.exec("insert into t1 values (1),(2)").await.unwrap();
     assert_eq!(n, 2);
 
-    let row = conn.query_row("select count(*) from t1", ()).await.unwrap();
+    let row = conn.query_row("select count(*) from t1").await.unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
     let (val,): (i64,) = row.try_into().unwrap();

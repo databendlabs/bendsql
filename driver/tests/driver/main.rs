@@ -16,6 +16,7 @@ mod common;
 
 mod connection;
 mod load;
+mod orm;
 mod select_iter;
 mod select_simple;
 mod session;
