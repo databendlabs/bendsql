@@ -121,7 +121,7 @@ async fn test_orm() -> databend_driver::Result<()> {
 
     for (expected, actual) in test_users.iter().zip(retrieved_users.iter()) {
         let mut expected_for_comparison = expected.clone();
-        expected_for_comparison.created_at = actual.created_at.clone();
+        expected_for_comparison.created_at = actual.created_at;
         expected_for_comparison.value = actual.value.clone();
 
         assert_eq!(
@@ -162,17 +162,18 @@ fn test_usage_patterns() {
     assert_eq!(values.len(), 4);
 }
 
+#[allow(dead_code)]
 #[derive(serde_bend, Debug, Clone, Default)]
 struct TestFieldExclusionStruct {
     id: i32,
     username: String,
-    
+
     #[serde_bend(skip_serializing)]
     created_at: String,
-    
+
     #[serde_bend(skip_deserializing)]
     password: String,
-    
+
     #[serde_bend(skip_serializing, skip_deserializing)]
     internal_field: String,
 }
@@ -182,11 +183,11 @@ fn test_comprehensive_field_exclusion() {
     // Test query field names (exclude skip_deserializing and skip_both)
     let query_fields = TestFieldExclusionStruct::query_field_names();
     assert_eq!(query_fields, vec!["id", "username", "created_at"]);
-    
+
     // Test insert field names (exclude skip_serializing and skip_both)
     let insert_fields = TestFieldExclusionStruct::insert_field_names();
     assert_eq!(insert_fields, vec!["id", "username", "password"]);
-    
+
     // Test backward compatibility
     let default_fields = TestFieldExclusionStruct::field_names();
     assert_eq!(default_fields, vec!["id", "username", "password"]);
@@ -198,13 +199,16 @@ fn test_field_exclusion() {
     // UserRow has: created_at (skip_serializing), value (skip_serializing), unknow (skip_both)
     // Query should include: id, user_name, email, dt, created_at, value (everything except skip_deserializing/skip_both)
     let query_fields = UserRow::query_field_names();
-    assert_eq!(query_fields, vec!["id", "user_name", "email", "dt", "created_at", "value"]);
-    
-    // Test that insert fields exclude skip_serializing fields  
+    assert_eq!(
+        query_fields,
+        vec!["id", "user_name", "email", "dt", "created_at", "value"]
+    );
+
+    // Test that insert fields exclude skip_serializing fields
     // Insert should exclude: created_at, value, unknow (all skip_serializing fields)
     let insert_fields = UserRow::insert_field_names();
     assert_eq!(insert_fields, vec!["id", "user_name", "email", "dt"]);
-    
+
     // For backward compatibility, field_names should match insert_fields
     let default_fields = UserRow::field_names();
     assert_eq!(default_fields, insert_fields);

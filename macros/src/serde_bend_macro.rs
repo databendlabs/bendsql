@@ -94,7 +94,8 @@ pub fn serde_bend_derive(tokens_input: TokenStream) -> TokenStream {
 
             // For SELECT: exclude skip_deserializing
             let skip_deserializing = has_serde_bend_attr(field, "skip_deserializing");
-            let skip_both = has_serde_bend_attr(field, "skip_serializing") && has_serde_bend_attr(field, "skip_deserializing");
+            let skip_both = has_serde_bend_attr(field, "skip_serializing")
+                && has_serde_bend_attr(field, "skip_deserializing");
 
             if skip_deserializing || skip_both {
                 None
