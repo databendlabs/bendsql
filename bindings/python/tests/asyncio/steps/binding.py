@@ -112,9 +112,9 @@ async def _(context):
 
     # Array
     row = await context.conn.query_row("select [10::Decimal(15,2), 1.1+2.3]")
-    assert row.values() == (
-        [Decimal("10.00"), Decimal("3.40")],
-    ), f"Array: {row.values()}"
+    assert row.values() == ([Decimal("10.00"), Decimal("3.40")],), (
+        f"Array: {row.values()}"
+    )
 
     # Map
     row = await context.conn.query_row("select {'xx':to_date('2020-01-01')}")
@@ -124,9 +124,9 @@ async def _(context):
     row = await context.conn.query_row(
         "select (10, '20', to_datetime('2024-04-16 12:34:56.789'))"
     )
-    assert row.values() == (
-        (10, "20", datetime(2024, 4, 16, 12, 34, 56, 789000)),
-    ), f"Tuple: {row.values()}"
+    assert row.values() == ((10, "20", datetime(2024, 4, 16, 12, 34, 56, 789000)),), (
+        f"Tuple: {row.values()}"
+    )
 
 
 @then("Select numbers should iterate all rows")
@@ -201,12 +201,12 @@ async def test_load_file(context, load_method):
         "tests/data/test.csv",
         load_method,
     )
-    assert (
-        progress.write_rows == 3
-    ), f"{load_method} progress.write_rows: {progress.write_rows}"
-    assert (
-        progress.write_bytes == 194
-    ), f"{load_method} progress.write_bytes: {progress.write_bytes}"
+    assert progress.write_rows == 3, (
+        f"{load_method} progress.write_rows: {progress.write_rows}"
+    )
+    assert progress.write_bytes == 194, (
+        f"{load_method} progress.write_bytes: {progress.write_bytes}"
+    )
 
     rows = await context.conn.query_iter("SELECT * FROM test1")
     ret = [row.values() for row in rows]
@@ -253,9 +253,9 @@ async def _(context):
             "SELECT COUNT(*) FROM system.temporary_tables"
         )
         temp_table_count = list(rows)[0].values()[0]
-        assert (
-            temp_table_count == 0
-        ), f"temp_table_count after close = {temp_table_count}"
+        assert temp_table_count == 0, (
+            f"temp_table_count after close = {temp_table_count}"
+        )
 
 
 @then("last_query_id should return query ID after execution")
@@ -305,22 +305,22 @@ async def _(context):
 
     # Test API signature
     assert hasattr(context.conn, "kill_query"), "kill_query should be a method"
-    assert callable(
-        getattr(context.conn, "kill_query")
-    ), "kill_query should be callable"
+    assert callable(getattr(context.conn, "kill_query")), (
+        "kill_query should be callable"
+    )
 
     # Test killing non-existent query with valid UUID format
     non_existent_query_id = "12345678-1234-1234-1234-123456789012"
 
     try:
         await context.conn.kill_query(non_existent_query_id)
-        assert (
-            False
-        ), "kill_query should have raised an exception for non-existent query ID"
+        assert False, (
+            "kill_query should have raised an exception for non-existent query ID"
+        )
     except Exception as err:
         # Should get an error for non-existent query
         assert isinstance(err, Exception), "Should raise an Exception"
-        assert (
-            isinstance(err.args[0], str) and len(err.args[0]) > 0
-        ), "Should return meaningful error message"
+        assert isinstance(err.args[0], str) and len(err.args[0]) > 0, (
+            "Should return meaningful error message"
+        )
         print(f"Expected error for non-existent query: {err}")
