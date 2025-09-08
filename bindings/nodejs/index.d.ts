@@ -34,6 +34,10 @@ export declare class Connection {
   /** Get the databend version. */
   version(): Promise<string>
   formatSql(sql: string, params?: Params | undefined | null): string
+  /** Get the last executed query ID */
+  lastQueryId(): string | null
+  /** Kill a running query by its query ID */
+  killQuery(queryId: string): Promise<void>
   /** Execute a SQL query, return the number of affected rows. */
   exec(sql: string, params?: Params | undefined | null): Promise<number>
   /** Execute a SQL query, and only return the first row. */

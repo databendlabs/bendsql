@@ -221,6 +221,18 @@ impl BlockingDatabendConnection {
         Ok(ServerStats::new(ret))
     }
 
+    pub fn last_query_id(&self) -> Option<String> {
+        self.0.last_query_id()
+    }
+
+    pub fn kill_query(&self, py: Python, query_id: String) -> PyResult<()> {
+        let this = self.0.clone();
+        wait_for_future(py, async move {
+            this.kill_query(&query_id).await.map_err(DriverError::new)
+        })?;
+        Ok(())
+    }
+
     pub fn close(&mut self, py: Python) -> PyResult<()> {
         wait_for_future(
             py,

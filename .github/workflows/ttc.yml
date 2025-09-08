@@ -15,23 +15,55 @@ on:
       - 'sql/**'
 
 jobs:
-  docker:
+  build:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: ttc-${{ matrix.target }}
+          target: ${{ matrix.target }}
+      - name: Install cross
+        run: |
+          cargo install cross
+      - name: Build TTC
+        run: |
+          cross build --bin ttc-server --package databend-ttc --release --target ${{ matrix.target }}
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ttc-binaries-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/ttc-server
 
+  docker:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Download build artifacts for x86_64-unknown-linux-musl
+        uses: actions/download-artifact@v4
+        with:
+          name: ttc-binaries-x86_64-unknown-linux-musl
+          path: dist/linux/amd64
+      - name: Download build artifacts for aarch64-unknown-linux-musl
+        uses: actions/download-artifact@v4
+        with:
+          name: ttc-binaries-aarch64-unknown-linux-musl
+          path: dist/linux/arm64
+      - name: Check artifacts
+        run: |
+          tree dist/
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Set Docker tag
+        id: tag
         shell: bash
         run: |
           ref_v="${{ github.ref }}"
@@ -40,16 +72,18 @@ jobs:
           else
             DOCKER_TAG="latest"
           fi
-          echo "DOCKER_TAG=$DOCKER_TAG" >> $GITHUB_ENV
-
-      - name: Print Docker tag
-        shell: bash
-        run: |
-          echo "Start to build and publish: datafuselabs/ttc-rust:$DOCKER_TAG"
-
+          echo "tag=${DOCKER_TAG}" >> $GITHUB_OUTPUT
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
       - name: TTC Build and push
         uses: docker/build-push-action@v6
         with:
           push: true
+          context: .
           file: ./ttc/Dockerfile
-          tags: datafuselabs/ttc-rust:${{ env.DOCKER_TAG }}
+          platforms: linux/amd64,linux/arm64
+          tags: ghcr.io/databendlabs/ttc-rust:${{ steps.tag.outputs.tag }}

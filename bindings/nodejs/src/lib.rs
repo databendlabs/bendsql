@@ -106,6 +106,21 @@ impl Connection {
         Ok(self.inner.format_sql(&sql, params))
     }
 
+    /// Get the last executed query ID
+    #[napi]
+    pub fn last_query_id(&self) -> Option<String> {
+        self.inner.last_query_id()
+    }
+
+    /// Kill a running query by its query ID
+    #[napi]
+    pub async fn kill_query(&self, query_id: String) -> Result<()> {
+        self.inner
+            .kill_query(&query_id)
+            .await
+            .map_err(format_napi_error)
+    }
+
     /// Execute a SQL query, return the number of affected rows.
     #[napi]
     pub async fn exec(&self, sql: String, params: Option<Params>) -> Result<i64> {
@@ -521,7 +536,7 @@ impl Row {
     }
 
     #[napi]
-    pub fn values(&self) -> Vec<Value> {
+    pub fn values(&self) -> Vec<Value<'_>> {
         self.inner
             .values()
             .iter()
@@ -530,7 +545,7 @@ impl Row {
     }
 
     #[napi]
-    pub fn data(&self) -> HashMap<String, Value> {
+    pub fn data(&self) -> HashMap<String, Value<'_>> {
         let mut map = HashMap::new();
         let schema = self.inner.schema();
         for (name, value) in schema

@@ -19,6 +19,18 @@ from decimal import Decimal
 from behave import given, when, then
 import databend_driver
 
+DB_VERSION = os.getenv("DB_VERSION")
+if DB_VERSION is not None:
+    DB_VERSION = tuple(map(int, DB_VERSION.split(".")))
+else:
+    DB_VERSION = (100, 0, 0)
+
+DRIVER_VERSION = os.getenv("DRIVER_VERSION")
+if DRIVER_VERSION is not None:
+    DRIVER_VERSION = tuple(map(int, DRIVER_VERSION.split(".")))
+else:
+    DRIVER_VERSION = (100, 0, 0)
+
 
 @given("A new Databend Driver Client")
 def _(context):
@@ -87,7 +99,7 @@ def _(context, input, output):
 
 
 @then("Select types should be expected native types")
-async def _(context):
+def _(context):
     # Binary
     context.cursor.execute("select to_binary('xyz')")
     row = context.cursor.fetchone()
@@ -242,5 +254,15 @@ def _(context):
 
 
 @then("Load file with Streaming and Select should be equal")
+def _(context):
+    print("SKIP")
+
+
+@then("last_query_id should return query ID after execution")
+def _(context):
+    print("SKIP ")
+
+
+@then("killQuery should return error for non-existent query ID")
 def _(context):
     print("SKIP")

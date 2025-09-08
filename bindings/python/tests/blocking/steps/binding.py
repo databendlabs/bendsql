@@ -19,6 +19,18 @@ from decimal import Decimal
 from behave import given, when, then
 import databend_driver
 
+DB_VERSION = os.getenv("DB_VERSION")
+if DB_VERSION is not None:
+    DB_VERSION = tuple(map(int, DB_VERSION.split(".")))
+else:
+    DB_VERSION = (100, 0, 0)
+
+DRIVER_VERSION = os.getenv("DRIVER_VERSION")
+if DRIVER_VERSION is not None:
+    DRIVER_VERSION = tuple(map(int, DRIVER_VERSION.split(".")))
+else:
+    DRIVER_VERSION = (100, 0, 0)
+
 
 @given("A new Databend Driver Client")
 def _(context):
@@ -77,7 +89,7 @@ def _(context):
 
 
 @then("Select types should be expected native types")
-async def _(context):
+def _(context):
     # Binary
     row = context.conn.query_row("select to_binary('xyz')")
     assert row.values() == (b"xyz",), f"Binary: {row.values()}"
@@ -162,8 +174,24 @@ def _(context):
 
 
 def test_load_file(context, load_method):
+    if DRIVER_VERSION >= (0, 28, 3) and DB_VERSION >= (1, 2, 792):
+        context.conn.exec("CREATE OR REPLACE DATABASE db1")
+        context.conn.exec("use db1")
+    context.conn.exec(
+        """
+        CREATE OR REPLACE TABLE test1 (
+            i64 Int64,
+            u64 UInt64,
+            f64 Float64,
+            s   String,
+            s2  String,
+            d   Date,
+            t   DateTime
+        )
+        """
+    )
     progress = context.conn.load_file(
-        "INSERT INTO test VALUES FROM @_databend_load file_format = (type=csv)",
+        "INSERT INTO test1 VALUES FROM @_databend_load file_format = (type=csv)",
         "tests/data/test.csv",
     )
     assert progress.write_rows == 3, (
@@ -173,7 +201,7 @@ def test_load_file(context, load_method):
         f"{load_method}: progress.write_bytes: {progress.write_bytes}"
     )
 
-    rows = context.conn.query_iter("SELECT * FROM test")
+    rows = context.conn.query_iter("SELECT * FROM test1")
     ret = [row.values() for row in rows]
     expected = [
         (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
@@ -220,3 +248,71 @@ def _(context):
         assert temp_table_count == 0, (
             f"temp_table_count after close = {temp_table_count}"
         )
+
+
+@then("last_query_id should return query ID after execution")
+def _(context):
+    if DRIVER_VERSION < (0, 28, 3):
+        return
+
+    # Initially no query ID
+    assert context.conn.last_query_id() is None, "Initially should have no query ID"
+
+    # Execute a query
+    context.conn.query_row("SELECT 1")
+
+    # Should have a query ID now
+    query_id1 = context.conn.last_query_id()
+    assert query_id1 is not None, "Should have a query ID after query execution"
+    assert isinstance(query_id1, str), "Query ID should be a string"
+    assert len(query_id1) > 0, "Query ID should not be empty"
+
+    # Execute another query
+    context.conn.query_row("SELECT 2")
+
+    # Should have a different query ID
+    query_id2 = context.conn.last_query_id()
+    assert query_id2 is not None, "Should have a query ID after second query execution"
+    assert isinstance(query_id2, str), "Query ID should be a string"
+    assert query_id1 != query_id2, "Query IDs should be different"
+
+    # Test with queryIter
+    rows = context.conn.query_iter("SELECT number FROM numbers(3)")
+    list(rows)  # Consume the iterator
+    query_id3 = context.conn.last_query_id()
+    assert query_id3 is not None, "Should have a query ID after queryIter execution"
+    assert query_id2 != query_id3, "Query IDs should be different"
+
+    # Test with exec
+    context.conn.exec("SELECT 42")
+    query_id4 = context.conn.last_query_id()
+    assert query_id4 is not None, "Should have a query ID after exec execution"
+    assert query_id3 != query_id4, "Query IDs should be different"
+
+
+@then("killQuery should return error for non-existent query ID")
+def _(context):
+    if DRIVER_VERSION < (0, 28, 3):
+        return
+
+    # Test API signature
+    assert hasattr(context.conn, "kill_query"), "kill_query should be a method"
+    assert callable(getattr(context.conn, "kill_query")), (
+        "kill_query should be callable"
+    )
+
+    # Test killing non-existent query with valid UUID format
+    non_existent_query_id = "12345678-1234-1234-1234-123456789012"
+
+    try:
+        context.conn.kill_query(non_existent_query_id)
+        assert False, (
+            "kill_query should have raised an exception for non-existent query ID"
+        )
+    except Exception as err:
+        # Should get an error for non-existent query
+        assert isinstance(err, Exception), "Should raise an Exception"
+        assert isinstance(err.args[0], str) and len(err.args[0]) > 0, (
+            "Should return meaningful error message"
+        )
+        print(f"Expected error for non-existent query: {err}")

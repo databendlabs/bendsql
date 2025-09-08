@@ -1,18 +1,9 @@
-# Dockerfile
-FROM rust:1.83.0-bullseye as builder
+FROM alpine
 
-# Set the current working directory inside the container
-WORKDIR /usr/src
+ARG TARGETPLATFORM
 
-# Copy the source code into the container
-COPY . .
+COPY dist/${TARGETPLATFORM}/ttc-server /usr/bin/ttc-server
 
-# Build the application
-RUN cargo build --bin ttc-server --package databend-ttc --release
+RUN chmod +x /usr/bin/ttc-server
 
-FROM debian:bullseye-slim
-COPY --from=builder  /usr/src/target/release/ttc-server /usr/local/bin/ttc-server
-
-# Set the startup command
-# docker run --net host datafuselabs/ttc-rust -P 9092 --databend_dsn databend://default:@127.0.0.1:8000
 CMD ["ttc-server"]

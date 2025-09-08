@@ -25,6 +25,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use tokio::sync::Mutex;
 use tokio_stream::StreamExt;
 
+use crate::exceptions::map_error_to_exception;
 use crate::utils::wait_for_future;
 
 pub static VERSION: Lazy<String> = Lazy::new(|| {
@@ -34,7 +35,7 @@ pub static VERSION: Lazy<String> = Lazy::new(|| {
 
 pub static DECIMAL_CLS: GILOnceCell<Py<PyType>> = GILOnceCell::new();
 
-fn get_decimal_cls(py: Python<'_>) -> PyResult<&Bound<PyType>> {
+fn get_decimal_cls(py: Python<'_>) -> PyResult<&Bound<'_, PyType>> {
     DECIMAL_CLS
         .get_or_try_init(py, || {
             py.import(intern!(py, "decimal"))?
@@ -412,6 +413,6 @@ impl DriverError {
 
 impl From<DriverError> for PyErr {
     fn from(e: DriverError) -> Self {
-        PyException::new_err(format!("{}", e.0))
+        map_error_to_exception(e.0)
     }
 }

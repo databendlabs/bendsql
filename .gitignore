@@ -10,4 +10,6 @@ venv/
 /dist
 
 **/.DS_Store
+
 tmp
+CLAUDE.md
