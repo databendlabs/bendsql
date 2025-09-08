@@ -142,7 +142,7 @@ impl Session {
             }
             // server keywords
             if !settings.no_auto_complete {
-                let rows = conn.query_iter(PROMPT_SQL, ()).await;
+                let rows = conn.query_iter(PROMPT_SQL).await;
                 match rows {
                     Ok(mut rows) => {
                         let mut count = 0;
@@ -275,7 +275,7 @@ impl Session {
         }
 
         // license info
-        match self.conn.query_iter("call admin$license_info()", ()).await {
+        match self.conn.query_iter("call admin$license_info()").await {
             Ok(mut rows) => {
                 let row = rows.next().await.unwrap()?;
                 let linfo: LicenseInfo = row
@@ -565,7 +565,7 @@ impl Session {
             QueryKind::AlterUserPassword => {
                 // When changing the current user's password,
                 // exit the client and login again with the new password.
-                let _ = self.conn.exec(query, ()).await?;
+                let _ = self.conn.exec(query).await?;
                 Ok(None)
             }
             other => {
@@ -579,7 +579,7 @@ impl Session {
                     QueryKind::Put(l, r) => self.conn.put_files(&l, &r).await?,
                     QueryKind::Get(l, r) => self.conn.get_files(&l, &r).await?,
                     QueryKind::GenData(t, s, o) => self.gendata(t, s, o).await?,
-                    _ => self.conn.query_iter_ext(query, ()).await?,
+                    _ => self.conn.query_iter_ext(query).await?,
                 };
 
                 let mut displayer = FormatDisplay::new(

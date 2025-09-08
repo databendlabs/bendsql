@@ -16,8 +16,14 @@ use proc_macro::TokenStream;
 
 mod from_row;
 mod parser;
+mod serde_bend_macro;
 
 #[proc_macro_derive(TryFromRow)]
-pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
-    from_row::from_row_derive(tokens_input)
+pub fn try_from_row_derive(tokens_input: TokenStream) -> TokenStream {
+    from_row::try_from_row_derive(tokens_input)
+}
+
+#[proc_macro_derive(serde_bend, attributes(serde_bend))]
+pub fn serde_bend_derive(tokens_input: TokenStream) -> TokenStream {
+    serde_bend_macro::serde_bend_derive(tokens_input)
 }

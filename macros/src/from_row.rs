@@ -17,7 +17,7 @@ use quote::{quote, quote_spanned};
 use syn::{spanned::Spanned, DeriveInput};
 
 /// #[derive(TryFromRow)] derives TryFromRow for struct
-pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
+pub fn try_from_row_derive(tokens_input: TokenStream) -> TokenStream {
     let item = syn::parse::<DeriveInput>(tokens_input).expect("No DeriveInput");
     let struct_fields = crate::parser::parse_named_fields(&item, "TryFromRow");
 

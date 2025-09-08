@@ -124,20 +124,23 @@ impl Connection {
     /// Execute a SQL query, return the number of affected rows.
     #[napi]
     pub async fn exec(&self, sql: String, params: Option<Params>) -> Result<i64> {
-        self.inner
-            .exec(&sql, params)
-            .await
-            .map_err(format_napi_error)
+        let result = if let Some(p) = params {
+            self.inner.exec(&sql).bind(p).await
+        } else {
+            self.inner.exec(&sql).await
+        };
+        result.map_err(format_napi_error)
     }
 
     /// Execute a SQL query, and only return the first row.
     #[napi]
     pub async fn query_row(&self, sql: String, params: Option<Params>) -> Result<Option<Row>> {
-        let ret = self
-            .inner
-            .query_row(&sql, params)
-            .await
-            .map_err(format_napi_error)?;
+        let ret = if let Some(p) = params {
+            self.inner.query(&sql).bind(p).one().await
+        } else {
+            self.inner.query_row(&sql).await
+        };
+        let ret = ret.map_err(format_napi_error)?;
         let row = ret.map(|r| Row::new(r, self.opts.clone()));
         Ok(row)
     }
@@ -145,10 +148,12 @@ impl Connection {
     /// Execute a SQL query and fetch all data into the result
     #[napi]
     pub async fn query_all(&self, sql: String, params: Option<Params>) -> Result<Vec<Row>> {
-        Ok(self
-            .inner
-            .query_all(&sql, params)
-            .await
+        let rows = if let Some(p) = params {
+            self.inner.query(&sql).bind(p).all().await
+        } else {
+            self.inner.query_all(&sql).await
+        };
+        Ok(rows
             .map_err(format_napi_error)?
             .into_iter()
             .map(|r| Row::new(r, self.opts.clone()))
@@ -158,11 +163,12 @@ impl Connection {
     /// Execute a SQL query, and return all rows.
     #[napi]
     pub async fn query_iter(&self, sql: String, params: Option<Params>) -> Result<RowIterator> {
-        let iterator = self
-            .inner
-            .query_iter(&sql, params)
-            .await
-            .map_err(format_napi_error)?;
+        let iterator = if let Some(p) = params {
+            self.inner.query(&sql).bind(p).iter().await
+        } else {
+            self.inner.query_iter(&sql).await
+        };
+        let iterator = iterator.map_err(format_napi_error)?;
         Ok(RowIterator::new(iterator, self.opts.clone()))
     }
 
@@ -173,11 +179,12 @@ impl Connection {
         sql: String,
         params: Option<Params>,
     ) -> Result<RowIteratorExt> {
-        let iterator = self
-            .inner
-            .query_iter_ext(&sql, params)
-            .await
-            .map_err(format_napi_error)?;
+        let iterator = if let Some(p) = params {
+            self.inner.query(&sql).bind(p).iter_ext().await
+        } else {
+            self.inner.query_iter_ext(&sql).await
+        };
+        let iterator = iterator.map_err(format_napi_error)?;
         Ok(RowIteratorExt::new(iterator, self.opts.clone()))
     }
 

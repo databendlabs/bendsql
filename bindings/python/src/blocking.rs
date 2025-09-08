@@ -93,7 +93,11 @@ impl BlockingDatabendConnection {
         let this = self.0.clone();
         let params = to_sql_params(params);
         let ret = wait_for_future(py, async move {
-            this.exec(&sql, params).await.map_err(DriverError::new)
+            if params.is_empty() {
+                this.exec(&sql).await.map_err(DriverError::new)
+            } else {
+                this.exec(&sql).bind(params).await.map_err(DriverError::new)
+            }
         })?;
         Ok(ret)
     }
@@ -108,7 +112,15 @@ impl BlockingDatabendConnection {
         let this = self.0.clone();
         let params = to_sql_params(params);
         let ret = wait_for_future(py, async move {
-            this.query_row(&sql, params).await.map_err(DriverError::new)
+            if params.is_empty() {
+                this.query_row(&sql).await.map_err(DriverError::new)
+            } else {
+                this.query(&sql)
+                    .bind(params)
+                    .one()
+                    .await
+                    .map_err(DriverError::new)
+            }
         })?;
         Ok(ret.map(Row::new))
     }
@@ -123,7 +135,15 @@ impl BlockingDatabendConnection {
         let this = self.0.clone();
         let params = to_sql_params(params);
         let rows = wait_for_future(py, async move {
-            this.query_all(&sql, params).await.map_err(DriverError::new)
+            if params.is_empty() {
+                this.query_all(&sql).await.map_err(DriverError::new)
+            } else {
+                this.query(&sql)
+                    .bind(params)
+                    .all()
+                    .await
+                    .map_err(DriverError::new)
+            }
         })?;
         Ok(rows.into_iter().map(Row::new).collect())
     }
@@ -138,9 +158,15 @@ impl BlockingDatabendConnection {
         let this = self.0.clone();
         let params = to_sql_params(params);
         let it = wait_for_future(py, async {
-            this.query_iter(&sql, params)
-                .await
-                .map_err(DriverError::new)
+            if params.is_empty() {
+                this.query_iter(&sql).await.map_err(DriverError::new)
+            } else {
+                this.query(&sql)
+                    .bind(params)
+                    .iter()
+                    .await
+                    .map_err(DriverError::new)
+            }
         })?;
         Ok(RowIterator::new(it))
     }
@@ -314,7 +340,11 @@ impl BlockingDatabendCursor {
         // then we could finish the query directly if there's no result
         let params = to_sql_params(params);
         let (first, rows) = wait_for_future(py, async move {
-            let mut rows = conn.query_iter(&operation, params).await?;
+            let mut rows = if params.is_empty() {
+                conn.query_iter(&operation).await?
+            } else {
+                conn.query(&operation).bind(params).iter().await?
+            };
             let first = rows.next().await.transpose()?;
             Ok::<_, databend_driver::Error>((first, rows))
         })

@@ -15,8 +15,9 @@
 import nox
 import os
 
+
 @nox.session
-@nox.parametrize("db_version",  ["1.2.803", "1.2.791"])
+@nox.parametrize("db_version", ["1.2.803", "1.2.791"])
 def new_driver_with_old_servers(session, db_version):
     query_version = f"v{db_version}-nightly"
     session.install("behave")
