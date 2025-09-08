@@ -163,7 +163,7 @@ pub fn serde_bend_derive(tokens_input: TokenStream) -> TokenStream {
     TokenStream::from(generated)
 }
 
-// 检查字段是否有指定的 serde_bend 属性
+// check if field has serde_bend attribute
 fn has_serde_bend_attr(field: &syn::Field, attr_name: &str) -> bool {
     field.attrs.iter().any(|attr| {
         if attr.path().is_ident("serde_bend") {
@@ -175,14 +175,13 @@ fn has_serde_bend_attr(field: &syn::Field, attr_name: &str) -> bool {
     })
 }
 
-// 获取重命名后的字段名
+// get the renamed field name
 fn get_renamed_field_name(attrs: &[Attribute]) -> Option<String> {
     for attr in attrs {
         if attr.path().is_ident("serde_bend") {
             if let Meta::List(list) = &attr.meta {
                 let tokens_str = list.tokens.to_string();
 
-                // 解析 rename = "value" 格式
                 if let Some(start) = tokens_str.find("rename = \"") {
                     let start = start + "rename = \"".len();
                     if let Some(end) = tokens_str[start..].find('"') {
@@ -190,7 +189,6 @@ fn get_renamed_field_name(attrs: &[Attribute]) -> Option<String> {
                     }
                 }
 
-                // 解析 rename = value 格式（无引号）
                 if let Some(start) = tokens_str.find("rename = ") {
                     let start = start + "rename = ".len();
                     let end = tokens_str[start..]
@@ -207,9 +205,6 @@ fn get_renamed_field_name(attrs: &[Attribute]) -> Option<String> {
     None
 }
 
-// 获取字段索引（考虑重命名）
 fn get_field_index(_attrs: &[Attribute], default_index: usize) -> usize {
-    // 简化实现，使用默认索引
-    // 在完整实现中，你可能需要根据重命名属性重新计算索引
     default_index
 }
