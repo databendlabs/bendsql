@@ -131,11 +131,11 @@ impl Connection {
         self.inner.kill_query(query_id).await
     }
 
-    pub fn query(&self, sql: &str) -> QueryBuilder {
+    pub fn query(&self, sql: &str) -> QueryBuilder<'_> {
         QueryBuilder::new(self, sql)
     }
 
-    pub fn exec(&self, sql: &str) -> ExecBuilder {
+    pub fn exec(&self, sql: &str) -> ExecBuilder<'_> {
         ExecBuilder::new(self, sql)
     }
 
@@ -224,7 +224,7 @@ impl Connection {
     }
 
     // ORM Methods
-    pub fn query_as<T>(&self, sql: &str) -> ORMQueryBuilder<T>
+    pub fn query_as<T>(&self, sql: &str) -> ORMQueryBuilder<'_, T>
     where
         T: TryFrom<Row> + RowORM,
         T::Error: std::fmt::Display,
@@ -232,7 +232,7 @@ impl Connection {
         ORMQueryBuilder::new(self, sql)
     }
 
-    pub async fn insert<T>(&self, table_name: &str) -> Result<InsertCursor<T>>
+    pub async fn insert<T>(&self, table_name: &str) -> Result<InsertCursor<'_, T>>
     where
         T: Clone + RowORM,
     {
@@ -278,20 +278,20 @@ where
     }
 }
 
-pub struct InsertCursor<T> {
-    connection: *const Connection,
+pub struct InsertCursor<'a, T> {
+    connection: &'a Connection,
     table_name: String,
     rows: Vec<T>,
     _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T> InsertCursor<T>
+impl<'a, T> InsertCursor<'a, T>
 where
     T: Clone + RowORM,
 {
-    fn new(connection: &Connection, table_name: String) -> Self {
+    fn new(connection: &'a Connection, table_name: String) -> Self {
         Self {
-            connection: connection as *const Connection,
+            connection,
             table_name,
             rows: Vec::new(),
             _phantom: std::marker::PhantomData,
@@ -307,9 +307,7 @@ where
         if self.rows.is_empty() {
             return Ok(0);
         }
-
-        let connection = unsafe { &*self.connection };
-
+        let connection = self.connection;
         // Generate field names and values for INSERT (exclude skip_serializing)
         let field_names = T::insert_field_names();
         let field_list = field_names.join(", ");
