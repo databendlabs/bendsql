@@ -243,9 +243,9 @@ def _(context):
         context.cursor.execute(f"SELECT COUNT(*) FROM system.temporary_tables")
         rows = context.cursor.fetchall()
         temp_table_count = list(rows)[0].values()[0]
-        assert temp_table_count == 0, (
-            f"temp_table_count after close = {temp_table_count}"
-        )
+        assert (
+            temp_table_count == 0
+        ), f"temp_table_count after close = {temp_table_count}"
 
 
 @then("Load file with Stage and Select should be equal")
