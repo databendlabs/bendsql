@@ -140,6 +140,7 @@ async fn test_orm() -> databend_driver::Result<()> {
     assert_eq!(specific_users[0].username, "bob");
     assert_eq!(specific_users[0].email, "bob@example.com");
 
+    let _ = connection.exec("DROP TABLE users").await?;
     Ok(())
 }
 
