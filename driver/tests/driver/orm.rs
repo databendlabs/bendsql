@@ -40,7 +40,7 @@ struct UserRow {
     value: String,
 
     #[serde_bend(skip_serializing, skip_deserializing)]
-    unknow: String,
+    unknown: String,
 }
 
 #[tokio::test]
@@ -196,7 +196,7 @@ fn test_comprehensive_field_exclusion() {
 #[test]
 fn test_field_exclusion() {
     // Test that query fields exclude skip_deserializing fields
-    // UserRow has: created_at (skip_serializing), value (skip_serializing), unknow (skip_both)
+    // UserRow has: created_at (skip_serializing), value (skip_serializing), unknown (skip_both)
     // Query should include: id, user_name, email, dt, created_at, value (everything except skip_deserializing/skip_both)
     let query_fields = UserRow::query_field_names();
     assert_eq!(
@@ -205,7 +205,7 @@ fn test_field_exclusion() {
     );
 
     // Test that insert fields exclude skip_serializing fields
-    // Insert should exclude: created_at, value, unknow (all skip_serializing fields)
+    // Insert should exclude: created_at, value, unknown (all skip_serializing fields)
     let insert_fields = UserRow::insert_field_names();
     assert_eq!(insert_fields, vec!["id", "user_name", "email", "dt"]);
 
