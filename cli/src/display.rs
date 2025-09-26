@@ -553,7 +553,7 @@ fn create_table(
     let (top_rows, bottom_rows) = if rows_to_render == value_rows_count {
         (value_rows_count, 0usize)
     } else {
-        let top_rows = rows_to_render / 2 + (rows_to_render % 2 != 0) as usize;
+        let top_rows = rows_to_render / 2 + (!rows_to_render.is_multiple_of(2)) as usize;
         (top_rows, rows_to_render - top_rows)
     };
 
