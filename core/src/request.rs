@@ -15,13 +15,7 @@
 use std::collections::BTreeMap;
 
 use crate::session::SessionState;
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
-pub struct ServerInfo {
-    pub id: String,
-    pub start_time: String,
-}
+use serde::Serialize;
 
 #[derive(Serialize, Debug)]
 pub struct QueryRequest<'a> {
