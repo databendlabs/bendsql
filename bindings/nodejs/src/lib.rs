@@ -393,24 +393,21 @@ pub struct Schema(databend_driver::SchemaRef);
 impl Schema {
     #[napi]
     pub fn fields(&self) -> Vec<Field> {
-        self.0.fields().iter().map(|f| Field(f.clone())).collect()
+        self.0
+            .fields()
+            .iter()
+            .map(|f| Field {
+                name: f.name.clone(),
+                data_type: f.data_type.to_string().clone(),
+            })
+            .collect()
     }
 }
 
-#[napi]
-pub struct Field(databend_driver::Field);
-
-#[napi]
-impl Field {
-    #[napi(getter)]
-    pub fn name(&self) -> String {
-        self.0.name.to_string()
-    }
-
-    #[napi(getter)]
-    pub fn data_type(&self) -> String {
-        self.0.data_type.to_string()
-    }
+#[napi(object)]
+pub struct Field {
+    pub name: String,
+    pub data_type: String,
 }
 
 #[napi]

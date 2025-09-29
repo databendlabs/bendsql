@@ -203,6 +203,12 @@ Then("Select numbers should iterate all rows", async function () {
   // iter
   {
     let rows = await this.conn.queryIter("SELECT number FROM numbers(5)");
+
+    let schema = rows.schema();
+    const fields = schema.fields();
+    assert.equal(fields[0].name, "number");
+    assert.equal(fields[0].dataType, "UInt64");
+
     let ret = [];
     let row = await rows.next();
     while (row) {
