@@ -288,8 +288,8 @@ impl Default for Settings {
             sql_delimiter: ';',
             expand: ExpandMode::Auto,
             show_progress: false,
-            max_display_rows: 1000,
-            max_col_width: 1024 * 1024,
+            max_display_rows: 200,
+            max_col_width: 20,
             // Default width is terminal size
             max_width: 0,
             show_stats: false,
