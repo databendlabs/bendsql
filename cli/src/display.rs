@@ -21,12 +21,14 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::{Cell, CellAlignment, Color, Table};
+use databend_driver::Schema;
 use databend_driver::{Row, RowStatsIterator, RowWithStats, SchemaRef, ServerStats, Value};
 use indicatif::{HumanBytes, ProgressBar, ProgressState, ProgressStyle};
 use terminal_size::terminal_size;
 use tokio::time::Instant;
 use tokio_stream::StreamExt;
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::ast::QueryKind;
 use crate::{
@@ -37,6 +39,20 @@ use crate::{
 
 pub(crate) const INTERRUPTED_MESSAGE: &str = "Interrupted by Ctrl+C";
 const HEAD_YELLOW: Color = Color::DarkBlue;
+
+const DEFAULT_MAX_WIDTH: usize = 120;
+const MIN_MAX_WIDTH: usize = 80;
+const MIN_MAX_COL_WIDTH: usize = 10;
+
+const DOT: &str = "·";
+const DOTDOTDOT: &str = "…";
+
+const NULL_WIDTH: usize = 4;
+const TRUE_WIDTH: usize = 4;
+const FALSE_WIDTH: usize = 5;
+const EMPTY_WIDTH: usize = 2;
+const DATE_WIDTH: usize = 10;
+const TIMESTAMP_WIDTH: usize = 26;
 
 #[async_trait::async_trait]
 pub trait ChunkDisplay {
@@ -144,7 +160,17 @@ impl FormatDisplay<'_> {
             println!("\n{format_sql}\n");
         }
 
-        let max_display_rows_count = self.settings.max_display_rows / 2 + 2;
+        let expand = expand.unwrap_or(self.settings.expand);
+        // If in expand mode or query kind is Explain, Graphical, or ShowCreate,
+        // collect all rows without early discarding.
+        let collect_all_rows = matches!(expand, ExpandMode::On)
+            || matches!(
+                self.kind,
+                QueryKind::Explain | QueryKind::Graphical | QueryKind::ShowCreate
+            );
+        let max_display_top_rows = self.settings.max_display_rows / 2
+            + (!self.settings.max_display_rows.is_multiple_of(2)) as usize;
+        let max_display_bottom_rows = self.settings.max_display_rows / 2;
         let mut rows = Vec::new();
         let mut bottom_rows = VecDeque::new();
         let mut error = None;
@@ -154,13 +180,13 @@ impl FormatDisplay<'_> {
             }
             match line {
                 Ok(RowWithStats::Row(row)) => {
-                    if self.rows_count < max_display_rows_count {
+                    if collect_all_rows || self.rows_count < max_display_top_rows {
                         rows.push(row);
                     } else {
                         bottom_rows.push_back(row);
                         // Since bendsql only displays the maximum number of rows,
                         // we can discard some rows to avoid data occupying too much memory.
-                        if bottom_rows.len() > max_display_rows_count {
+                        if bottom_rows.len() > max_display_bottom_rows {
                             bottom_rows.pop_front();
                         }
                     }
@@ -210,7 +236,6 @@ impl FormatDisplay<'_> {
             return Ok(());
         }
 
-        let expand = expand.unwrap_or(self.settings.expand);
         match expand {
             ExpandMode::On => {
                 print_expanded(schema, &rows)?;
@@ -222,7 +247,6 @@ impl FormatDisplay<'_> {
                         schema,
                         &rows,
                         self.quote_string,
-                        self.settings.max_display_rows,
                         self.settings.max_width,
                         self.settings.max_col_width,
                         self.rows_count
@@ -237,7 +261,6 @@ impl FormatDisplay<'_> {
                         schema,
                         &rows,
                         self.quote_string,
-                        self.settings.max_display_rows,
                         self.settings.max_width,
                         self.settings.max_col_width,
                         self.rows_count
@@ -510,9 +533,8 @@ fn create_table(
     schema: SchemaRef,
     results: &[Row],
     quote_string: bool,
-    max_rows: usize,
-    max_width: usize,
-    max_col_width: usize,
+    mut max_width: usize,
+    mut max_col_width: usize,
     rows_count: usize,
 ) -> Result<Table> {
     let mut table = Table::new();
@@ -525,46 +547,84 @@ fn create_table(
     table.set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
 
     let w = terminal_size();
-    if max_width != 0 && max_width <= u16::MAX as usize {
-        if max_width == u16::MAX as usize {
-            table.set_content_arrangement(comfy_table::ContentArrangement::Disabled);
-        } else if let Some((w, _)) = w {
-            let max_width = max_width.min(w.0 as usize);
-            table.set_width(max_width as _);
+    if max_width == u16::MAX as usize {
+        table.set_content_arrangement(comfy_table::ContentArrangement::Disabled);
+    } else {
+        if max_width == 0 {
+            if let Some((w, _)) = w {
+                max_width = w.0 as usize;
+            } else {
+                max_width = DEFAULT_MAX_WIDTH;
+            }
         }
+        // max widths can not under 80
+        max_width = max_width.max(MIN_MAX_WIDTH);
+        table.set_width(max_width as _);
     }
+    // max col widths can not under 10
+    max_col_width = max_col_width.max(MIN_MAX_COL_WIDTH);
 
     if results.is_empty() {
         return Ok(table);
     }
 
     let value_rows_count: usize = results.len();
-    let mut rows_to_render = value_rows_count.min(max_rows);
-    if !quote_string {
-        rows_to_render = value_rows_count;
-    } else if value_rows_count <= max_rows + 3 {
-        // hiding rows adds 3 extra rows
-        // so hiding rows makes no sense if we are only slightly over the limit
-        // if we are 1 row over the limit hiding rows will actually increase the number of lines we display!
-        // in this case render all the rows
-        rows_to_render = value_rows_count;
-    }
-
-    let (top_rows, bottom_rows) = if rows_to_render == value_rows_count {
+    let (top_rows, bottom_rows) = if value_rows_count == rows_count {
         (value_rows_count, 0usize)
     } else {
-        let top_rows = rows_to_render / 2 + (!rows_to_render.is_multiple_of(2)) as usize;
-        (top_rows, rows_to_render - top_rows)
+        let top_rows = value_rows_count / 2 + (!value_rows_count.is_multiple_of(2)) as usize;
+        (top_rows, value_rows_count - top_rows)
     };
 
-    let mut res_vec: Vec<Vec<String>> = vec![];
+    let column_widths =
+        compute_column_widths(&schema, results, max_width, max_col_width, quote_string);
+
+    let mut aligns = Vec::with_capacity(schema.fields().len());
+    for field in schema.fields().iter() {
+        if field.data_type.is_numeric() {
+            aligns.push(CellAlignment::Right);
+        } else {
+            aligns.push(CellAlignment::Left);
+        }
+    }
+
+    let mut res_vec: Vec<Vec<Cell>> = Vec::with_capacity(results.len());
+    // Render top rows.
     for row in results.iter().take(top_rows) {
         let values = row.values();
-        let mut v = vec![];
-        for value in values {
-            v.push(format_table_style(value, max_col_width, quote_string));
+        let mut cells = Vec::with_capacity(values.len());
+        for (value, (column_width, align)) in
+            values.iter().zip(column_widths.iter().zip(aligns.iter()))
+        {
+            let cell = format_table_style(value, *column_width, quote_string, *align);
+            cells.push(cell);
         }
-        res_vec.push(v);
+        res_vec.push(cells);
+    }
+
+    if bottom_rows != 0 {
+        // Render blank rows to indicate the omitted intermediate rows.
+        let mut cells = Vec::with_capacity(schema.fields().len());
+        for align in aligns.iter() {
+            let cell = Cell::new(DOT).set_alignment(*align);
+            cells.push(cell);
+        }
+        for _ in 0..3 {
+            res_vec.push(cells.clone());
+        }
+
+        // Render bottom rows.
+        for row in results.iter().skip(top_rows) {
+            let values = row.values();
+            let mut cells = Vec::with_capacity(values.len());
+            for (value, (column_width, align)) in
+                values.iter().zip(column_widths.iter().zip(aligns.iter()))
+            {
+                let cell = format_table_style(value, *column_width, quote_string, *align);
+                cells.push(cell);
+            }
+            res_vec.push(cells);
+        }
     }
 
     let is_single_number_result = results.len() == 1
@@ -577,67 +637,10 @@ fn create_table(
             }
         });
 
-    if bottom_rows != 0 {
-        for row in results.iter().skip(value_rows_count - bottom_rows) {
-            let values = row.values();
-            let mut v = vec![];
-            for value in values {
-                v.push(format_table_style(value, max_col_width, quote_string));
-            }
-            res_vec.push(v);
-        }
-    }
-
-    let column_count = schema.fields().len();
-    let mut header = Vec::with_capacity(column_count);
-    let mut aligns = Vec::with_capacity(column_count);
-
-    render_head(schema, &mut header, &mut aligns);
-    table.set_header(header);
-
-    // render the top rows
-    for values in res_vec.iter().take(top_rows) {
-        let mut cells = Vec::new();
-        for (idx, val) in values.iter().enumerate() {
-            let cell = Cell::new(val).set_alignment(aligns[idx]);
-            cells.push(cell);
-        }
-        table.add_row(cells);
-    }
-
-    // render the bottom rows
-    if bottom_rows != 0 {
-        // first render the divider
-        let mut cells: Vec<Cell> = Vec::new();
-        let display_res_len = res_vec.len();
-        for align in aligns.iter() {
-            let cell = Cell::new("·").set_alignment(*align);
-            cells.push(cell);
-        }
-
-        for _ in 0..3 {
-            table.add_row(cells.clone());
-        }
-
-        for values in res_vec.iter().skip(display_res_len - bottom_rows) {
-            let mut cells = Vec::new();
-            for (idx, val) in values.iter().enumerate() {
-                let cell = Cell::new(val).set_alignment(aligns[idx]);
-                cells.push(cell);
-            }
-            table.add_row(cells);
-        }
-
-        let rows_count_str = format!("{rows_count} rows");
-        let show_count_str = format!("({} shown)", top_rows + bottom_rows);
-        table.add_row(vec![Cell::new(rows_count_str).set_alignment(aligns[0])]);
-        table.add_row(vec![Cell::new(show_count_str).set_alignment(aligns[0])]);
-    }
-
     if is_single_number_result {
         let mut cells = Vec::new();
-        for (idx, value) in res_vec[0].iter().enumerate() {
-            let f: f64 = value.parse().unwrap();
+        for (idx, cell) in res_vec[0].iter().enumerate() {
+            let f: f64 = cell.content().parse().unwrap();
             let content = format!("({})", humanize_count(f));
             let cell = Cell::new(&content)
                 .fg(Color::Rgb {
@@ -648,29 +651,41 @@ fn create_table(
                 .set_alignment(aligns[idx]);
             cells.push(cell);
         }
+        res_vec.push(cells);
+    }
+
+    let column_count = schema.fields().len();
+    let mut header = Vec::with_capacity(column_count);
+
+    render_head(schema, &column_widths, &mut header);
+    table.set_header(header);
+
+    for cells in res_vec.into_iter() {
         table.add_row(cells);
+    }
+
+    if bottom_rows != 0 {
+        let rows_count_str = format!("{rows_count} rows");
+        let show_count_str = format!("({} shown)", top_rows + bottom_rows);
+        table.add_row(vec![Cell::new(rows_count_str).set_alignment(aligns[0])]);
+        table.add_row(vec![Cell::new(show_count_str).set_alignment(aligns[0])]);
     }
 
     Ok(table)
 }
 
-fn render_head(schema: SchemaRef, header: &mut Vec<Cell>, aligns: &mut Vec<CellAlignment>) {
+fn render_head(schema: SchemaRef, col_widths: &[usize], header: &mut Vec<Cell>) {
     let fields = schema.fields();
-    for field in fields.iter() {
-        let field_name = field.name.to_string();
-        let field_data_type = field.data_type.to_string();
+    for (field, col_width) in fields.iter().zip(col_widths.iter()) {
+        let field_name = truncate_string(field.name.to_string(), *col_width);
+        let field_data_type = truncate_string(field.data_type.to_string(), *col_width);
+
         let head_name = format!("{field_name}\n{field_data_type}");
         let cell = Cell::new(head_name)
             .fg(HEAD_YELLOW)
             .set_alignment(CellAlignment::Center);
 
         header.push(cell);
-
-        if field.data_type.is_numeric() {
-            aligns.push(CellAlignment::Right);
-        } else {
-            aligns.push(CellAlignment::Left);
-        }
     }
 }
 
@@ -735,33 +750,152 @@ pub fn humanize_count(num: f64) -> String {
     format!("{negative}{pretty_bytes}{unit}")
 }
 
-fn format_table_style(value: &Value, max_col_width: usize, quote_string: bool) -> String {
+fn format_table_style(
+    value: &Value,
+    max_col_width: usize,
+    quote_string: bool,
+    align: CellAlignment,
+) -> Cell {
+    let is_null = matches!(value, Value::Null);
     let is_string = matches!(value, Value::String(_));
-    let mut value = value.to_string();
+    let mut value_str = value.to_string();
     if is_string && quote_string {
-        value = value
-            .replace("\\", "\\\\")
-            .replace("\n", "\\n")
-            .replace("\t", "\\t")
-            .replace("\r", "\\r")
-            .replace("\0", "\\0")
-            .replace("'", "\\'");
+        let mut escaped_value_str = String::with_capacity(value_str.len());
+        for c in value_str.chars() {
+            match c {
+                '\\' => escaped_value_str.push_str("\\\\"),
+                '\n' => escaped_value_str.push_str("\\n"),
+                '\t' => escaped_value_str.push_str("\\t"),
+                '\r' => escaped_value_str.push_str("\\r"),
+                '\0' => escaped_value_str.push_str("\\0"),
+                '\'' => escaped_value_str.push_str("\\'"),
+                _ => escaped_value_str.push(c),
+            }
+        }
+        value_str = escaped_value_str;
     }
-    if value.len() + 5 > max_col_width {
-        let element_size = max_col_width.saturating_sub(6);
-        value = String::from_utf8(
-            value
-                .graphemes(true)
-                .take(element_size)
-                .flat_map(|g| g.as_bytes().iter())
-                .copied() // copied converts &u8  4324324324324;
-                .chain(b"...".iter().copied())
-                .collect::<Vec<u8>>(),
-        )
-        .unwrap();
-    }
+    value_str = truncate_string(value_str, max_col_width);
     if is_string && quote_string {
-        value = format!("'{value}'");
+        value_str = format!("'{value_str}'");
     }
-    value
+
+    // Set the color of NULL values to dark gray to distinguish them from string NULL values.
+    if is_null {
+        Cell::new(value_str)
+            .set_alignment(align)
+            .fg(Color::DarkGrey)
+    } else {
+        Cell::new(value_str).set_alignment(align)
+    }
+}
+
+fn compute_column_widths(
+    schema: &Schema,
+    results: &[Row],
+    mut max_width: usize,
+    max_col_width: usize,
+    quote_string: bool,
+) -> Vec<usize> {
+    let column_num = schema.fields().len();
+    // The maximum width must subtract the width of border and line within each column.
+    max_width -= column_num * 3 + 1;
+
+    let mut column_widths: Vec<usize> = Vec::with_capacity(column_num);
+    // Collect the width of each column header
+    for field in schema.fields() {
+        let type_str = field.data_type.to_string();
+        let width = field.name.len().max(type_str.len());
+        column_widths.push(width);
+    }
+
+    // Collect the maximum width of each column value
+    for row in results.iter() {
+        let values = row.values();
+        for (i, value) in values.iter().enumerate() {
+            let width = value_display_width(value, quote_string);
+            if width > column_widths[i] {
+                column_widths[i] = width;
+            }
+        }
+    }
+
+    let mut total_width: usize = column_widths.iter().sum();
+    // If the sum of all column widths exceeds the maximum width limit,
+    // we need to reduce the width of some columns and truncate the corresponding data.
+    if total_width > max_width {
+        for value_width in column_widths.iter_mut() {
+            if *value_width <= max_col_width {
+                continue;
+            } else if total_width <= max_width {
+                break;
+            }
+
+            let total_width_diff = total_width - max_width;
+            let value_width_diff = *value_width - max_col_width;
+            if total_width_diff > value_width_diff {
+                *value_width = max_col_width;
+                total_width -= value_width_diff;
+            } else {
+                *value_width -= total_width_diff;
+                break;
+            }
+        }
+    }
+
+    column_widths
+}
+
+fn truncate_string(value: String, col_width: usize) -> String {
+    let value_width = UnicodeWidthStr::width(value.as_str());
+    if value_width <= col_width {
+        return value;
+    }
+    let element_size = col_width.saturating_sub(1);
+    String::from_utf8(
+        value
+            .graphemes(true)
+            .take(element_size)
+            .flat_map(|g| g.as_bytes().iter())
+            .copied() // copied converts &u8  4324324324324;
+            .chain(DOTDOTDOT.as_bytes().iter().copied())
+            .collect::<Vec<u8>>(),
+    )
+    .unwrap()
+}
+
+fn value_display_width(value: &Value, quote_string: bool) -> usize {
+    match value {
+        Value::Null => NULL_WIDTH,
+        Value::Boolean(b) => {
+            if *b {
+                TRUE_WIDTH
+            } else {
+                FALSE_WIDTH
+            }
+        }
+        Value::EmptyArray => EMPTY_WIDTH,
+        Value::EmptyMap => EMPTY_WIDTH,
+        Value::Date(_) => DATE_WIDTH,
+        Value::Timestamp(_) => TIMESTAMP_WIDTH,
+        Value::String(_) => {
+            let value_str = value.to_string();
+            if quote_string {
+                let mut width = UnicodeWidthStr::width(value_str.as_str());
+                // add quotes length
+                width += 2;
+                for c in value_str.chars() {
+                    if matches!(c, '\\' | '\n' | '\t' | '\r' | '\0' | '\'') {
+                        width += 1;
+                    }
+                }
+                width
+            } else {
+                UnicodeWidthStr::width(value_str.as_str())
+            }
+        }
+        _ => {
+            let value_str = value.to_string();
+            UnicodeWidthStr::width(value_str.as_str())
+        }
+    }
 }
