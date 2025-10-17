@@ -20,32 +20,13 @@ use databend_driver::Field;
 use databend_driver::NumberDataType;
 use databend_driver::RowStatsIterator;
 use databend_driver::Schema;
+use databend_driver::{NumberValue, Row, RowWithStats, Value};
+use std::process::Command;
+use std::sync::Arc;
+use tempfile::tempdir;
+use tokio::fs::File;
+use tokio::io::BufReader;
 
-#[cfg(any(
-    all(target_arch = "x86_64", target_os = "linux"),
-    all(target_arch = "aarch64", target_os = "macos")
-))]
-use databend_driver::{NumberValue, Row, RowWithStats};
-
-#[cfg(not(any(
-    all(target_arch = "x86_64", target_os = "linux"),
-    all(target_arch = "aarch64", target_os = "macos")
-)))]
-impl Session {
-    pub(crate) async fn gendata(
-        &self,
-        _t: GenType,
-        _scale: f32,
-        _drop_override: bool,
-    ) -> Result<RowStatsIterator> {
-        Err(anyhow!("gendata is not supported on this platform"))
-    }
-}
-
-#[cfg(any(
-    all(target_arch = "x86_64", target_os = "linux"),
-    all(target_arch = "aarch64", target_os = "macos")
-))]
 impl Session {
     pub(crate) async fn gendata(
         &self,
@@ -53,46 +34,61 @@ impl Session {
         scale: f32,
         drop_override: bool,
     ) -> Result<RowStatsIterator> {
-        use std::sync::Arc;
-
-        use databend_driver::Value;
-        use duckdb::params;
-        use duckdb::Connection;
-        use tempfile::tempdir;
-        use tokio::fs::File;
-        use tokio::io::BufReader;
-
-        let temp_dir = tempdir()?;
-        // use duckdb to generate tpch/tpcds data in memory and upload it via upload api
-        let conn = Connection::open_in_memory().map_err(|err| anyhow!("{}", err))?;
-        match t {
-            GenType::TPCH => {
-                conn.execute("install tpch;", params![]).unwrap();
-                conn.execute("load tpch;", params![]).unwrap();
-                conn.execute(&format!("CALL DBGEN(sf = {scale});"), params![])
-                    .unwrap();
-            }
-            GenType::TPCDS => {
-                conn.execute("install tpcds;", params![]).unwrap();
-                conn.execute("load tpcds;", params![]).unwrap();
-                conn.execute(&format!("CALL DSDGEN(sf = {scale});"), params![])
-                    .unwrap();
-            }
+        // Check if duckdb is available
+        let duckdb_check = Command::new("duckdb").arg("--version").output();
+        if duckdb_check.is_err() {
+            return Err(anyhow!(
+                "DuckDB is not installed. Please install it first by running: !install duckdb"
+            ));
         }
 
-        conn.execute(
-            &format!(
-                "EXPORT DATABASE '{}/' (FORMAT PARQUET);",
-                temp_dir.path().display()
-            ),
-            params![],
-        )
-        .unwrap();
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path().join("gendata.db");
+        let export_path = temp_dir.path().join("export");
+        std::fs::create_dir_all(&export_path)?;
+
+        // Create DuckDB commands based on type
+        let commands = match t {
+            GenType::TPCH => vec![
+                "install tpch;".to_string(),
+                "load tpch;".to_string(),
+                format!("CALL DBGEN(sf = {});", scale),
+                format!(
+                    "EXPORT DATABASE '{}' (FORMAT PARQUET);",
+                    export_path.display()
+                ),
+            ],
+            GenType::TPCDS => vec![
+                "install tpcds;".to_string(),
+                "load tpcds;".to_string(),
+                format!("CALL DSDGEN(sf = {});", scale),
+                format!(
+                    "EXPORT DATABASE '{}' (FORMAT PARQUET);",
+                    export_path.display()
+                ),
+            ],
+        };
+
+        // Execute DuckDB commands
+        for command in commands {
+            let output = Command::new("duckdb")
+                .arg(db_path.to_str().unwrap())
+                .arg("-c")
+                .arg(&command)
+                .output()
+                .map_err(|e| anyhow!("Failed to execute DuckDB command '{}': {}", command, e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow!("DuckDB command '{}' failed: {}", command, stderr));
+            }
+        }
 
         let mut results = vec![];
         let schema = Arc::new(gendata_schema());
 
-        let mut entries: Vec<_> = std::fs::read_dir(&temp_dir)?.collect();
+        // Process exported parquet files
+        let mut entries: Vec<_> = std::fs::read_dir(&export_path)?.collect();
         entries.sort_by_key(|e| e.as_ref().unwrap().path());
 
         for f in entries {

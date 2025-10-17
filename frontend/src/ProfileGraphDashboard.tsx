@@ -55,10 +55,11 @@ function ProfileGraphDashboard() {
 
   return (
     <Layout>
-      <Layout
+      <div
         ref={profileRef}
         className="bg-white w-full rounded-lg"
       >
+        <Layout>
         <Content className="p-6 w-full flex">
           <GraphContent
             isLoading={isLoading}
@@ -84,6 +85,7 @@ function ProfileGraphDashboard() {
           />
         </Content>
       </Layout>
+      </div>
     </Layout>
   );
 }

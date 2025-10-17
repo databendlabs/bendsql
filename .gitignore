@@ -13,3 +13,7 @@ venv/
 
 tmp
 CLAUDE.md
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+

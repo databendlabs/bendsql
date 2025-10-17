@@ -138,7 +138,7 @@ impl FormatDisplay<'_> {
 
         let perf_id = set_data(result);
 
-        let url = format!("http://{addr}?perf_id={perf_id}");
+        let url = format!("http://{addr}/perf/{perf_id}");
 
         // Open the browser in a separate task if not in ssh mode
         let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
