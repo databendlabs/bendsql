@@ -1,9 +1,7 @@
 import React from 'react';
-import { createRoot } from 'react-dom/client';
+import ReactDOM from 'react-dom';
 import './index.css';
 
-import SQLQuery from './components/SQLQuery';
+import ProfileGraphDashboard from './ProfileGraphDashboard';
 
-const container = document.getElementById('root');
-const root = createRoot(container!);
-root.render(<SQLQuery />);
+ReactDOM.render(<ProfileGraphDashboard />, document.getElementById('root'));

@@ -1,3 +1,5 @@
+export * from "./graph";
+
 /**
  * Formats a given percentage value.
  * @param {number} numerator - The numerator of the percentage.
