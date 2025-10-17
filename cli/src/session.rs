@@ -25,15 +25,14 @@ use crate::config::TimeOption;
 use crate::display::INTERRUPTED_MESSAGE;
 use crate::display::{format_write_progress, ChunkDisplay, FormatDisplay};
 use crate::helper::CliHelper;
-use crate::web::start_server;
+use crate::sql_parser::SqlParser;
+use crate::web::{set_dsn, start_server};
 use crate::VERSION;
 use anyhow::anyhow;
 use anyhow::Result;
 use async_recursion::async_recursion;
 use chrono::NaiveDateTime;
 use databend_common_ast::parser::all_reserved_keywords;
-use databend_common_ast::parser::token::TokenKind;
-use databend_common_ast::parser::token::Tokenizer;
 use databend_driver::{Client, Connection, LoadMethod, ServerStats, TryFromRow};
 use log::error;
 use once_cell::sync::Lazy;
@@ -67,6 +66,7 @@ pub struct Session {
 
     settings: Settings,
     query: String,
+    sql_parser: SqlParser,
 
     server_handle: Option<JoinHandle<std::io::Result<()>>>,
     server_addr: Option<String>,
@@ -77,7 +77,8 @@ pub struct Session {
 
 impl Session {
     pub async fn try_new(dsn: String, settings: Settings, is_repl: bool) -> Result<Self> {
-        let client = Client::new(dsn).with_name(format!("bendsql/{}", VERSION_SHORT.as_str()));
+        let client =
+            Client::new(dsn.clone()).with_name(format!("bendsql/{}", VERSION_SHORT.as_str()));
         let conn = client.get_conn().await?;
         let info = conn.info().await;
         let mut keywords: Option<Arc<sled::Db>> = None;
@@ -169,13 +170,18 @@ impl Session {
 
         let mut server_handle = None;
         let mut server_addr = None;
-        if is_repl {
+        if is_repl && settings.enable_ui {
             let listener =
                 TcpListener::bind(format!("{}:{}", settings.bind_address, settings.bind_port))
                     .unwrap();
             let addr = listener.local_addr().unwrap();
+
+            // Share the DSN with the web server
+            set_dsn(dsn.clone());
+
             let handle = tokio::spawn(async move { start_server(listener).await });
             println!("Started web server at {addr}");
+            println!("Web UI is enabled. This allows SQL execution from any browser that can access this port.");
             server_addr = Some(addr.to_string());
             server_handle = Some(handle);
         };
@@ -193,12 +199,16 @@ impl Session {
             .expect("Error setting Ctrl-C handler");
         }
 
+        // Create SQL parser with session settings
+        let sql_parser = SqlParser::new(settings.sql_delimiter, settings.multi_line, is_repl);
+
         Ok(Self {
             client,
             conn,
             is_repl,
             settings,
             query: String::new(),
+            sql_parser,
             keywords,
             server_handle,
             server_addr,
@@ -459,79 +469,8 @@ impl Session {
     }
 
     pub fn append_query(&mut self, line: &str) -> Vec<String> {
-        if line.is_empty() {
-            return vec![];
-        }
-
-        if self.query.is_empty()
-            && (line.starts_with('!')
-                || line == "exit"
-                || line == "quit"
-                || line.to_uppercase().starts_with("PUT"))
-        {
-            return vec![line.to_owned()];
-        }
-
-        if !self.settings.multi_line {
-            if line.starts_with("--") {
-                return vec![];
-            } else {
-                return vec![line.to_owned()];
-            }
-        }
-
-        // consume self.query and get the result
-        let mut queries = Vec::new();
-
-        if !self.query.is_empty() {
-            self.query.push('\n');
-        }
-        self.query.push_str(line);
-        let mut err = String::new();
-        let delimiter = self.settings.sql_delimiter;
-
-        'Parser: loop {
-            let mut is_valid = true;
-            let tokenizer = Tokenizer::new(&self.query);
-            let mut previous_token_backslash = false;
-            for token in tokenizer {
-                match token {
-                    Ok(token) => {
-                        // SQL end with `;` or `\G` in repl
-                        let is_end_query = token.text() == delimiter.to_string();
-                        let is_slash_g = self.is_repl
-                            && (previous_token_backslash
-                                && token.kind == TokenKind::Ident
-                                && token.text() == "G")
-                            || (token.text().ends_with("\\G"));
-
-                        if is_end_query || is_slash_g {
-                            // push to current and continue the tokenizer
-                            let (sql, remain) = self.query.split_at(token.span.end as usize);
-                            if is_valid && !sql.is_empty() && sql.trim() != delimiter.to_string() {
-                                let sql = sql.trim_end_matches(delimiter);
-                                queries.push(sql.to_string());
-                            }
-                            self.query = remain.to_string();
-                            continue 'Parser;
-                        }
-                        previous_token_backslash = matches!(token.kind, TokenKind::Backslash);
-                    }
-                    Err(e) => {
-                        // ignore current query if have invalid token.
-                        is_valid = false;
-                        err = e.to_string();
-                        continue;
-                    }
-                }
-            }
-            break;
-        }
-
-        if self.query.is_empty() && queries.is_empty() && !err.is_empty() {
-            eprintln!("Parser '{line}' failed\nwith error '{err}'");
-        }
-        queries
+        // Use the SQL parser to parse the line incrementally
+        self.sql_parser.parse_line(line, &mut self.query)
     }
 
     #[async_recursion]
@@ -606,6 +545,9 @@ impl Session {
             "!configs" => {
                 println!("{:#?}", self.settings);
             }
+            "!install duckdb" => {
+                return self.install_duckdb().await;
+            }
             other => {
                 if other.starts_with("!set") {
                     let query = query[4..].split_whitespace().collect::<Vec<_>>();
@@ -638,6 +580,63 @@ impl Session {
             }
         }
         Ok(Some(ServerStats::default()))
+    }
+
+    async fn install_duckdb(&self) -> Result<Option<ServerStats>> {
+        use std::process::Command;
+
+        println!("Installing DuckDB...");
+
+        // Check if duckdb is already installed
+        if let Ok(output) = Command::new("duckdb").arg("--version").output() {
+            if output.status.success() {
+                let version = String::from_utf8_lossy(&output.stdout);
+                println!("DuckDB is already installed: {}", version.trim());
+                return Ok(Some(ServerStats::default()));
+            }
+        }
+
+        // Download and install DuckDB using the official installer
+        println!("Downloading DuckDB installer...");
+        let output = Command::new("curl")
+            .args(["-fsSL", "https://install.duckdb.org"])
+            .output()
+            .map_err(|e| anyhow!("Failed to download DuckDB installer: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("Failed to download DuckDB installer: {}", stderr));
+        }
+
+        let installer_script = String::from_utf8(output.stdout)
+            .map_err(|e| anyhow!("Invalid installer script: {}", e))?;
+
+        // Execute the installer script
+        println!("Running DuckDB installer...");
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg(&installer_script)
+            .output()
+            .map_err(|e| anyhow!("Failed to execute DuckDB installer: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("DuckDB installation failed: {}", stderr));
+        }
+
+        // Verify installation
+        let output = Command::new("duckdb")
+            .arg("--version")
+            .output()
+            .map_err(|e| anyhow!("Failed to verify DuckDB installation: {}", e))?;
+
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout);
+            println!("DuckDB installed successfully: {}", version.trim());
+            Ok(Some(ServerStats::default()))
+        } else {
+            Err(anyhow!("DuckDB installation verification failed"))
+        }
     }
 
     pub async fn stream_load_stdin(&mut self, query: &str, method: LoadMethod) -> Result<()> {

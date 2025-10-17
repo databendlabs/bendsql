@@ -21,6 +21,7 @@ mod display;
 mod gendata;
 mod helper;
 mod session;
+mod sql_parser;
 mod trace;
 mod web;
 
@@ -117,6 +118,12 @@ struct Args {
 
     #[clap(long, help = "Check for server status and exit")]
     check: bool,
+
+    #[clap(
+        long,
+        help = "Enable web UI interface (⚠️  SECURITY RISK: Allows SQL execution from any browser that can access this port)"
+    )]
+    ui: bool,
 
     #[clap(long, require_equals = true, help = "Query to execute")]
     query: Option<String>,
@@ -289,6 +296,9 @@ pub async fn main() -> Result<()> {
     }
 
     settings.merge_config(&config);
+
+    // Set UI flag from command line
+    settings.enable_ui = args.ui;
 
     if args.no_auto_complete {
         settings.no_auto_complete = true;

@@ -107,6 +107,8 @@ pub struct Settings {
     pub bind_address: String,
     pub bind_port: u16,
     pub auto_open_browser: bool,
+    /// Enable web UI interface (security risk)
+    pub enable_ui: bool,
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize)]
@@ -299,6 +301,7 @@ impl Default for Settings {
             auto_open_browser: false,
             bind_address: "127.0.0.1".to_string(),
             bind_port: 0,
+            enable_ui: false,
         }
     }
 }
