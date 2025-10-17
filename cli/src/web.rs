@@ -40,11 +40,13 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
         let requested_path = path.into_inner();
 
         // If the path looks like a query ID (alphanumeric string), serve index.html for SPA routing
-        if requested_path
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-            && !requested_path.contains('.')
-            && requested_path.len() > 10
+        let is_perf_query = requested_path.starts_with("perf/");
+        if is_perf_query
+            || requested_path
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                && !requested_path.contains('.')
+                && requested_path.len() > 10
         {
             "index.html".to_string()
         } else {
