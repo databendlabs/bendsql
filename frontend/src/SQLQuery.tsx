@@ -14,7 +14,7 @@ interface QueryResult {
 }
 
 const SQLQuery: React.FC = () => {
-  const [query, setQuery] = useState(`CREATE OR REPLACE TABLE students (uid Int16, name String, age Int16) ENGINE=Memory;
+  const [query, setQuery] = useState(`CREATE OR REPLACE TABLE students (uid Int16, name String, age Int16);
 
 INSERT INTO students VALUES (1231, 'John', 33);
 INSERT INTO students VALUES (6666, 'Ksenia', 48);

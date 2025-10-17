@@ -10,6 +10,7 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.6",
     "@lezer/highlight": "^1.2.2",
+    "@uiw/codemirror-themes": "^4.25.2",
     "@uiw/react-codemirror": "4.19.9",
     "antd": "^4.6.3",
     "lodash-es": "^4.17.21",
