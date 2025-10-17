@@ -217,9 +217,7 @@ SELECT * FROM students;`);
                   autocompletion({
                     icons: false,
                   }),
-                  sql({
-                    upperCaseKeywords: true,
-                  }),
+                  sql(),
                 ]}
                 basicSetup={{
                   lineNumbers: true,

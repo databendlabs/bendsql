@@ -16,7 +16,7 @@ databend-client = { workspace = true }
 databend-driver = { workspace = true, features = ["rustls", "flight-sql"] }
 tokio-stream = { workspace = true }
 
-actix-web = "4.10"
+actix-web = "4.11"
 anyhow = "1.0"
 arrow = { workspace = true }
 async-recursion = "1.1.1"
