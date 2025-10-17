@@ -142,8 +142,7 @@ impl IConnection for RestAPIConnection {
 
     async fn exec(&self, sql: &str) -> Result<i64> {
         info!("exec: {}", sql);
-        let page = self.client.query_all(sql).await?;
-        Ok(page.stats.progresses.write_progress.rows as i64)
+        self.calculate_affected_rows_from_iter(sql).await
     }
 
     async fn kill_query(&self, query_id: &str) -> Result<()> {
@@ -281,6 +280,65 @@ impl<'o> RestAPIConnection {
 
     fn default_copy_options() -> BTreeMap<&'o str, &'o str> {
         vec![("purge", "true")].into_iter().collect()
+    }
+    fn parse_row_count_string(value_str: &str) -> Result<i64, String> {
+        let trimmed = value_str.trim();
+
+        if trimmed.is_empty() {
+            return Ok(0);
+        }
+
+        if let Ok(count) = trimmed.parse::<i64>() {
+            return Ok(count);
+        }
+
+        if let Ok(count) = serde_json::from_str::<i64>(trimmed) {
+            return Ok(count);
+        }
+
+        let unquoted = trimmed.trim_matches('"');
+        if let Ok(count) = unquoted.parse::<i64>() {
+            return Ok(count);
+        }
+
+        Err(format!(
+            "failed to parse affected rows from: '{}'",
+            value_str
+        ))
+    }
+
+    async fn calculate_affected_rows_from_iter(&self, sql: &str) -> Result<i64> {
+        let mut rows = IConnection::query_iter(self, sql).await?;
+        let mut count = 0i64;
+
+        use tokio_stream::StreamExt;
+        // Get the first row to check if it has affected rows info
+        if let Some(first_row) = rows.next().await {
+            let row = first_row?;
+            let schema = row.schema();
+
+            // Check if this is an affected rows response
+            if !schema.fields().is_empty() && schema.fields()[0].name.contains("number of rows") {
+                let values = row.values();
+                if !values.is_empty() {
+                    let value = &values[0];
+                    let s: String = value.clone().try_into().map_err(|e| {
+                        Error::InvalidResponse(format!("Failed to convert value to string: {}", e))
+                    })?;
+                    count = Self::parse_row_count_string(&s).map_err(Error::InvalidResponse)?;
+                }
+            } else {
+                // If it's not affected rows info, count normally
+                count = 1;
+                // Continue counting the rest
+                while let Some(row_result) = rows.next().await {
+                    row_result?;
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
     }
 }
 
