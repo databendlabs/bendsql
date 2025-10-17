@@ -470,7 +470,13 @@ impl Session {
 
     pub fn append_query(&mut self, line: &str) -> Vec<String> {
         // Use the SQL parser to parse the line incrementally
-        self.sql_parser.parse_line(line, &mut self.query)
+        let mut err = String::new();
+        let queries = self.sql_parser.parse_line(line, &mut self.query, &mut err);
+
+        if self.query.is_empty() && queries.is_empty() && !err.is_empty() {
+            eprintln!("Parser '{}' failed\nwith error '{}'", line, err);
+        }
+        queries
     }
 
     #[async_recursion]

@@ -90,7 +90,12 @@ impl SqlParser {
 
     /// Parse a single line incrementally, maintaining state
     /// Returns complete statements and updates the provided buffer
-    pub fn parse_line(&self, line: &str, query_buffer: &mut String) -> Vec<String> {
+    pub fn parse_line(
+        &self,
+        line: &str,
+        query_buffer: &mut String,
+        err: &mut String,
+    ) -> Vec<String> {
         if line.is_empty() {
             return vec![];
         }
@@ -123,6 +128,7 @@ impl SqlParser {
         // Parse the accumulated query to find statement boundaries
         let parsed = self.parse_statements(query_buffer);
 
+        *err = parsed.err;
         // Update the buffer with remaining text
         *query_buffer = parsed.remaining;
 
@@ -134,6 +140,7 @@ impl SqlParser {
     fn parse_statements(&self, query: &str) -> ParseResult {
         let mut statements = Vec::new();
         let mut remaining_query = query.to_string();
+        let mut err = String::new();
 
         'Parser: loop {
             let mut is_valid = true;
@@ -166,9 +173,10 @@ impl SqlParser {
                         }
                         previous_token_backslash = matches!(token.kind, TokenKind::Backslash);
                     }
-                    Err(_e) => {
+                    Err(e) => {
                         // ignore current query if have invalid token.
                         is_valid = false;
+                        err = e.to_string();
                         continue;
                     }
                 }
@@ -179,6 +187,7 @@ impl SqlParser {
         ParseResult {
             statements,
             remaining: remaining_query,
+            err,
         }
     }
 }
@@ -186,6 +195,7 @@ impl SqlParser {
 struct ParseResult {
     statements: Vec<String>,
     remaining: String,
+    err: String,
 }
 
 /// Parse SQL text for web API (non-REPL mode)
