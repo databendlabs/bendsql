@@ -123,7 +123,7 @@ SELECT * FROM students;`);
           className="bg-white border border-gray-300 rounded-lg mb-4 overflow-hidden shadow-sm"
         >
           <div className="bg-gray-50 border-b border-gray-300 px-4 py-3 font-medium text-gray-700">
-            Statement {index + 1} ({result.rowCount} rows, {result.duration})
+            Query {index + 1} ({result.rowCount} rows, {result.duration})
           </div>
           <div className="p-4 text-center text-gray-500">
             No data returned
@@ -138,7 +138,7 @@ SELECT * FROM students;`);
         className="bg-white border border-gray-300 rounded-lg mb-4 overflow-hidden shadow-sm"
       >
         <div className="bg-gray-50 border-b border-gray-300 px-4 py-3 font-medium text-gray-700">
-          Result {index + 1} ({result.rowCount} rows, {result.duration})
+          Query {index + 1} ({result.rowCount} rows, {result.duration})
         </div>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
@@ -197,7 +197,7 @@ SELECT * FROM students;`);
             )}
           </button>
         </div>
-        <div className="text-xl">⚙</div>
+        {/* <div className="text-xl">⚙</div> */}
       </div>
 
       {/* Content - Resizable Panels */}
