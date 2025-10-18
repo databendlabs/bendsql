@@ -40,7 +40,7 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
         let requested_path = path.into_inner();
 
         if requested_path.starts_with("perf/") {
-            // Handle Next.js static export structure for /perf/ routes  
+            // Handle Next.js static export structure for /perf/ routes
             // trailingSlash: false generates perf/[...slug].html
             "perf/[...slug].html".to_string()
         } else if requested_path
