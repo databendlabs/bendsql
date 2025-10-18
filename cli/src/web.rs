@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::env;
 use std::net::TcpListener;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
@@ -33,7 +34,88 @@ use tokio_stream::StreamExt;
 #[folder = "frontend/build/"]
 struct Asset;
 
+// Check if we're in development mode
+fn is_dev_mode() -> bool {
+    env::var("BENDSQL_DEV_MODE").unwrap_or_default() == "1"
+}
+
+// Development mode: proxy to Next.js dev server
+async fn dev_proxy(path: web::Path<String>) -> HttpResponse {
+    let dev_server_url =
+        env::var("BENDSQL_DEV_SERVER").unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let full_path = path.into_inner();
+    let url = if full_path.is_empty() {
+        dev_server_url.clone()
+    } else {
+        format!("{}/{}", dev_server_url, full_path)
+    };
+
+    // Use reqwest to proxy the request
+    match reqwest::get(&url).await {
+        Ok(response) => {
+            let status = response.status();
+            let content_type = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("text/html")
+                .to_string();
+
+            match response.bytes().await {
+                Ok(body) => HttpResponse::build(
+                    actix_web::http::StatusCode::from_u16(status.as_u16())
+                        .unwrap_or(actix_web::http::StatusCode::OK),
+                )
+                .content_type(content_type)
+                .body(body),
+                Err(_) => HttpResponse::InternalServerError().body("Failed to read response"),
+            }
+        }
+        Err(_) => {
+            // If dev server is not running, show helpful message
+            let dev_help = format!(
+                r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BendSQL Development Mode</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; }}
+        .container {{ max-width: 800px; margin: 0 auto; }}
+        .info {{ background: #e3f2fd; border: 1px solid #2196f3; padding: 20px; border-radius: 5px; margin: 20px 0; }}
+        pre {{ background: #f5f5f5; padding: 10px; border-radius: 5px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BendSQL Development Mode</h1>
+        <div class="info">
+            <h3>Frontend Development Server Not Running</h3>
+            <p>To start the frontend development server:</p>
+            <pre>cd frontend && npm start</pre>
+            <p>Or set a custom dev server URL:</p>
+            <pre>export BENDSQL_DEV_SERVER=http://localhost:3001</pre>
+            <p>Current dev server URL: <code>{}</code></p>
+        </div>
+        <p>For production mode, run: <code>make build-frontend && cargo run</code></p>
+    </div>
+</body>
+</html>"#,
+                dev_server_url
+            );
+
+            HttpResponse::Ok().content_type("text/html").body(dev_help)
+        }
+    }
+}
+
 async fn embed_file(path: web::Path<String>) -> HttpResponse {
+    // In development mode, proxy to Next.js dev server
+    if is_dev_mode() {
+        return dev_proxy(path).await;
+    }
+
+    // Production mode: serve embedded files
     let file_path = if path.is_empty() {
         "index.html".to_string()
     } else {

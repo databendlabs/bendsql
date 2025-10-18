@@ -26,6 +26,13 @@ run:
 	make build-frontend
 	cargo run
 
+dev-run:
+	@echo "Starting development mode..."
+	@echo "1. Make sure to run 'cd frontend && pnpm run dev' in another terminal"
+	@echo "2. Frontend will be available at http://localhost:3000"
+	@echo "3. BendSQL CLI will proxy to frontend dev server"
+	BENDSQL_DEV_MODE=1 cargo run
+
 build:
 	make build-frontend
 	cargo build --release
