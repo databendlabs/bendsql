@@ -14,7 +14,7 @@ import { useGraphSize } from "./hooks/useGraphSize";
 import { useGraphEvents } from "./hooks/useGraphEvents";
 import { useNodeSelection } from "./hooks/useNodeSelection";
 
-import { IGraphSize, IOverview, Profile } from "./types/ProfileGraphDashboard";
+import { IGraphSize, IOverview, Profile, IStatisticsDesc, IErrors } from "./types/ProfileGraphDashboard";
 import { ALL_NODE_ID } from "./constants";
 
 const { Content, Sider } = Layout;
@@ -41,15 +41,37 @@ function ProfileGraphDashboard() {
     overviewInfoCurrent,
   } = useProfileData();
 
+  // Convert Profile to IOverview for selected node
+  const getSelectedNodeOverview = (): IOverview | undefined => {
+    if (selectedNodeId === ALL_NODE_ID) return overviewInfo;
+    const selectedProfile = plainData.find(item => item.id === selectedNodeId);
+    if (!selectedProfile) return undefined;
+    
+    return {
+      cpuTime: selectedProfile.cpuTime,
+      waitTime: selectedProfile.waitTime,
+      totalTime: selectedProfile.totalTime,
+      totalTimePercent: selectedProfile.totalTimePercent,
+      cpuTimePercent: selectedProfile.cpuTimePercent,
+      waitTimePercent: selectedProfile.waitTimePercent,
+      labels: selectedProfile.labels,
+      statisticsDescArray: selectedProfile.statisticsDescArray as IStatisticsDesc[],
+      errors: selectedProfile.errors as IErrors[],
+      name: selectedProfile.name,
+    };
+  };
 
-  const { handleNodeSelection, setOverInfo } = useNodeSelection(graphRef, plainData, setSelectedNodeId, setOverviewInfo);
+
+  const { handleNodeSelection } = useNodeSelection(graphRef, plainData, setSelectedNodeId);
 
   const { bindGraphEvents } = useGraphEvents(
-    plainData,
-    setOverInfo as React.Dispatch<React.SetStateAction<IOverview>>,
+    handleNodeSelection,
     setSelectedNodeId,
-    profileWrapRefCanvas as React.MutableRefObject<HTMLCanvasElement>,
-    profileWrapRef, overviewInfoCurrent, setOverviewInfo);
+    profileWrapRefCanvas,
+    profileWrapRef,
+    overviewInfoCurrent,
+    setOverviewInfo,
+  );
 
   return (
     <Layout>
@@ -63,7 +85,7 @@ function ProfileGraphDashboard() {
             isLoading={isLoading}
             plainData={plainData}
             graphSize={graphSize}
-            graphRef={graphRef as React.MutableRefObject<IGraph>}
+            graphRef={graphRef}
             handleResize={handleResize}
             overviewInfoCurrent={overviewInfoCurrent}
             setIsLoading={setIsLoading}
@@ -76,7 +98,7 @@ function ProfileGraphDashboard() {
             plainData={plainData}
             selectedNodeId={selectedNodeId}
             handleNodeSelection={handleNodeSelection}
-            overviewInfo={overviewInfo}
+            overviewInfo={getSelectedNodeOverview()}
             statisticsData={statisticsData}
             labels={labels}
             graphSize={graphSize}
@@ -103,16 +125,21 @@ function GraphContent({
   isLoading: boolean;
   plainData: Profile[];
   graphSize: IGraphSize;
-  graphRef: React.MutableRefObject<IGraph>;
+  graphRef: React.MutableRefObject<IGraph | null>;
   handleResize: () => void;
   overviewInfoCurrent: React.RefObject<IOverview | undefined>;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
-  profileWrapRef: React.RefObject<HTMLDivElement>;
-  profileWrapRefCanvas: React.RefObject<HTMLCanvasElement>;
+  profileWrapRef: React.MutableRefObject<HTMLDivElement | null>;
+  profileWrapRefCanvas: React.MutableRefObject<HTMLCanvasElement | null>;
   bindGraphEvents: (graph: IGraph) => void;
 }) {
   return (
-    <div ref={profileWrapRef} className="flex-1 flex justify-center items-center h-screen">
+    <div
+      ref={el => {
+        profileWrapRef.current = el;
+      }}
+      className="flex-1 flex justify-center items-center h-screen"
+    >
       {isLoading ? (
         <div className="w-full h-full">loading...</div>
       ) : (
@@ -149,6 +176,15 @@ function SidebarContent({
   statisticsData,
   labels,
   graphSize,
+}: {
+  rangeData: Profile[];
+  plainData: Profile[];
+  selectedNodeId: string;
+  handleNodeSelection: (nodeId: string) => void;
+  overviewInfo: IOverview | undefined;
+  statisticsData: any[];
+  labels: any[];
+  graphSize: IGraphSize;
 }) {
   return (
     <Sider width={308} style={{ background: "#fff" }}>

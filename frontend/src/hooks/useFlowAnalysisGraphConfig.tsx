@@ -3,11 +3,20 @@ import { FlowAnalysisGraphConfig } from "@ant-design/charts";
 
 import { pathArrow, pathMoon } from "../constants";
 import { createRoundedRectPath, formatRows, getTextWidth } from "../utills";
+import type { StaticImageData } from "next/image";
 import fullScreenUrl from '../images/icons/full-screen.svg';
 import zoomInUrl from '../images/icons/zoom-in.svg';
 import zoomOutUrl from '../images/icons/zoom-out.svg';
 import downloadUrl from '../images/icons/download.svg';
 import { EdgeWithLineWidth } from "../components/FlowAnalysisGraph";
+
+const resolveImageSrc = (asset: string | StaticImageData): string =>
+  typeof asset === "string" ? asset : asset.src;
+
+const fullScreenSrc = resolveImageSrc(fullScreenUrl);
+const zoomInSrc = resolveImageSrc(zoomInUrl);
+const zoomOutSrc = resolveImageSrc(zoomOutUrl);
+const downloadSrc = resolveImageSrc(downloadUrl);
 
 export const useFlowAnalysisGraphConfig = ({
   graphSize,
@@ -16,7 +25,6 @@ export const useFlowAnalysisGraphConfig = ({
   graphRef,
   overviewInfoCurrent,
   handleResetView,
-  edgesWithLineWidth,
 }): FlowAnalysisGraphConfig => {
   const getToolbarContent = useCallback(({ zoomIn, zoomOut }) => (
     <div className="flex justify-around items-center">
@@ -25,15 +33,15 @@ export const useFlowAnalysisGraphConfig = ({
         onClick={() => handleResetView()}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={fullScreenUrl} alt="full screen" />
+        <img src={fullScreenSrc} alt="full screen" />
       </span>
       <span className="cursor-pointer flex justify-center items-center" onClick={zoomOut}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={zoomOutUrl} alt="zoom out" />
+        <img src={zoomOutSrc} alt="zoom out" />
       </span>
       <span className="cursor-pointer flex justify-center items-center" onClick={zoomIn}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={zoomInUrl} alt="zoom in" />
+        <img src={zoomInSrc} alt="zoom in" />
       </span>
       <span
         className="g-cursor g-box-c"
@@ -45,7 +53,7 @@ export const useFlowAnalysisGraphConfig = ({
         }
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={downloadUrl} alt="download" />
+        <img src={downloadSrc} alt="download" />
       </span>
     </div>
   ), [handleResetView, graphRef]);
@@ -140,13 +148,13 @@ export const useFlowAnalysisGraphConfig = ({
     }
 
     if (parentId === "null") {
-      const edgeObj = edgesWithLineWidth?.find(edge => edge?.source === "null");
+      const edgeObj = data.edges?.find(edge => edge?.source === "null");
       group.addShape("path", {
         attrs: {
           path: pathArrow,
           fill: "#ccc",
           stroke: "#ccc",
-          lineWidth: edgeObj?.lineWidth || 1,
+          lineWidth: (edgeObj as EdgeWithLineWidth)?.lineWidth || 1,
         },
         name: `percentage-output-text-${Math.random()}`,
       });
@@ -181,7 +189,7 @@ export const useFlowAnalysisGraphConfig = ({
     });
 
     return Math.max(textHeight, height);
-  }, [overviewInfoCurrent, edgesWithLineWidth]);
+  }, [overviewInfoCurrent, data]);
 
   return useMemo(() => ({
     ...graphSize,

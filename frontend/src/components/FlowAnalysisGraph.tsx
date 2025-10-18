@@ -1,6 +1,7 @@
 import { Edge, FlowAnalysisGraph, FlowAnalysisGraphConfig, IGraph } from "@ant-design/charts";
-import { debounce, isEqual } from "lodash-es";
+import { isEqual } from "lodash-es";
 import { memo, useEffect, useMemo, useState } from "react";
+import type { MutableRefObject } from "react";
 
 import { IGraphSize, IOverview, Profile } from "../types/ProfileGraphDashboard";
 
@@ -21,7 +22,7 @@ const CacheFlowAnalysisGraph = ({
 }: {
   plainData: Profile[];
   graphSize: IGraphSize;
-  graphRef: React.RefObject<IGraph>;
+  graphRef: MutableRefObject<IGraph | null>;
   overviewInfoCurrent: React.RefObject<IOverview | undefined>;
   onReady: (graph: IGraph) => void;
 }) => {
@@ -35,13 +36,13 @@ const CacheFlowAnalysisGraph = ({
     }
   };
 
-  const edgesWithLineWidth = mapEdgesLineWidth(getEdges(plainData) as EdgeWithLineWidth[]);
   const data = useMemo(() => {
+    const edgesWithLineWidth = mapEdgesLineWidth(getEdges(plainData) as EdgeWithLineWidth[]);
     return {
       nodes: getDealData(plainData),
       edges: edgesWithLineWidth,
     };
-  }, [plainData, edgesWithLineWidth]);
+  }, [plainData]);
 
   const config: FlowAnalysisGraphConfig = useFlowAnalysisGraphConfig({
     graphSize,
@@ -50,29 +51,18 @@ const CacheFlowAnalysisGraph = ({
     graphRef,
     overviewInfoCurrent,
     handleResetView,
-    edgesWithLineWidth,
   });
 
-  // Debounce the rendering to reduce the number of renders
-  const debouncedRender = debounce(() => {
-    setRenderKey(prevKey => prevKey + 1);
-  }, 300);
-
+  // Only re-render when data actually changes
   useEffect(() => {
-    debouncedRender();
-    return () => {
-      debouncedRender.cancel();
-    };
-  }, [plainData, graphSize, debouncedRender]);
+    setRenderKey(prevKey => prevKey + 1);
+  }, [plainData, graphSize]);
 
   return <FlowAnalysisGraph key={renderKey} {...config} />;
 };
 
 export default memo(CacheFlowAnalysisGraph, (pre, next) => {
   const isPlainDataEqual = isEqual(pre.plainData, next.plainData);
-  const isGraphSizeEqual = pre.graphSize === next.graphSize;
-  const isGraphSizeHeightEqual = pre.graphSize.height === next.graphSize.height;
-  return isPlainDataEqual && isGraphSizeEqual && isGraphSizeHeightEqual;
+  const isGraphSizeEqual = isEqual(pre.graphSize, next.graphSize);
+  return isPlainDataEqual && isGraphSizeEqual;
 });
-
-

@@ -38,16 +38,19 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
         "index.html".to_string()
     } else {
         let requested_path = path.into_inner();
+
         if requested_path.starts_with("perf/") {
-            // Handle Next.js static export structure for /perf/ routes
-            "perf/[...slug]/index.html".to_string()
+            // Handle Next.js static export structure for /perf/ routes  
+            // trailingSlash: false generates perf/[...slug].html
+            "perf/[...slug].html".to_string()
         } else if requested_path
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
             && requested_path.len() >= 3
         {
             // Handle query IDs - use catch-all route
-            "[...slug]/index.html".to_string()
+            // trailingSlash: false generates [...slug].html
+            "[...slug].html".to_string()
         } else {
             requested_path
         }

@@ -115,17 +115,17 @@ export function useProfileData(): {
     }));
   }, []);
 
+  // Extract the complex expression to a variable for easier static analysis
+  const slugString = Array.isArray(router.query.slug) ? router.query.slug.join('/') : router.query.slug;
+
   useEffect(() => {
     const fetchMessage = async () => {
       try {
-        // Get perf_id from slug parameters (for Next.js [...slug] routes)
-        const pathPerfId = router.query.slug && Array.isArray(router.query.slug) 
-          ? router.query.slug.join('/') 
+        const pathPerfId = router.query.slug && Array.isArray(router.query.slug)
+          ? router.query.slug.join('/')
           : router.query.slug;
-        // Also check for legacy perf_id parameter for backward compatibility
-        const legacyPerfId = router.query.perf_id;
-        const perf_id = pathPerfId || legacyPerfId || '0';
-        
+        const perf_id = pathPerfId || '0';
+
         const response: Response = await fetch(`/api/message?perf_id=${perf_id}`);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
@@ -155,7 +155,12 @@ export function useProfileData(): {
       setIsLoading(true);
       fetchMessage();
     }
-  }, [router.isReady, router.query.slug, router.query.perf_id, transformProfiles, calculateOverviewInfo, getRangeData, getStatisticsData, getLabels]);
+    // Only depend on the serialized slug string and perf_id, not the callback functions
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    router.isReady,
+    slugString
+  ]);
 
   return {
     plainData,
