@@ -17,15 +17,15 @@ use anyhow::anyhow;
 use anyhow::Result;
 use databend_driver::DataType;
 use databend_driver::Field;
+use databend_driver::LoadMethod;
 use databend_driver::NumberDataType;
 use databend_driver::RowStatsIterator;
 use databend_driver::Schema;
 use databend_driver::{NumberValue, Row, RowWithStats, Value};
+use serde_json::Value as JsonValue;
 use std::process::Command;
 use std::sync::Arc;
 use tempfile::tempdir;
-use tokio::fs::File;
-use tokio::io::BufReader;
 
 impl Session {
     pub(crate) async fn gendata(
@@ -101,36 +101,26 @@ impl Session {
             }
             let table_name = path.file_stem().unwrap().to_str().unwrap().to_string();
 
-            let file = File::open(&path).await?;
-            let metadata = file.metadata().await.unwrap();
-            let data = BufReader::new(file);
-            let size = metadata.len();
-
-            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap();
-            let stage = format!("@~/client/load/{now}");
-            self.conn
-                .upload_to_stage(&stage, Box::new(data), size)
-                .await?;
-
             let create = if drop_override {
                 "CREATE OR REPLACE"
             } else {
                 "CREATE"
             };
+            // Get table schema from DuckDB
+            let table_schema = get_table_schema_from_duckdb(&path)?;
+            let create_table_sql = format!("{create} TABLE {table_name} ({table_schema})");
+            let _ = self.conn.exec(&create_table_sql).await?;
 
-            let _ = self
+            // Use stream_load with LoadMethod::Streaming
+            let sql = format!(
+                "INSERT INTO {table_name} from @_databend_load file_format = (type='parquet')"
+            );
+            let _stats = self
                 .conn
-                .exec(&format!(
-                    "{create} TABLE {table_name} as SELECT * FROM '{stage}' limit 0",
-                ))
+                .load_file(&sql, &path, LoadMethod::Streaming)
                 .await?;
 
-            let _ = self
-                .conn
-                .exec(&format!(
-                    "COPY INTO {table_name} FROM (SELECT * FROM '{stage}')  force = true purge = true",
-                ))
-                .await?;
+            let size = std::fs::metadata(&path)?.len();
 
             results.push(Ok(RowWithStats::Row(Row::from_vec(
                 schema.clone(),
@@ -147,6 +137,95 @@ impl Session {
             Box::pin(tokio_stream::iter(results)),
         ))
     }
+}
+
+fn get_table_schema_from_duckdb(path: &std::path::Path) -> Result<String> {
+    // Query DuckDB to get table schema information
+    let describe_command = format!(
+        "create table t as select * from  read_parquet('{}');DESCRIBE t;",
+        path.display()
+    );
+
+    let output = Command::new("duckdb")
+        .arg("-json")
+        .arg("-c")
+        .arg(&describe_command)
+        .output()
+        .map_err(|e| anyhow!("Failed to describe table '{}': {}", path.display(), e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "Failed to describe table '{}': {}",
+            path.display(),
+            stderr
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    let line = lines.join("");
+    let result = serde_json::from_str::<JsonValue>(&line)?;
+    let mut columns = Vec::new();
+
+    for row in result.as_array().unwrap() {
+        if let (Some(column_name), Some(column_type)) = (
+            row.get("column_name").and_then(|v| v.as_str()),
+            row.get("column_type").and_then(|v| v.as_str()),
+        ) {
+            let databend_type = convert_duckdb_type_to_databend(column_type)?;
+            columns.push(format!("{} {}", column_name, databend_type));
+        }
+    }
+    Ok(columns.join(", "))
+}
+
+fn convert_duckdb_type_to_databend(duckdb_type: &str) -> Result<String> {
+    let duckdb_type = duckdb_type.to_uppercase();
+
+    let databend_type = match duckdb_type.as_str() {
+        // Integer types
+        "BOOLEAN" | "BOOL" => "BOOLEAN".to_string(),
+        "TINYINT" | "INT1" => "TINYINT".to_string(),
+        "SMALLINT" | "INT2" | "SHORT" => "SMALLINT".to_string(),
+        "INTEGER" | "INT4" | "INT" | "SIGNED" => "INT".to_string(),
+        "BIGINT" | "INT8" | "LONG" => "BIGINT".to_string(),
+
+        // Floating point types
+        "REAL" | "FLOAT4" | "FLOAT" => "FLOAT".to_string(),
+        "DOUBLE" | "FLOAT8" | "NUMERIC" => "DOUBLE".to_string(),
+
+        // String types
+        "VARCHAR" | "CHAR" | "BPCHAR" | "TEXT" | "STRING" => "STRING".to_string(),
+
+        // Date/time types
+        "DATE" => "DATE".to_string(),
+        "TIME" => "TIME".to_string(),
+        "TIMESTAMP" | "DATETIME" => "TIMESTAMP".to_string(),
+
+        // Handle parameterized types
+        t if t.starts_with("DECIMAL(") => {
+            // Extract precision and scale from DECIMAL(precision, scale)
+            if let Some(params) = t.strip_prefix("DECIMAL(").and_then(|s| s.strip_suffix(")")) {
+                format!("DECIMAL({})", params)
+            } else {
+                "DECIMAL(38, 10)".to_string() // Default precision and scale
+            }
+        }
+        t if t.starts_with("VARCHAR(") => "STRING".to_string(),
+        t if t.starts_with("CHAR(") => "STRING".to_string(),
+
+        // Default fallback
+        _ => {
+            eprintln!(
+                "Warning: Unknown DuckDB type '{}', using STRING as fallback",
+                duckdb_type
+            );
+            "STRING".to_string()
+        }
+    };
+
+    Ok(databend_type)
 }
 
 fn gendata_schema() -> Schema {
