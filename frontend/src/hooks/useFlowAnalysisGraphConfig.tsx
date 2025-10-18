@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import { FlowAnalysisGraphConfig } from "@ant-design/charts";
 
 import { pathArrow, pathMoon } from "../constants";
@@ -18,18 +18,21 @@ export const useFlowAnalysisGraphConfig = ({
   handleResetView,
   edgesWithLineWidth,
 }): FlowAnalysisGraphConfig => {
-  const getToolbarContent = ({ zoomIn, zoomOut }) => (
+  const getToolbarContent = useCallback(({ zoomIn, zoomOut }) => (
     <div className="flex justify-around items-center">
       <span
         className="cursor-pointer flex justify-center items-center"
         onClick={() => handleResetView()}
       >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={fullScreenUrl} alt="full screen" />
       </span>
       <span className="cursor-pointer flex justify-center items-center" onClick={zoomOut}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={zoomOutUrl} alt="zoom out" />
       </span>
       <span className="cursor-pointer flex justify-center items-center" onClick={zoomIn}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={zoomInUrl} alt="zoom in" />
       </span>
       <span
@@ -41,10 +44,11 @@ export const useFlowAnalysisGraphConfig = ({
           )
         }
       >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={downloadUrl} alt="download" />
       </span>
     </div>
-  );
+  ), [handleResetView, graphRef]);
 
   const getNodeStyle = edge => ({
     radius: 5,
@@ -62,7 +66,7 @@ export const useFlowAnalysisGraphConfig = ({
     lineWidth: (edge?.lineWidth as number) || 1,
   });
 
-  const getCustomNodeContent = (item, group, cfg) => {
+  const getCustomNodeContent = useCallback((item, group, cfg) => {
     const { startX, startY, width } = cfg;
     const { text } = item;
     const totalWidth = 230;
@@ -177,7 +181,7 @@ export const useFlowAnalysisGraphConfig = ({
     });
 
     return Math.max(textHeight, height);
-  };
+  }, [overviewInfoCurrent, edgesWithLineWidth]);
 
   return useMemo(() => ({
     ...graphSize,
@@ -239,5 +243,5 @@ export const useFlowAnalysisGraphConfig = ({
       show: data.edges.filter(item => item.source === cfg.id)?.length,
     }),
     behaviors: ["drag-canvas", "zoom-canvas"],
-  }), [graphSize, onReady, data, graphRef, overviewInfoCurrent, handleResetView, edgesWithLineWidth]);
+  }), [graphSize, onReady, data, getCustomNodeContent, getToolbarContent]);
 };

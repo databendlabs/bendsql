@@ -28,7 +28,7 @@ export function useGraphSize() {
     reshapeDOM(() => {
       handleResize();
     });
-  }, []);
+  }, [reshapeDOM]);
 
   return { graphSize, profileRef, handleResize };
 }

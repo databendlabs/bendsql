@@ -63,7 +63,7 @@ const CacheFlowAnalysisGraph = ({
     return () => {
       debouncedRender.cancel();
     };
-  }, [plainData, graphSize]);
+  }, [plainData, graphSize, debouncedRender]);
 
   return <FlowAnalysisGraph key={renderKey} {...config} />;
 };

@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/router";
 import { clone } from "lodash-es";
 import { transformErrors, getPercent } from "../utills";
 import { Profile, StatisticsDesc, StatisticsData, AttributeData, IOverview, MessageResponse } from "../types/ProfileGraphDashboard";
@@ -17,6 +18,7 @@ export function useProfileData(): {
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
   overviewInfoCurrent: React.RefObject<IOverview | undefined>;
 } {
+  const router = useRouter();
   const [plainData, setPlainData] = useState<Profile[]>([]);
   const [rangeData, setRangeData] = useState<Profile[]>([]);
   const [statisticsData, setStatisticsData] = useState<StatisticsData[]>([]);
@@ -25,42 +27,21 @@ export function useProfileData(): {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const overviewInfoCurrent = useRef<IOverview | undefined>(undefined);
 
-  useEffect(() => {
-    const fetchMessage = async () => {
-      try {
-        const urlParams = new URLSearchParams(window.location.search);
-        const perf_id = urlParams.get('perf_id') || '0';
-        const response: Response = await fetch(`/api/message?perf_id=${perf_id}`);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const result: MessageResponse = await response.json();
-
-        const data = JSON.parse(result?.result);
-
-        const profiles = transformProfiles(data.profiles, data.statistics_desc);
-        const overviewInfo = calculateOverviewInfo(profiles, data.statistics_desc);
-
-        setPlainData(profiles);
-        setRangeData(getRangeData(profiles));
-        setOverviewInfo(overviewInfo);
-        overviewInfoCurrent.current = overviewInfo;
-
-        setStatisticsData(getStatisticsData(data.profiles, data.statistics_desc) as StatisticsData[]);
-        setLabels(getLabels(data.profiles) as AttributeData[]);
-      } catch (error) {
-        console.error("Error fetching message:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    setIsLoading(true);
-    fetchMessage();
+  const createStatisticsDescArray = useCallback((item: Profile, statistics_desc: StatisticsDesc) => {
+    return Object.entries(statistics_desc).map(
+      ([_type, descObj]) => ({
+        _type,
+        desc: descObj?.desc,
+        display_name: descObj?.display_name || descObj?.displayName,
+        index: descObj?.index,
+        unit: descObj.unit,
+        plain_statistics: descObj?.plain_statistics,
+        _value: item.statistics[descObj?.index],
+      })
+    );
   }, []);
 
-  function transformProfiles(profiles: Profile[], statistics_desc: StatisticsDesc) {
-
+  const transformProfiles = useCallback((profiles: Profile[], statistics_desc: StatisticsDesc) => {
     const cpuTimeIndex = statistics_desc[CPU_TIME_KEY]?.index;
     const waitTimeIndex = statistics_desc[WAIT_TIME_KEY]?.index;
     let cpuTime = 0;
@@ -88,23 +69,9 @@ export function useProfileData(): {
     });
 
     return profiles;
-  }
+  }, [createStatisticsDescArray]);
 
-  function createStatisticsDescArray(item: Profile, statistics_desc: StatisticsDesc) {
-    return Object.entries(statistics_desc).map(
-      ([_type, descObj]) => ({
-        _type,
-        desc: descObj?.desc,
-        display_name: descObj?.display_name || descObj?.displayName,
-        index: descObj?.index,
-        unit: descObj.unit,
-        plain_statistics: descObj?.plain_statistics,
-        _value: item.statistics[descObj?.index],
-      })
-    );
-  }
-
-  function calculateOverviewInfo(profiles: Profile[], statistics_desc: StatisticsDesc) {
+  const calculateOverviewInfo = useCallback((profiles: Profile[], statistics_desc: StatisticsDesc) => {
     const cpuTime = profiles.reduce((sum: number, item: Profile) => sum + item.cpuTime, 0);
     const waitTime = profiles.reduce((sum: number, item: Profile) => sum + item.waitTime, 0);
     const totalTime = cpuTime + waitTime;
@@ -121,15 +88,15 @@ export function useProfileData(): {
       statisticsDescArray: [],
       errors: [],
     };
-  }
+  }, []);
 
-  function getRangeData(profiles: Profile[]) {
+  const getRangeData = useCallback((profiles: Profile[]) => {
     return clone(profiles)
       ?.filter(item => parseFloat(item.totalTimePercent) > 0)
       ?.sort((a, b) => b.totalTime - a.totalTime);
-  }
+  }, []);
 
-  function getStatisticsData(profiles: Profile[], statistics_desc: StatisticsDesc) {
+  const getStatisticsData = useCallback((profiles: Profile[], statistics_desc: StatisticsDesc) => {
     return profiles.map(profile => {
       const statistics = Object.entries(statistics_desc).map(([key, value]) => ({
         name: value.display_name || key,
@@ -139,14 +106,56 @@ export function useProfileData(): {
       }));
       return { statistics, id: profile?.id?.toString() };
     });
-  }
+  }, []);
 
-  function getLabels(profiles: Profile[]) {
+  const getLabels = useCallback((profiles: Profile[]) => {
     return profiles.map(profile => ({
       labels: profile.labels,
       id: profile?.id?.toString(),
     }));
-  }
+  }, []);
+
+  useEffect(() => {
+    const fetchMessage = async () => {
+      try {
+        // Get perf_id from slug parameters (for Next.js [...slug] routes)
+        const pathPerfId = router.query.slug && Array.isArray(router.query.slug) 
+          ? router.query.slug.join('/') 
+          : router.query.slug;
+        // Also check for legacy perf_id parameter for backward compatibility
+        const legacyPerfId = router.query.perf_id;
+        const perf_id = pathPerfId || legacyPerfId || '0';
+        
+        const response: Response = await fetch(`/api/message?perf_id=${perf_id}`);
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const result: MessageResponse = await response.json();
+
+        const data = JSON.parse(result?.result);
+
+        const profiles = transformProfiles(data.profiles, data.statistics_desc);
+        const overviewInfo = calculateOverviewInfo(profiles, data.statistics_desc);
+
+        setPlainData(profiles);
+        setRangeData(getRangeData(profiles));
+        setOverviewInfo(overviewInfo);
+        overviewInfoCurrent.current = overviewInfo;
+
+        setStatisticsData(getStatisticsData(data.profiles, data.statistics_desc) as StatisticsData[]);
+        setLabels(getLabels(data.profiles) as AttributeData[]);
+      } catch (error) {
+        console.error("Error fetching message:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    if (router.isReady) {
+      setIsLoading(true);
+      fetchMessage();
+    }
+  }, [router.isReady, router.query.slug, router.query.perf_id, transformProfiles, calculateOverviewInfo, getRangeData, getStatisticsData, getLabels]);
 
   return {
     plainData,

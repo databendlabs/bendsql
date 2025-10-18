@@ -17,8 +17,6 @@ import { useNodeSelection } from "./hooks/useNodeSelection";
 import { IGraphSize, IOverview, Profile } from "./types/ProfileGraphDashboard";
 import { ALL_NODE_ID } from "./constants";
 
-import "./css/ProfileGraphDashboard.css";
-
 const { Content, Sider } = Layout;
 
 function ProfileGraphDashboard() {

@@ -80,7 +80,7 @@ export function useGraphEvents(
     graph.on("canvas:dragstart", handleCanvasDragStart);
     graph.on("canvas:dragend", handleCanvasDragEnd);
 
-  }, [profileWrapRefCanvas, profileWrapRef, overviewInfoCurrent, setOverviewInfo, getAllNodes, setNodeActive, clearNodeActive]);
+  }, [profileWrapRefCanvas, profileWrapRef, overviewInfoCurrent, setOverviewInfo, getAllNodes, setNodeActive, clearNodeActive, plainData, setOverInfo, setSelectedNodeId]);
 
   return {
     bindGraphEvents,

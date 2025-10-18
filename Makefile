@@ -20,7 +20,7 @@ build-frontend:
 	mkdir -p cli/frontend
 	cd frontend && \
 	if [ ! -d node_modules ]; then pnpm install; fi && \
-	pnpm build && cp -rf build ../cli/frontend/
+	pnpm run build && cp -rf build ../cli/frontend/
 
 run:
 	make build-frontend

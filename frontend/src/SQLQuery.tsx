@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/router';
 import CodeMirror from '@uiw/react-codemirror';
 import { sql } from '@codemirror/lang-sql';
 import { EditorView } from '@codemirror/view';
@@ -14,13 +15,15 @@ interface QueryResult {
 }
 
 const SQLQuery: React.FC = () => {
-  const [query, setQuery] = useState(`CREATE OR REPLACE TABLE students (uid Int16, name String, age Int16);
-
-INSERT INTO students VALUES (1231, 'John', 33);
-INSERT INTO students VALUES (6666, 'Ksenia', 48);
-INSERT INTO students VALUES (8888, 'Alice', 50);
-
-SELECT * FROM students;`);
+  const router = useRouter();
+  // Get query ID from path parameters (for catch-all routes like [slug])
+  const pathQueryId = router.query.slug && Array.isArray(router.query.slug)
+    ? router.query.slug.join('/')
+    : router.query.slug;
+  // Also check for legacy queryId parameter for backward compatibility
+  const legacyQueryId = router.query.queryId;
+  const queryId = pathQueryId || legacyQueryId;
+  const [query, setQuery] = useState(``);
 
   const [results, setResults] = useState<QueryResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -28,13 +31,18 @@ SELECT * FROM students;`);
 
   // Load query from URL on component mount
   useEffect(() => {
-    const pathSegments = window.location.pathname.split('/');
-    const queryId = pathSegments[1]; // Get the first segment after '/'
-
-    if (queryId && queryId !== '') {
+    if (router.isReady && queryId && typeof queryId === 'string') {
       loadSharedQuery(queryId);
+    } else {
+      setQuery(`CREATE OR REPLACE TABLE students (uid Int16, name String, age Int16);
+
+INSERT INTO students VALUES (1231, 'John', 33);
+INSERT INTO students VALUES (6666, 'Ksenia', 48);
+INSERT INTO students VALUES (8888, 'Alice', 50);
+
+SELECT * FROM students;`);
     }
-  }, []);
+  }, [router.isReady, queryId]);
 
   const loadSharedQuery = async (queryId: string) => {
     try {
@@ -87,7 +95,7 @@ SELECT * FROM students;`);
 
       // Update URL with the query ID if returned
       if (data.queryId) {
-        window.history.pushState({}, '', `/${data.queryId}`);
+        router.push(`/${data.queryId}`, undefined, { shallow: true });
       }
     } catch (error) {
       console.error('Query execution failed:', error);
@@ -95,7 +103,7 @@ SELECT * FROM students;`);
     } finally {
       setLoading(false);
     }
-  }, [query]);
+  }, [query, router]);
 
   // Add global keyboard event listener for Cmd+Enter
   useEffect(() => {
@@ -220,12 +228,11 @@ SELECT * FROM students;`);
                   sql(),
                 ]}
                 basicSetup={{
-                  lineNumbers: true,
-                  foldGutter: true,
-                  indentOnInput: true,
-                  autocompletion: true,
-                  highlightActiveLine: true,
-                  searchKeymap: true,
+                lineNumbers: true,
+                foldGutter: false,
+                indentOnInput: false,
+                autocompletion: true,
+                highlightActiveLine: false,
                 }}
                 onChange={(value) => setQuery(value)}
                 editable={!loading}

@@ -38,17 +38,16 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
         "index.html".to_string()
     } else {
         let requested_path = path.into_inner();
-
-        // If the path looks like a query ID (alphanumeric string), serve index.html for SPA routing
-        let is_perf_query = requested_path.starts_with("perf/");
-        if is_perf_query
-            || requested_path
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-                && !requested_path.contains('.')
-                && requested_path.len() > 10
+        if requested_path.starts_with("perf/") {
+            // Handle Next.js static export structure for /perf/ routes
+            "perf/[...slug]/index.html".to_string()
+        } else if requested_path
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+            && requested_path.len() >= 3
         {
-            "index.html".to_string()
+            // Handle query IDs - use catch-all route
+            "[...slug]/index.html".to_string()
         } else {
             requested_path
         }
@@ -61,7 +60,22 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
                 .content_type(mime_type.as_ref())
                 .body(content.data)
         }
-        None => HttpResponse::NotFound().body("File not found"),
+        None => {
+            // If file not found and it doesn't look like a static file, try index.html for SPA routing
+            if !file_path.contains('.') && file_path != "index.html" {
+                match Asset::get("index.html") {
+                    Some(content) => {
+                        let mime_type = from_path("index.html").first_or_octet_stream();
+                        HttpResponse::Ok()
+                            .content_type(mime_type.as_ref())
+                            .body(content.data)
+                    }
+                    None => HttpResponse::NotFound().body("File not found"),
+                }
+            } else {
+                HttpResponse::NotFound().body("File not found")
+            }
+        }
     }
 }
 
