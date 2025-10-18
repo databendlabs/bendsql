@@ -86,7 +86,7 @@ export interface Profile {
   labels: Label[];
   statistics: number[];
   metrics?: Record<string, Metric[]>;
-  errors: string[];
+  errors: string[] | IErrors[];
 }
 
 export interface MessageResponse {
@@ -99,7 +99,7 @@ export interface IStatisticsDesc {
   desc: string;
   index: number;
   _value: any;
-  display_name: string;
+  display_name: string | undefined;
   displayName?: string;
   plain_statistics?: boolean;
   unit?: TUnit;

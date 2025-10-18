@@ -151,7 +151,7 @@ prompt = ":) "
 - Settings section
 
 | Parameter            | Description                                                                                                         |
-| -------------------- |---------------------------------------------------------------------------------------------------------------------|
+| -------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `display_pretty_sql` | Whether to display SQL queries in a formatted way.                                                                  |
 | `prompt`             | The prompt to display before asking for input.                                                                      |
 | `progress_color`     | The color to use for the progress bar.                                                                              |
@@ -250,6 +250,12 @@ see: [Databend Query Settings](https://databend.rs/doc/sql-commands/show/show-se
 ```bash
 make check
 ```
+
+### Development mode
+
+- For fast development: Run `cd frontend && pnpm run dev` in one terminal, then `make dev-run` in another
+- For production builds: Use `make build-frontend` to create embedded assets
+- Development mode uses `BENDSQL_DEV_MODE=1` environment variable to proxy requests to Next.js dev server
 
 ### Unit tests
 

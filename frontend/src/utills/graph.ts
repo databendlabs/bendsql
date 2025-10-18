@@ -1,38 +1,6 @@
-import { IGraph, INode } from "@ant-design/charts";
 import { EdgeWithLineWidth } from "../components/FlowAnalysisGraph";
 import { OUTPUT_ROWS } from "../constants";
 import { Profile } from "../types/ProfileGraphDashboard";
-
-/**
- * calculate node offsets
- * @param graph
- * @param node
- * @returns
- */
-export function calculateNodeOffsets(graph: IGraph, node: INode) {
-  const zoom: number = graph?.getZoom() || 1;
-  const x: number = node?._cfg?.bboxCache?.x || 0;
-  const y: number = node?._cfg?.bboxCache?.y || 0;
-  const width: number = graph?.getWidth() || 0;
-  const height: number = graph?.getHeight() || 0;
-  return {
-    offsetX: width / 2 - x * zoom,
-    offsetY: height / 2 - y * zoom + 20,
-  };
-}
-
-/**
- * set node active state
- * @param graph
- * @param node
- * @param clear
- */
-export function setNodeActiveState(graph: IGraph, node: INode, clear = false) {
-  if (clear) {
-    graph.getNodes().forEach(n => graph.clearItemStates(n));
-  }
-  graph.setItemState(node as any, "highlight", true);
-}
 
 /**
  * format rows
