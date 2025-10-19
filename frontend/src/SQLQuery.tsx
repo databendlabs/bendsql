@@ -82,7 +82,8 @@ SELECT * FROM students;`);
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          sql: query
+          sql: query,
+          kind: 0
         }),
       });
 
@@ -183,11 +184,11 @@ SELECT * FROM students;`);
   };
 
   return (
-    <div className="h-screen bg-gray-100">
+    <div className="h-full bg-gray-100">
       {/* Header */}
       <div className="bg-yellow-400 px-4 py-2 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <span className="font-bold">BendSQL</span>
+          <span className="font-bold">SQL Query</span>
           <button
             onClick={executeQuery}
             disabled={loading}
@@ -205,7 +206,6 @@ SELECT * FROM students;`);
             )}
           </button>
         </div>
-        {/* <div className="text-xl">⚙</div> */}
       </div>
 
       {/* Content - Resizable Panels */}

@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use std::collections::VecDeque;
-use std::env;
 use std::fmt::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -34,7 +33,6 @@ use crate::ast::QueryKind;
 use crate::{
     ast::{format_query, highlight_query},
     config::{ExpandMode, OutputFormat, OutputQuoteStyle, Settings},
-    web::set_data,
 };
 
 pub(crate) const INTERRUPTED_MESSAGE: &str = "Interrupted by Ctrl+C";
@@ -71,7 +69,6 @@ pub struct FormatDisplay<'a> {
     start: Instant,
     stats: Option<ServerStats>,
     interrupted: Arc<AtomicBool>,
-    server_addr: Option<String>,
 }
 
 impl<'a> FormatDisplay<'a> {
@@ -82,7 +79,6 @@ impl<'a> FormatDisplay<'a> {
         start: Instant,
         data: RowStatsIterator,
         interrupted: Arc<AtomicBool>,
-        server_addr: Option<String>,
     ) -> Self {
         Self {
             settings,
@@ -95,7 +91,6 @@ impl<'a> FormatDisplay<'a> {
             start,
             stats: None,
             interrupted,
-            server_addr,
         }
     }
 }
@@ -123,34 +118,6 @@ impl FormatDisplay<'_> {
                 _ => {}
             }
         }
-    }
-
-    async fn display_graphical(&mut self, rows: &[Row]) -> Result<()> {
-        let addr = self
-            .server_addr
-            .clone()
-            .ok_or(anyhow!("Server not started"))?;
-
-        let mut result = String::new();
-        for row in rows {
-            result.push_str(&row.values()[0].to_string());
-        }
-
-        let perf_id = set_data(result);
-
-        let url = format!("http://{addr}/perf/{perf_id}");
-
-        // Open the browser in a separate task if not in ssh mode
-        let in_sshmode = env::var("SSH_CLIENT").is_ok() || env::var("SSH_TTY").is_ok();
-        if !in_sshmode && self.settings.auto_open_browser {
-            if let Err(e) = webbrowser::open(&url) {
-                eprintln!("Failed to open browser: {e}");
-            }
-        }
-
-        println!("View graphical online: \x1B[4m{url}\x1B[0m");
-        println!();
-        Ok(())
     }
 
     async fn display_table(&mut self, expand: Option<ExpandMode>) -> Result<()> {
@@ -224,10 +191,6 @@ impl FormatDisplay<'_> {
         if self.kind == QueryKind::Explain {
             print_explain(&rows)?;
             return Ok(());
-        }
-
-        if self.kind == QueryKind::Graphical {
-            return self.display_graphical(&rows).await;
         }
 
         let schema = self.data.schema();

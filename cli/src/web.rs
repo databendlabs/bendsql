@@ -15,7 +15,6 @@
 use std::collections::HashMap;
 use std::env;
 use std::net::TcpListener;
-use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
 use crate::sql_parser::parse_sql_for_web;
@@ -120,8 +119,7 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
         "index.html".to_string()
     } else {
         let requested_path = path.into_inner();
-
-        if requested_path.starts_with("perf/") {
+        if requested_path == "perf" || requested_path.starts_with("perf/") {
             // Handle Next.js static export structure for /perf/ routes
             // trailingSlash: false generates perf/[...slug].html
             "perf/[...slug].html".to_string()
@@ -164,7 +162,6 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
     }
 }
 
-static PERF_ID: AtomicUsize = AtomicUsize::new(0);
 static APP_DATA: Lazy<Arc<Mutex<HashMap<usize, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
@@ -175,6 +172,7 @@ static SHARED_QUERIES: Lazy<Arc<Mutex<HashMap<String, SharedQuery>>>> =
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct SharedQuery {
     sql: String,
+    kind: i32,
     results: Vec<QueryResult>,
 }
 
@@ -186,6 +184,18 @@ struct MessageQuery {
 #[derive(Deserialize, Debug)]
 struct QueryRequest {
     sql: String,
+    // default 0: query, 1: EXPLAIN ANALYZE GRAPHICAL, 2: EXPLAIN PERF
+    kind: i32,
+}
+
+impl QueryRequest {
+    fn to_sql(&self) -> String {
+        match self.kind {
+            1 => format!("EXPLAIN ANALYZE GRAPHICAL {}", self.sql),
+            2 => format!("EXPLAIN PERF {}", self.sql),
+            _ => self.sql.clone(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -211,13 +221,6 @@ pub fn set_dsn(dsn: String) {
     *dsn_guard.lock().unwrap() = Some(dsn);
 }
 
-pub fn set_data(result: String) -> usize {
-    let perf_id = PERF_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let l = APP_DATA.as_ref();
-    l.lock().unwrap().insert(perf_id, result);
-    perf_id
-}
-
 #[post("/api/query")]
 async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
     let dsn = {
@@ -234,7 +237,7 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
         }
     }; // Lock is automatically dropped here
 
-    let sql = req.sql.trim();
+    let sql = req.to_sql();
     if sql.is_empty() {
         return HttpResponse::BadRequest().json(serde_json::json!({
             "error": "SQL query cannot be empty"
@@ -242,7 +245,7 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
     }
 
     // Parse SQL into multiple statements using proper tokenizer
-    let statements = parse_sql_for_web(sql);
+    let statements = parse_sql_for_web(&sql);
 
     if statements.is_empty() {
         return HttpResponse::BadRequest().json(serde_json::json!({
@@ -329,7 +332,8 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
 
     if let Some(ref last_id) = last_query_id {
         let shared_query = SharedQuery {
-            sql: sql.to_string(),
+            sql: req.sql.clone(),
+            kind: req.kind,
             results: results.clone(),
         };
         // Store the query for sharing

@@ -69,7 +69,6 @@ pub struct Session {
     sql_parser: SqlParser,
 
     server_handle: Option<JoinHandle<std::io::Result<()>>>,
-    server_addr: Option<String>,
 
     keywords: Option<Arc<sled::Db>>,
     interrupted: Arc<AtomicBool>,
@@ -169,7 +168,6 @@ impl Session {
         }
 
         let mut server_handle = None;
-        let mut server_addr = None;
         if is_repl && settings.enable_ui {
             let listener =
                 TcpListener::bind(format!("{}:{}", settings.bind_address, settings.bind_port))
@@ -182,7 +180,6 @@ impl Session {
             let handle = tokio::spawn(async move { start_server(listener).await });
             println!("Started web server at {addr}");
             println!("Web UI is enabled. This allows SQL execution from any browser that can access this port.");
-            server_addr = Some(addr.to_string());
             server_handle = Some(handle);
         };
 
@@ -211,7 +208,6 @@ impl Session {
             sql_parser,
             keywords,
             server_handle,
-            server_addr,
             interrupted,
         })
     }
@@ -534,7 +530,6 @@ impl Session {
                     start,
                     data,
                     self.interrupted.clone(),
-                    self.server_addr.clone(),
                 );
                 let stats = displayer.display(expand).await?;
                 Ok(Some(stats))

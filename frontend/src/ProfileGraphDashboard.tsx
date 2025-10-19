@@ -19,14 +19,12 @@ const { Content, Sider } = Layout;
 const CPU_TIME_KEY = "CpuTime";
 const WAIT_TIME_KEY = "WaitTime";
 
-const ProfileGraphDashboard: React.FC = () => {
+interface ProfileGraphDashboardProps {
+  perfData?: any;
+}
+
+const ProfileGraphDashboard: React.FC<ProfileGraphDashboardProps> = ({ perfData }) => {
   const router = useRouter();
-  
-  // Get perf ID from URL parameters
-  const pathPerfId = router.query.slug && Array.isArray(router.query.slug)
-    ? router.query.slug.join('/')
-    : router.query.slug;
-  const perfId = pathPerfId || '0';
 
   // Basic state
   const [selectedNodeId, setSelectedNodeId] = useState<string>(ALL_NODE_ID);
@@ -121,19 +119,13 @@ const ProfileGraphDashboard: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Load data from API
+  // Load data from perfData prop
   useEffect(() => {
-    const fetchData = async () => {
-      if (!router.isReady) return;
-
+    if (perfData) {
       try {
         setIsLoading(true);
-        const response = await fetch(`/api/message?perf_id=${perfId}`);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const result: MessageResponse = await response.json();
-        const data = JSON.parse(result?.result);
+        // Use the provided perfData directly
+        const data = perfData;
 
         const profiles = transformProfiles(data.profiles, data.statistics_desc);
         const overview = calculateOverviewInfo(profiles);
@@ -162,14 +154,15 @@ const ProfileGraphDashboard: React.FC = () => {
           id: profile?.id?.toString() || '',
         })));
       } catch (error) {
-        console.error("Error fetching data:", error);
+        console.error("Error processing perf data:", error);
       } finally {
         setIsLoading(false);
       }
-    };
-
-    fetchData();
-  }, [router.isReady, perfId, transformProfiles, calculateOverviewInfo]);
+    } else {
+      // If no perfData provided, set loading to false
+      setIsLoading(false);
+    }
+  }, [perfData, transformProfiles, calculateOverviewInfo]);
 
   // Node selection handler
   const handleNodeSelection = useCallback((nodeId: string) => {
@@ -256,11 +249,20 @@ const ProfileGraphDashboard: React.FC = () => {
     };
   }, [selectedNodeId, overviewInfo, plainData]);
 
-  // Render loading state
+  // Render loading state or no data state
   if (isLoading) {
     return (
       <div className="h-screen flex items-center justify-center">
         <div className="text-lg">Loading performance data...</div>
+      </div>
+    );
+  }
+
+  // Render no data state
+  if (!perfData || plainData.length === 0) {
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <div className="text-lg text-gray-500">No performance data available</div>
       </div>
     );
   }
