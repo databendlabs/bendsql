@@ -65,13 +65,9 @@ const PerfQuery: React.FC = () => {
       }
     });
 
-    // Debug: log the raw concatenated data
-    console.log('Raw concatenated data:', concatenatedData);
-
     if (kind === 1) { // EXPLAIN ANALYZE GRAPHICAL - parse as JSON
       try {
         const jsonData = JSON.parse(concatenatedData.trim());
-        console.log('Parsed JSON data:', jsonData);
         return {
           perfData: JSON.stringify(jsonData, null, 2),
           graphData: jsonData
