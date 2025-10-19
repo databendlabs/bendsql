@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::env;
 use std::net::TcpListener;
-use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex};
 
 use crate::sql_parser::parse_sql_for_web;
@@ -33,22 +33,104 @@ use tokio_stream::StreamExt;
 #[folder = "frontend/build/"]
 struct Asset;
 
+// Check if we're in development mode
+fn is_dev_mode() -> bool {
+    env::var("BENDSQL_DEV_MODE").unwrap_or_default() == "1"
+}
+
+// Development mode: proxy to Next.js dev server
+async fn dev_proxy(path: web::Path<String>) -> HttpResponse {
+    let dev_server_url =
+        env::var("BENDSQL_DEV_SERVER").unwrap_or_else(|_| "http://localhost:3000".to_string());
+    let full_path = path.into_inner();
+    let url = if full_path.is_empty() {
+        dev_server_url.clone()
+    } else {
+        format!("{}/{}", dev_server_url, full_path)
+    };
+
+    // Use reqwest to proxy the request
+    match reqwest::get(&url).await {
+        Ok(response) => {
+            let status = response.status();
+            let content_type = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("text/html")
+                .to_string();
+
+            match response.bytes().await {
+                Ok(body) => HttpResponse::build(
+                    actix_web::http::StatusCode::from_u16(status.as_u16())
+                        .unwrap_or(actix_web::http::StatusCode::OK),
+                )
+                .content_type(content_type)
+                .body(body),
+                Err(_) => HttpResponse::InternalServerError().body("Failed to read response"),
+            }
+        }
+        Err(_) => {
+            // If dev server is not running, show helpful message
+            let dev_help = format!(
+                r#"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>BendSQL Development Mode</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; }}
+        .container {{ max-width: 800px; margin: 0 auto; }}
+        .info {{ background: #e3f2fd; border: 1px solid #2196f3; padding: 20px; border-radius: 5px; margin: 20px 0; }}
+        pre {{ background: #f5f5f5; padding: 10px; border-radius: 5px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BendSQL Development Mode</h1>
+        <div class="info">
+            <h3>Frontend Development Server Not Running</h3>
+            <p>To start the frontend development server:</p>
+            <pre>cd frontend && npm start</pre>
+            <p>Or set a custom dev server URL:</p>
+            <pre>export BENDSQL_DEV_SERVER=http://localhost:3001</pre>
+            <p>Current dev server URL: <code>{}</code></p>
+        </div>
+        <p>For production mode, run: <code>make build-frontend && cargo run</code></p>
+    </div>
+</body>
+</html>"#,
+                dev_server_url
+            );
+
+            HttpResponse::Ok().content_type("text/html").body(dev_help)
+        }
+    }
+}
+
 async fn embed_file(path: web::Path<String>) -> HttpResponse {
+    // In development mode, proxy to Next.js dev server
+    if is_dev_mode() {
+        return dev_proxy(path).await;
+    }
+
+    // Production mode: serve embedded files
     let file_path = if path.is_empty() {
         "index.html".to_string()
     } else {
         let requested_path = path.into_inner();
-
-        // If the path looks like a query ID (alphanumeric string), serve index.html for SPA routing
-        let is_perf_query = requested_path.starts_with("perf/");
-        if is_perf_query
-            || requested_path
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
-                && !requested_path.contains('.')
-                && requested_path.len() > 10
+        if requested_path == "perf" || requested_path.starts_with("perf/") {
+            // Handle Next.js static export structure for /perf/ routes
+            // trailingSlash: false generates perf/[...slug].html
+            "perf/[...slug].html".to_string()
+        } else if requested_path
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+            && requested_path.len() >= 3
         {
-            "index.html".to_string()
+            // Handle query IDs - use catch-all route
+            // trailingSlash: false generates [...slug].html
+            "[...slug].html".to_string()
         } else {
             requested_path
         }
@@ -61,11 +143,25 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
                 .content_type(mime_type.as_ref())
                 .body(content.data)
         }
-        None => HttpResponse::NotFound().body("File not found"),
+        None => {
+            // If file not found and it doesn't look like a static file, try index.html for SPA routing
+            if !file_path.contains('.') && file_path != "index.html" {
+                match Asset::get("index.html") {
+                    Some(content) => {
+                        let mime_type = from_path("index.html").first_or_octet_stream();
+                        HttpResponse::Ok()
+                            .content_type(mime_type.as_ref())
+                            .body(content.data)
+                    }
+                    None => HttpResponse::NotFound().body("File not found"),
+                }
+            } else {
+                HttpResponse::NotFound().body("File not found")
+            }
+        }
     }
 }
 
-static PERF_ID: AtomicUsize = AtomicUsize::new(0);
 static APP_DATA: Lazy<Arc<Mutex<HashMap<usize, String>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
@@ -76,6 +172,7 @@ static SHARED_QUERIES: Lazy<Arc<Mutex<HashMap<String, SharedQuery>>>> =
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct SharedQuery {
     sql: String,
+    kind: i32,
     results: Vec<QueryResult>,
 }
 
@@ -87,6 +184,18 @@ struct MessageQuery {
 #[derive(Deserialize, Debug)]
 struct QueryRequest {
     sql: String,
+    // default 0: query, 1: EXPLAIN ANALYZE GRAPHICAL, 2: EXPLAIN PERF
+    kind: i32,
+}
+
+impl QueryRequest {
+    fn to_sql(&self) -> String {
+        match self.kind {
+            1 => format!("EXPLAIN ANALYZE GRAPHICAL {}", self.sql),
+            2 => format!("EXPLAIN PERF {}", self.sql),
+            _ => self.sql.clone(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -112,13 +221,6 @@ pub fn set_dsn(dsn: String) {
     *dsn_guard.lock().unwrap() = Some(dsn);
 }
 
-pub fn set_data(result: String) -> usize {
-    let perf_id = PERF_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let l = APP_DATA.as_ref();
-    l.lock().unwrap().insert(perf_id, result);
-    perf_id
-}
-
 #[post("/api/query")]
 async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
     let dsn = {
@@ -135,7 +237,7 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
         }
     }; // Lock is automatically dropped here
 
-    let sql = req.sql.trim();
+    let sql = req.to_sql();
     if sql.is_empty() {
         return HttpResponse::BadRequest().json(serde_json::json!({
             "error": "SQL query cannot be empty"
@@ -143,7 +245,7 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
     }
 
     // Parse SQL into multiple statements using proper tokenizer
-    let statements = parse_sql_for_web(sql);
+    let statements = parse_sql_for_web(&sql);
 
     if statements.is_empty() {
         return HttpResponse::BadRequest().json(serde_json::json!({
@@ -230,7 +332,8 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
 
     if let Some(ref last_id) = last_query_id {
         let shared_query = SharedQuery {
-            sql: sql.to_string(),
+            sql: req.sql.clone(),
+            kind: req.kind,
             results: results.clone(),
         };
         // Store the query for sharing
