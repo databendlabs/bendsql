@@ -103,9 +103,7 @@ Options:
   -A, --no-auto-complete           Disable loading tables and fields for auto-completion, which offers a quicker start
       --check                      Check for server status and exit
       --query=<QUERY>              Query to execute
-  -d, --data <DATA>                Data to load, @file or @- for stdin
-  -f, --format <FORMAT>            Data format to load [default: csv] [possible values: csv, tsv, ndjson, parquet, xml]
-      --format-opt <FORMAT_OPT>    Data format options
+  -d, --data <DATA>                Data to load, @file or @- for stdin. The `--query` should use the syntax: `INSERT FROM <table> from @_databend_load file_format=(<file_format_options>)`
   -o, --output <OUTPUT>            Output format [possible values: table, csv, tsv, null]
       --quote-style <QUOTE_STYLE>  Output quote style, applies to `csv` and `tsv` output formats [possible values: always, necessary, non-numeric, never]
       --progress                   Show progress for query execution in stderr, only works with output format `table` and `null`.
