@@ -34,8 +34,10 @@ Options:
   -n, --non-interactive            Force non-interactive mode
   -A, --no-auto-complete           Disable loading tables and fields for auto-completion, which offers a quicker start
       --check                      Check for server status and exit
+      --ui                         Enable web UI interface (⚠️  SECURITY RISK: Allows SQL execution from any browser that can access this port)
       --query=<QUERY>              Query to execute
   -d, --data <DATA>                Data to load, @file or @- for stdin
+      --load-method <LOAD_METHOD>  method to load data to table [default: stage] [possible values: stage, streaming]
   -o, --output <OUTPUT>            Output format [possible values: table, csv, tsv, null]
       --quote-style <QUOTE_STYLE>  Output quote style, applies to `csv` and `tsv` output formats [possible values: always, necessary, non-numeric, never]
       --progress                   Show progress for query execution in stderr, only works with output format `table` and `null`.
@@ -86,6 +88,16 @@ show tables like 'd%'
 
 bendsql> exit
 Bye~
+```
+
+### UI Interface
+
+With `--ui` option, BendSQL will start a web server and open a browser to show the UI interface.
+We can execute sql or analyze query performance with BendSQL in the browser.
+Also we can share the results with others by copying the url.
+
+```bash
+❯ bendsql  -h localhost --port 8000 --ui
 ```
 
 ### StdIn Pipe
