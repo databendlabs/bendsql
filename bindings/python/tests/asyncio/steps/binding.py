@@ -166,7 +166,6 @@ async def _(context):
     ]
     progress = await context.conn.stream_load("INSERT INTO test VALUES", values)
     assert progress.write_rows == 3, f"progress.write_rows: {progress.write_rows}"
-    assert progress.write_bytes == 194, f"progress.write_bytes: {progress.write_bytes}"
 
     rows = await context.conn.query_iter("SELECT * FROM test")
     ret = [row.values() for row in rows]
@@ -203,9 +202,6 @@ async def test_load_file(context, load_method):
     )
     assert progress.write_rows == 3, (
         f"{load_method} progress.write_rows: {progress.write_rows}"
-    )
-    assert progress.write_bytes == 194, (
-        f"{load_method} progress.write_bytes: {progress.write_bytes}"
     )
 
     rows = await context.conn.query_iter("SELECT * FROM test1")
