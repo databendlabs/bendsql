@@ -14,7 +14,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-version = "0.30.2"
+version = "0.30.3"
 license = "Apache-2.0"
 authors = ["Databend Authors <opensource@databend.com>"]
 categories = ["database"]
@@ -22,10 +22,10 @@ keywords = ["databend", "database", "rust"]
 repository = "https://github.com/databendlabs/bendsql"
 
 [workspace.dependencies]
-databend-client = { path = "core", version = "0.30.2" }
-databend-driver = { path = "driver", version = "0.30.2" }
-databend-driver-core = { path = "sql", version = "0.30.2" }
-databend-driver-macros = { path = "macros", version = "0.30.2" }
+databend-client = { path = "core", version = "0.30.3" }
+databend-driver = { path = "driver", version = "0.30.3" }
+databend-driver-core = { path = "sql", version = "0.30.3" }
+databend-driver-macros = { path = "macros", version = "0.30.3" }
 
 jsonb = { version = "0.5.3" }
 tokio-stream = "0.1"
