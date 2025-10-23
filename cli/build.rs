@@ -16,17 +16,20 @@ use std::{env, error::Error};
 use vergen_gix::{BuildBuilder, Emitter, GixBuilder};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let gix = GixBuilder::default().sha(false).build()?;
+    let gix = GixBuilder::default().sha(false).build();
     let build = BuildBuilder::default().build_timestamp(true).build()?;
-    Emitter::default()
-        .fail_on_error()
-        .add_instructions(&gix)?
-        .add_instructions(&build)?
-        .emit()
-        .unwrap_or_else(|_| {
-            let info = env::var("BENDSQL_BUILD_INFO").unwrap_or_else(|_| "unknown".to_string());
-            println!("cargo:rustc-env=BENDSQL_BUILD_INFO={info}");
-        });
+
+    let mut emitter = Emitter::default();
+
+    if let Ok(gix) = gix {
+        emitter.add_instructions(&gix)?;
+    }
+
+    emitter.add_instructions(&build)?;
+    emitter.emit().unwrap_or_else(|_| {
+        let info = env::var("BENDSQL_BUILD_INFO").unwrap_or_else(|_| "unknown".to_string());
+        println!("cargo:rustc-env=BENDSQL_BUILD_INFO={info}");
+    });
 
     Ok(())
 }
