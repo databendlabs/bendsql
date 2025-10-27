@@ -182,7 +182,9 @@ impl Settings {
         self.max_display_rows = cfg.max_display_rows.unwrap_or(self.max_display_rows);
         self.auto_open_browser = c.server.auto_open_browser;
         self.bind_address.clone_from(&c.server.bind_address);
-        self.bind_port = c.server.bind_port;
+        if self.bind_port == 0 {
+            self.bind_port = c.server.bind_port;
+        }
     }
 
     pub fn inject_ctrl_cmd(&mut self, cmd_name: &str, cmd_value: &str) -> Result<()> {

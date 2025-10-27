@@ -35,6 +35,7 @@ Options:
   -A, --no-auto-complete           Disable loading tables and fields for auto-completion, which offers a quicker start
       --check                      Check for server status and exit
       --ui                         Enable web UI interface (⚠️  SECURITY RISK: Allows SQL execution from any browser that can access this port)
+      --bind-port <BIND_PORT>      Web UI port, Default: 8084, ignored when --ui is not set
       --query=<QUERY>              Query to execute
   -d, --data <DATA>                Data to load, @file or @- for stdin
       --load-method <LOAD_METHOD>  method to load data to table [default: stage] [possible values: stage, streaming]

@@ -201,6 +201,7 @@ impl QueryRequest {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct QueryResult {
     columns: Vec<String>,
+    types: Vec<String>,
     data: Vec<Vec<String>>,
     #[serde(rename = "rowCount")]
     row_count: usize,
@@ -256,75 +257,76 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
     let mut results = Vec::new();
     // use one client for each http query
     let client = Client::new(dsn.clone());
+    let conn = client.get_conn().await;
+    let conn = match conn {
+        Ok(conn) => conn,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to create database connection: {}", e)
+            }));
+        }
+    };
     let mut last_query_id = None;
     for statement in &statements {
         let start_time = std::time::Instant::now();
 
-        match client.get_conn().await {
-            Ok(conn) => {
-                match conn.query_iter_ext(statement).await {
-                    Ok(mut rows) => {
-                        let mut data = Vec::new();
-                        let mut columns = Vec::new();
-                        let mut row_count = 0;
+        match conn.query_iter_ext(statement).await {
+            Ok(mut rows) => {
+                let mut data = Vec::new();
+                let mut columns = Vec::new();
+                let mut types = Vec::new();
+                let mut row_count = 0;
 
-                        while let Some(row_result) = rows.next().await {
-                            match row_result {
-                                Ok(row_with_stats) => {
-                                    match row_with_stats {
-                                        RowWithStats::Row(row) => {
-                                            if columns.is_empty() && !row.is_empty() {
-                                                // Extract column names from schema
-                                                let schema = row.schema();
-                                                for field in schema.fields().iter() {
-                                                    columns.push(field.name.clone());
-                                                }
-                                            }
-
-                                            // Convert row values to string array
-                                            let mut row_values = Vec::new();
-                                            for value in row.values() {
-                                                let str_value = value.to_string();
-                                                row_values.push(str_value);
-                                            }
-                                            data.push(row_values);
-                                            row_count += 1;
-                                        }
-                                        RowWithStats::Stats(_stats) => {
-                                            // Skip stats for now, we could use them for additional info
-                                            continue;
+                while let Some(row_result) = rows.next().await {
+                    match row_result {
+                        Ok(row_with_stats) => {
+                            match row_with_stats {
+                                RowWithStats::Row(row) => {
+                                    if columns.is_empty() && !row.is_empty() {
+                                        // Extract column names from schema
+                                        let schema = row.schema();
+                                        for field in schema.fields().iter() {
+                                            columns.push(field.name.clone());
+                                            types.push(field.data_type.to_string());
                                         }
                                     }
+
+                                    // Convert row values to string array
+                                    let mut row_values = Vec::new();
+                                    for value in row.values() {
+                                        let str_value = value.to_string();
+                                        row_values.push(str_value);
+                                    }
+                                    data.push(row_values);
+                                    row_count += 1;
                                 }
-                                Err(e) => {
-                                    return HttpResponse::InternalServerError().json(
-                                        serde_json::json!({
-                                            "error": format!("Error processing row: {}", e)
-                                        }),
-                                    );
+                                RowWithStats::Stats(_stats) => {
+                                    // Skip stats for now, we could use them for additional info
+                                    continue;
                                 }
                             }
                         }
-
-                        let duration = format!("{}ms", start_time.elapsed().as_millis());
-                        last_query_id = conn.last_query_id();
-                        results.push(QueryResult {
-                            columns,
-                            data,
-                            row_count,
-                            duration,
-                        });
-                    }
-                    Err(e) => {
-                        return HttpResponse::InternalServerError().json(serde_json::json!({
-                            "error": format!("Query execution failed: {}", e)
-                        }));
+                        Err(e) => {
+                            return HttpResponse::InternalServerError().json(serde_json::json!({
+                                "error": format!("Error processing row: {}", e)
+                            }));
+                        }
                     }
                 }
+
+                let duration = format!("{}ms", start_time.elapsed().as_millis());
+                last_query_id = conn.last_query_id();
+                results.push(QueryResult {
+                    columns,
+                    types,
+                    data,
+                    row_count,
+                    duration,
+                });
             }
             Err(e) => {
                 return HttpResponse::InternalServerError().json(serde_json::json!({
-                    "error": format!("Failed to create database connection: {}", e)
+                    "error": format!("Query execution failed: {}", e)
                 }));
             }
         }
