@@ -14,6 +14,7 @@ const ProfileGraphDashboard = dynamic(() => import('./ProfileGraphDashboard'), {
 
 interface QueryResult {
   columns: string[];
+  types: string[];
   data: string[][];
   rowCount: number;
   duration: string;

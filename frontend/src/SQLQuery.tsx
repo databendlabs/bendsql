@@ -9,6 +9,7 @@ import { xcodeLight, xcodeLightPatch } from './components/CodeMirrorTheme';
 
 interface QueryResult {
   columns: string[];
+  types: string[];
   data: string[][];
   rowCount: number;
   duration: string;
@@ -159,6 +160,11 @@ SELECT * FROM students;`);
                     className="border border-gray-300 px-4 py-3 text-left font-semibold text-gray-900 bg-gray-50"
                   >
                     {column}
+                    {result.types && result.types[i] && (
+                      <div className="text-xs font-normal text-left text-gray-500 mt-1">
+                        {result.types[i]}
+                      </div>
+                    )}
                   </th>
                 ))}
               </tr>

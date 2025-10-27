@@ -125,6 +125,12 @@ struct Args {
     )]
     ui: bool,
 
+    #[clap(
+        long,
+        help = "Web UI port, Default: 8084, ignored when --ui is not set"
+    )]
+    bind_port: Option<u16>,
+
     #[clap(long, require_equals = true, help = "Query to execute")]
     query: Option<String>,
 
@@ -295,6 +301,9 @@ pub async fn main() -> Result<()> {
         settings.output_format = OutputFormat::TSV;
     }
 
+    if let Some(bind_port) = args.bind_port {
+        settings.bind_port = bind_port;
+    }
     settings.merge_config(&config);
 
     // Set UI flag from command line
