@@ -51,6 +51,10 @@ pub trait IConnection: Send + Sync {
         Ok(())
     }
 
+    fn close_with_spawn(&self) -> Result<()> {
+        Ok(())
+    }
+
     fn last_query_id(&self) -> Option<String>;
 
     async fn version(&self) -> Result<String> {

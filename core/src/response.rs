@@ -81,6 +81,7 @@ pub struct QueryResponse {
     // make it optional for backward compatibility
     pub warnings: Option<Vec<String>>,
     pub stats: QueryStats,
+    pub result_timeout_secs: Option<u64>,
     // pub affect: Option<QueryAffect>,
     pub stats_uri: Option<String>,
     pub final_uri: Option<String>,

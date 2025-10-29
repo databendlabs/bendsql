@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use log::error;
 use once_cell::sync::Lazy;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -98,6 +99,14 @@ impl Client {
                 "Unsupported scheme: {}",
                 u.scheme()
             ))),
+        }
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        if let Err(e) = self.inner.close_with_spawn() {
+            error!("fail to close connection: {}", e);
         }
     }
 }

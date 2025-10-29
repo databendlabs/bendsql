@@ -276,12 +276,15 @@ impl_tuple_from_row!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14
 
 pub struct RowIterator {
     schema: SchemaRef,
-    it: Pin<Box<dyn Stream<Item = Result<Row>> + Send>>,
+    it: Option<Pin<Box<dyn Stream<Item = Result<Row>> + Send>>>,
 }
 
 impl RowIterator {
     pub fn new(schema: SchemaRef, it: Pin<Box<dyn Stream<Item = Result<Row>> + Send>>) -> Self {
-        Self { schema, it }
+        Self {
+            schema,
+            it: Some(it),
+        }
     }
 
     pub fn schema(&self) -> SchemaRef {
@@ -293,12 +296,20 @@ impl RowIterator {
         T: TryFrom<Row>,
         T::Error: std::fmt::Display,
     {
-        let mut ret = Vec::new();
-        while let Some(row) = self.it.next().await {
-            let v = T::try_from(row?).map_err(|e| Error::Parsing(e.to_string()))?;
-            ret.push(v)
+        if let Some(it) = &mut self.it {
+            let mut ret = Vec::new();
+            while let Some(row) = it.next().await {
+                let v = T::try_from(row?).map_err(|e| Error::Parsing(e.to_string()))?;
+                ret.push(v)
+            }
+            Ok(ret)
+        } else {
+            Err(Error::BadArgument("RowIterator already closed".to_owned()))
         }
-        Ok(ret)
+    }
+
+    pub fn close(&mut self) {
+        self.it = None;
     }
 }
 
@@ -306,13 +317,19 @@ impl Stream for RowIterator {
     type Item = Result<Row>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.it).poll_next(cx)
+        if let Some(it) = self.it.as_mut() {
+            Pin::new(it).poll_next(cx)
+        } else {
+            Poll::Ready(Some(Err(Error::BadArgument(
+                "RowIterator already closed".to_owned(),
+            ))))
+        }
     }
 }
 
 pub struct RowStatsIterator {
     schema: SchemaRef,
-    it: Pin<Box<dyn Stream<Item = Result<RowWithStats>> + Send>>,
+    it: Option<Pin<Box<dyn Stream<Item = Result<RowWithStats>> + Send>>>,
 }
 
 impl RowStatsIterator {
@@ -320,20 +337,31 @@ impl RowStatsIterator {
         schema: SchemaRef,
         it: Pin<Box<dyn Stream<Item = Result<RowWithStats>> + Send>>,
     ) -> Self {
-        Self { schema, it }
+        Self {
+            schema,
+            it: Some(it),
+        }
     }
 
     pub fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
-    pub async fn filter_rows(self) -> RowIterator {
-        let it = self.it.filter_map(|r| match r {
-            Ok(RowWithStats::Row(r)) => Some(Ok(r)),
-            Ok(_) => None,
-            Err(err) => Some(Err(err)),
-        });
-        RowIterator::new(self.schema, Box::pin(it))
+    pub async fn filter_rows(self) -> Result<RowIterator> {
+        if let Some(it) = self.it {
+            let it = it.filter_map(|r| match r {
+                Ok(RowWithStats::Row(r)) => Some(Ok(r)),
+                Ok(_) => None,
+                Err(err) => Some(Err(err)),
+            });
+            Ok(RowIterator::new(self.schema, Box::pin(it)))
+        } else {
+            Err(Error::BadArgument("RowIterator already closed".to_owned()))
+        }
+    }
+
+    pub fn close(&mut self) {
+        self.it = None;
     }
 }
 
@@ -341,6 +369,12 @@ impl Stream for RowStatsIterator {
     type Item = Result<RowWithStats>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.it).poll_next(cx)
+        if let Some(it) = self.it.as_mut() {
+            Pin::new(it).poll_next(cx)
+        } else {
+            Poll::Ready(Some(Err(Error::BadArgument(
+                "RowStatsIterator already closed".to_owned(),
+            ))))
+        }
     }
 }

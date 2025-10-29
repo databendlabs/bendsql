@@ -80,7 +80,7 @@ impl IConnection for FlightSQLConnection {
 
     async fn query_iter(&self, sql: &str) -> Result<RowIterator> {
         let rows_with_progress = self.query_iter_ext(sql).await?;
-        let rows = rows_with_progress.filter_rows().await;
+        let rows = rows_with_progress.filter_rows().await?;
         Ok(rows)
     }
 

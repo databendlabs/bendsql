@@ -25,6 +25,7 @@ mod request;
 mod response;
 
 mod capability;
+mod client_mgr;
 mod session;
 mod stage;
 

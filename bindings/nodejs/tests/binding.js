@@ -19,6 +19,25 @@ const { finished, pipeline } = require("node:stream/promises");
 
 const assert = require("assert");
 const { Given, When, Then } = require("@cucumber/cucumber");
+const util = require("util");
+const sleep = util.promisify(setTimeout);
+
+let DB_VERSION = process.env.DB_VERSION;
+if (DB_VERSION) {
+  DB_VERSION = DB_VERSION.split(".").map(Number);
+} else {
+  DB_VERSION = [100, 0, 0];
+}
+
+let DRIVER_VERSION = process.env.DRIVER_VERSION;
+if (DRIVER_VERSION) {
+  DRIVER_VERSION = DRIVER_VERSION.split(".").map(Number);
+} else {
+  DRIVER_VERSION = [100, 0, 0];
+}
+
+process.env.DATABEND_DRIVER_HEARTBEAT_INTERVAL_SECONDS = "1";
+process.env.RUST_LOG = "warn,databend_driver=debug,databend_client=debug";
 
 const { Client } = require("../index.js");
 
@@ -356,7 +375,7 @@ Then("Load file with Streaming and Select should be equal", async function () {
   assert.deepEqual(ret, expected);
 });
 
-Then("Temp table should work with cluster", async function () {
+Then("Temp table is cleaned up when conn is dropped", async function () {
   await this.conn.exec(`create or replace temp table temp_1(a int)`);
   await this.conn.exec(`INSERT INTO temp_1 VALUES (1),(2)`);
 
@@ -418,6 +437,74 @@ Then("killQuery should return error for non-existent query ID", async function (
     // Should get an error for non-existent query
     assert.ok(err instanceof Error, "Should throw an Error object");
     assert.ok(typeof err.message === "string" && err.message.length > 0, "Should return meaningful error message");
-    console.log("Expected error for non-existent query:", err.message);
+    // console.log("Expected error for non-existent query:", err.message);
   }
+});
+
+Then("Query should not timeout", { timeout: 30000 }, async function () {
+  if (!(DRIVER_VERSION > [0, 30, 3] && DB_VERSION >= [1, 2, 709])) {
+    console.log("SKIP");
+    return;
+  }
+  const page_size = 10000;
+
+  const dsn = `databend://root:@localhost:8000/?sslmode=disable&wait_time_secs=3&max_rows_per_page=${page_size.toString()}`;
+  const client = new Client(dsn);
+
+  const conn = await client.getConn();
+  await conn.exec("set http_handler_result_timeout_secs=3");
+  const row = await conn.queryRow("show settings like 'http_handler_result_timeout_secs'");
+  assert.equal(row.values()[1], "3");
+
+  const sql = "select * from numbers(1000000000)";
+  const rows = await conn.queryIter(sql);
+
+  for (let i = 0; i < page_size; i++) {
+    const row = await rows.next();
+    assert.notEqual(row, null, "Row should not be null before sleep");
+  }
+
+  console.log("before sleep");
+  await sleep(10000);
+  console.log("after sleep");
+
+  for (let i = 0; i < page_size * 10; i++) {
+    const row = await rows.next();
+    assert.notEqual(row, null, `Row should not be null after sleep ${i.toString()} ${row}`);
+  }
+  //await conn.close();
+});
+
+Then("Drop result set should close it", async function () {
+  if (DRIVER_VERSION < [0, 30, 3]) {
+    console.log("SKIP");
+    return;
+  }
+  const dbName = "drop_result_set_js";
+  const n = (1n << 50n) + 1n;
+
+  const conn = await this.client.getConn();
+
+  await conn.exec(`create or replace database ${dbName}`);
+  await conn.exec(`use ${dbName}`);
+
+  const sql = `select * from numbers(${n.toString()})`;
+  let rows = await conn.queryIter(sql);
+
+  const firstRow = await rows.next();
+  assert.notEqual(firstRow, null);
+
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  const processSql = `select count(1) from system.processes where database = '${dbName}'`;
+  const processResult = await this.conn.queryRow(processSql);
+  assert.equal(processResult.values()[0], 1, `processResult = ${processResult.values()}`);
+
+  rows.close();
+
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  const finalResult = await this.conn.queryRow(processSql);
+  const finalCount = finalResult.values()[0];
+  assert.equal(finalCount, 0, `processResult = ${finalCount}`);
 });

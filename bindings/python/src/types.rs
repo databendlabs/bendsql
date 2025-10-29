@@ -255,6 +255,14 @@ impl RowIterator {
         Ok(Schema::new(ret))
     }
 
+    pub fn close(&self, py: Python) -> PyResult<()> {
+        let streamer = self.0.clone();
+        wait_for_future(py, async move {
+            streamer.lock().await.close();
+        });
+        Ok(())
+    }
+
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }

@@ -14,6 +14,7 @@
 
 use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth};
 use crate::capability::Capability;
+use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
 use crate::global_cookie_store::GlobalCookieStore;
 use crate::login::{
@@ -33,7 +34,7 @@ use crate::{
 use crate::{Page, Pages};
 use base64::engine::general_purpose::URL_SAFE;
 use base64::Engine;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use percent_encoding::percent_decode_str;
@@ -43,7 +44,8 @@ use reqwest::multipart::{Form, Part};
 use reqwest::{Body, Client as HttpClient, Request, RequestBuilder, Response, StatusCode};
 use semver::Version;
 use serde::{de, Deserialize};
-use std::collections::BTreeMap;
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -62,13 +64,29 @@ const HEADER_ROUTE_HINT: &str = "X-DATABEND-ROUTE-HINT";
 const TXN_STATE_ACTIVE: &str = "Active";
 const HEADER_SQL: &str = "X-DATABEND-SQL";
 const HEADER_QUERY_CONTEXT: &str = "X-DATABEND-QUERY-CONTEXT";
+const HEADER_SESSION_ID: &str = "X-DATABEND-SESSION-ID";
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     version.to_string()
 });
 
+#[derive(Clone)]
+pub(crate) struct QueryState {
+    pub node_id: String,
+    pub last_access_time: Arc<Mutex<Instant>>,
+    pub timeout_secs: u64,
+}
+
+impl QueryState {
+    pub fn need_heartbeat(&self, now: Instant) -> bool {
+        let t = *self.last_access_time.lock();
+        now.duration_since(t).as_secs() > self.timeout_secs / 2
+    }
+}
+
 pub struct APIClient {
+    pub(crate) session_id: String,
     cli: HttpClient,
     scheme: String,
     host: String,
@@ -105,6 +123,14 @@ pub struct APIClient {
     last_query_id: Mutex<Option<String>>,
 
     capability: Capability,
+
+    queries_need_heartbeat: Mutex<HashMap<String, QueryState>>,
+}
+
+impl Drop for APIClient {
+    fn drop(&mut self) {
+        self.close_with_spawn()
+    }
 }
 
 impl APIClient {
@@ -114,8 +140,12 @@ impl APIClient {
         if !client.disable_login {
             client.login().await?;
         }
+        if client.session_id.is_empty() {
+            client.session_id = format!("no_login_{}", uuid::Uuid::new_v4());
+        }
         let client = Arc::new(client);
         client.check_presign().await?;
+        GLOBAL_CLIENT_MANAGER.register_client(client.clone()).await;
         Ok(client)
     }
 
@@ -400,6 +430,22 @@ impl APIClient {
         Ok(pages)
     }
 
+    pub fn finalize_query(self: &Arc<Self>, query_id: &str) {
+        let mut mgr = self.queries_need_heartbeat.lock();
+        if let Some(state) = mgr.remove(query_id) {
+            let self_cloned = self.clone();
+            let query_id = query_id.to_owned();
+            GLOBAL_RUNTIME.spawn(async move {
+                if let Err(e) = self_cloned
+                    .end_query(&query_id, "final", Some(state.node_id.as_str()))
+                    .await
+                {
+                    error!("failed to final query {query_id}: {e}");
+                }
+            });
+        }
+    }
+
     fn wrap_auth_or_session_token(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
         if let Some(info) = &self.session_token_info {
             let info = info.lock();
@@ -498,17 +544,34 @@ impl APIClient {
     }
 
     pub async fn kill_query(&self, query_id: &str) -> Result<()> {
-        let kill_uri = format!("/v1/query/{query_id}/kill");
-        let endpoint = self.endpoint.join(&kill_uri)?;
+        self.end_query(query_id, "kill", None).await
+    }
+
+    pub async fn final_query(&self, query_id: &str, node_id: Option<&str>) -> Result<()> {
+        self.end_query(query_id, "final", node_id).await
+    }
+
+    pub async fn end_query(
+        &self,
+        query_id: &str,
+        method: &str,
+        node_id: Option<&str>,
+    ) -> Result<()> {
+        let uri = format!("/v1/query/{query_id}/{method}");
+        let endpoint = self.endpoint.join(&uri)?;
         let headers = self.make_headers(Some(query_id))?;
-        info!("kill query: {kill_uri}");
+
+        info!("{method} query: {uri}");
 
         let mut builder = self.cli.post(endpoint);
+        if let Some(node_id) = node_id {
+            builder = builder.header(HEADER_STICKY_NODE, node_id)
+        }
         builder = self.wrap_auth_or_session_token(builder)?;
         let resp = builder.headers(headers.clone()).send().await?;
         if resp.status() != 200 {
             return Err(Error::response_error(resp.status(), &resp.bytes().await?)
-                .with_context("kill query"));
+                .with_context(&format!("{method} query")));
         }
         Ok(())
     }
@@ -759,6 +822,12 @@ impl APIClient {
             }
             Err(e) => return Err(e),
         };
+        if let Some(v) = response.headers().get(HEADER_SESSION_ID) {
+            if let Ok(s) = v.to_str() {
+                self.session_id = s.to_string();
+            }
+        }
+
         let body = response.bytes().await?;
         let response = json_from_slice(&body)?;
         match response {
@@ -770,12 +839,69 @@ impl APIClient {
                     .map_err(|e| Error::Decode(format!("invalid server version: {e}")))?;
                 self.capability = Capability::from_server_version(&server_version);
                 self.server_version = Some(server_version.clone());
+                let session_id = self.session_id.as_str();
                 if let Some(tokens) = info.tokens {
-                    info!("login success with session token version = {server_version}",);
+                    info!(
+                        "[session {session_id}] login success with session token version = {server_version}",
+                    );
                     self.session_token_info = Some(Arc::new(Mutex::new((tokens, Instant::now()))))
                 } else {
-                    info!("login success, version = {server_version}");
+                    info!("[session {session_id}] login success, version = {server_version}");
                 }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn try_heartbeat(&self) -> Result<()> {
+        let endpoint = self.endpoint.join("/v1/session/heartbeat")?;
+        let queries = self.queries_need_heartbeat.lock().clone();
+        let mut node_to_queries = HashMap::<String, Vec<String>>::new();
+        let now = Instant::now();
+
+        let mut query_ids = Vec::new();
+        for (qid, state) in queries {
+            if state.need_heartbeat(now) {
+                query_ids.push(qid.to_string());
+                if let Some(arr) = node_to_queries.get_mut(&state.node_id) {
+                    arr.push(qid);
+                } else {
+                    node_to_queries.insert(state.node_id, vec![qid]);
+                }
+            }
+        }
+
+        if node_to_queries.is_empty() && !self.session_state.lock().need_sticky.unwrap_or_default()
+        {
+            return Ok(());
+        }
+
+        let body = json!({
+           "node_to_queries": node_to_queries
+        });
+        let builder = self.cli.post(endpoint.clone()).json(&body);
+        let request = self.wrap_auth_or_session_token(builder)?.build()?;
+        let response = self.query_request_helper(request, true, false).await?;
+        let json: Value = response.json().await?;
+        let session_id = self.session_id.as_str();
+        info!("[session {session_id}] heartbeat request={body}, response={json}");
+        if let Some(queries_to_remove) = json.get("queries_to_remove") {
+            if let Some(arr) = queries_to_remove.as_array() {
+                if !arr.is_empty() {
+                    let mut queries = self.queries_need_heartbeat.lock();
+                    for q in arr {
+                        if let Some(q) = q.as_str() {
+                            queries.remove(q);
+                        }
+                    }
+                }
+            }
+        }
+        let now = Instant::now();
+        let mut queries = self.queries_need_heartbeat.lock();
+        for qid in query_ids {
+            if let Some(state) = queries.get_mut(&qid) {
+                *state.last_access_time.lock() = now;
             }
         }
         Ok(())
@@ -799,13 +925,9 @@ impl APIClient {
         Ok(req)
     }
 
-    fn need_logout(&self) -> bool {
-        (self.session_token_info.is_some()
-            || self.session_state.lock().need_keep_alive.unwrap_or(false))
-            && self
-                .closed
-                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
+    pub(crate) fn need_logout(&self) -> bool {
+        self.session_token_info.is_some()
+            || self.session_state.lock().need_keep_alive.unwrap_or(false)
     }
 
     async fn refresh_session_token(
@@ -994,26 +1116,57 @@ impl APIClient {
         }
     }
 
+    pub async fn logout(http_client: HttpClient, request: Request, session_id: &str) {
+        if let Err(err) = http_client.execute(request).await {
+            error!("[session {session_id}] logout request failed: {err}");
+        } else {
+            info!("[session {session_id}] logout success");
+        };
+    }
+
     pub async fn close(&self) {
-        if self.need_logout() {
-            let cli = self.cli.clone();
-            let req = self
-                .build_log_out_request()
-                .expect("failed to build logout request");
-            if let Err(err) = cli.execute(req).await {
-                error!("logout request failed: {err}");
-            } else {
-                debug!("logout success");
-            };
+        let session_id = &self.session_id;
+        info!("[session {session_id}] try closing now");
+        if self
+            .closed
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            GLOBAL_CLIENT_MANAGER.unregister_client(&self.session_id);
+            if self.need_logout() {
+                let cli = self.cli.clone();
+                let req = self
+                    .build_log_out_request()
+                    .expect("failed to build logout request");
+                Self::logout(cli, req, &self.session_id).await;
+            }
         }
     }
-}
-
-impl Drop for APIClient {
-    fn drop(&mut self) {
-        if self.need_logout() {
-            warn!("APIClient::close() was not called");
+    pub fn close_with_spawn(&self) {
+        let session_id = &self.session_id;
+        info!("[session {session_id}]: try closing with spawn");
+        if self
+            .closed
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            GLOBAL_CLIENT_MANAGER.unregister_client(&self.session_id);
+            if self.need_logout() {
+                let cli = self.cli.clone();
+                let req = self
+                    .build_log_out_request()
+                    .expect("failed to build logout request");
+                let session_id = self.session_id.clone();
+                GLOBAL_RUNTIME.spawn(async move {
+                    Self::logout(cli, req, session_id.as_str()).await;
+                });
+            }
         }
+    }
+
+    pub(crate) fn register_query_for_heartbeat(&self, query_id: &str, state: QueryState) {
+        let mut queries = self.queries_need_heartbeat.lock();
+        queries.insert(query_id.to_string(), state);
     }
 }
 
@@ -1032,6 +1185,7 @@ where
 impl Default for APIClient {
     fn default() -> Self {
         Self {
+            session_id: Default::default(),
             cli: HttpClient::new(),
             scheme: "http".to_string(),
             endpoint: Url::parse("http://localhost:8080").unwrap(),
@@ -1053,10 +1207,11 @@ impl Default for APIClient {
             disable_session_token: true,
             disable_login: false,
             session_token_info: None,
-            closed: Default::default(),
+            closed: AtomicBool::new(false),
             last_query_id: Default::default(),
             server_version: None,
             capability: Default::default(),
+            queries_need_heartbeat: Default::default(),
         }
     }
 }

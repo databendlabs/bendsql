@@ -38,6 +38,10 @@ fn _databend_driver(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RowIterator>()?;
     m.add_class::<ServerStats>()?;
 
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+        .target(env_logger::Target::Stdout)
+        .init();
+
     // Register PEP-249 compliant exceptions
     exceptions::register_exceptions(py, m)?;
 

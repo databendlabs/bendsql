@@ -13,12 +13,18 @@
 # limitations under the License.
 
 import os
+import gc
+import time
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 
 from behave import given, when, then
+
+os.environ["DATABEND_DRIVER_HEARTBEAT_INTERVAL_SECONDS"] = "1"
+os.environ["RUST_LOG"] = "warn,databend_driver=debug,databend_client=debug"
 import databend_driver
 
+NOW = int(time.time())
 DB_VERSION = os.getenv("DB_VERSION")
 if DB_VERSION is not None:
     DB_VERSION = tuple(map(int, DB_VERSION.split(".")))
@@ -224,9 +230,20 @@ async def _(context):
     await test_load_file(context, "streaming")
 
 
-@then("Temp table should work with cluster")
-async def _(context):
+@then("Temp table is cleaned up when conn is dropped")
+def _(context):
+    test_temp_table(context, 1)
+    if DRIVER_VERSION > (0, 30, 3):
+        test_temp_table(context, 0)
+
+
+async def test_temp_table(context, by_close):
     conn = await context.client.get_conn()
+
+    db_name = f"temp_table_async_io_{by_close}_{NOW}"
+    await conn.exec(f"create or replace database {db_name}")
+    await conn.exec(f"use {db_name}")
+
     for i in range(10):
         await conn.exec(f"create or replace temp table temp_{i}(a int)")
         await conn.exec(f"INSERT INTO temp_{i} VALUES (1),({i})")
@@ -237,20 +254,25 @@ async def _(context):
 
     await conn.exec("DROP TABLE temp_1")
 
+    sql = f"SELECT COUNT(*) FROM system.temporary_tables where database = '{db_name}'"
     # use conn which is stickied to the node
-    rows = await conn.query_iter("SELECT COUNT(*) FROM system.temporary_tables")
+    rows = await conn.query_iter(sql)
     temp_table_count = list(rows)[0].values()[0]
     assert temp_table_count == 9, f"temp_table_count before close = {temp_table_count}"
-    await conn.close()
+
+    if by_close:
+        await conn.close()
+    else:
+        del conn
+        gc.collect()
+        time.sleep(1)
 
     # check 3 nodes behind nginx
     for _ in range(3):
-        rows = await context.conn.query_iter(
-            "SELECT COUNT(*) FROM system.temporary_tables"
-        )
+        rows = await context.conn.query_iter(sql)
         temp_table_count = list(rows)[0].values()[0]
         assert temp_table_count == 0, (
-            f"temp_table_count after close = {temp_table_count}"
+            f"temp_table_count after close = {temp_table_count}, by_close={by_close}"
         )
 
 
@@ -320,3 +342,50 @@ async def _(context):
             "Should return meaningful error message"
         )
         print(f"Expected error for non-existent query: {err}")
+
+
+@then("Query should not timeout")
+async def _(context):
+    if not (DRIVER_VERSION > (0, 30, 3) and DB_VERSION >= (1, 2, 709)):
+        print("SKIP")
+        return
+
+    dsn = "databend://root:@localhost:8000/?sslmode=disable&wait_time_secs=3"
+    client = databend_driver.AsyncDatabendClient(dsn)
+
+    N = 10000
+    conn = await client.get_conn()
+    await conn.exec("set http_handler_result_timeout_secs=3")
+
+    sql = "select * from numbers(1000000000)"
+    rows = await conn.query_iter(sql)
+    for i in range(N):
+        assert await rows.__anext__() is not None
+    time.sleep(10)
+    for i in range(N * 10):
+        assert await rows.__anext__() is not None
+
+
+@then("Drop result set should close it")
+async def _(context):
+    if DRIVER_VERSION <= (0, 30, 3):
+        print("SKIP")
+        return
+    db_name = "drop_result_set_conn"
+    n = (1 << 50) + 1
+    conn = await context.client.get_conn()
+    await conn.exec(f"create or replace database {db_name}")
+    await conn.exec(f"use {db_name}")
+    sql = f"select * from numbers({n})"
+    rows = await conn.query_iter(sql)
+    assert await rows.__anext__() is not None
+    time.sleep(1)
+    sql = f"select count(1) from system.processes where database ='{db_name}'"
+    assert (await context.conn.query_row(sql))[0] == 1
+
+    rows.close()
+    del rows
+    gc.collect()
+    time.sleep(1)
+    n = (await context.conn.query_row(sql))[0]
+    assert n == 0, n
