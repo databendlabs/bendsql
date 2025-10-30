@@ -18,11 +18,19 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
 use crate::sql_parser::parse_sql_for_web;
+use actix_session::config::PersistentSession;
+use actix_session::storage::CookieSessionStore;
+use actix_session::{Session, SessionMiddleware};
+use actix_web::cookie::time::Duration;
+use actix_web::cookie::Key;
 use actix_web::dev::Server;
 use actix_web::middleware::Logger;
 use actix_web::web::Query;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use dashmap::DashMap;
+use databend_driver::Connection;
 use databend_driver::{Client, RowWithStats};
+use databend_driver_core::error::Result;
 use mime_guess::from_path;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
@@ -169,6 +177,12 @@ static APP_DATA: Lazy<Arc<Mutex<HashMap<usize, String>>>> =
 static SHARED_QUERIES: Lazy<Arc<Mutex<HashMap<String, SharedQuery>>>> =
     Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
 
+// Store connections by session ID
+static SESSION_CONNECTIONS: Lazy<Arc<DashMap<String, Connection>>> =
+    Lazy::new(|| Arc::new(DashMap::new()));
+
+const SESSION_ID_KEY: &str = "session_id";
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct SharedQuery {
     sql: String,
@@ -223,7 +237,7 @@ pub fn set_dsn(dsn: String) {
 }
 
 #[post("/api/query")]
-async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
+async fn execute_query(session: Session, req: web::Json<QueryRequest>) -> impl Responder {
     let dsn = {
         let dsn_guard = DSN.as_ref();
         let dsn_option = dsn_guard.lock().unwrap();
@@ -254,83 +268,42 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
         }));
     }
 
-    let mut results = Vec::new();
-    // use one client for each http query
-    let client = Client::new(dsn.clone());
-    let conn = client.get_conn().await;
-    let conn = match conn {
-        Ok(conn) => conn,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Failed to create database connection: {}", e)
-            }));
-        }
+    // Use session id to store connections and prevent duplicate connections.
+    let session_id = if let Ok(Some(session_id)) = session.get::<String>(SESSION_ID_KEY) {
+        session_id
+    } else {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let _ = session.insert::<String>(SESSION_ID_KEY, session_id.clone());
+        session_id
     };
-    let mut last_query_id = None;
-    for statement in &statements {
-        let start_time = std::time::Instant::now();
 
-        match conn.query_iter_ext(statement).await {
-            Ok(mut rows) => {
-                let mut data = Vec::new();
-                let mut columns = Vec::new();
-                let mut types = Vec::new();
-                let mut row_count = 0;
+    let (last_query_id, results) = match run_query(&dsn, &session_id, &statements).await {
+        Ok((last_query_id, results)) => (last_query_id, results),
+        Err(err) => {
+            // If connection is unauthenticated, generate a new session id,
+            // and try to reconnet to the server.
+            if err.is_unauthenticated() {
+                SESSION_CONNECTIONS.remove(&session_id);
+                let new_session_id = uuid::Uuid::new_v4().to_string();
+                let _ = session.insert::<String>(SESSION_ID_KEY, new_session_id.clone());
 
-                while let Some(row_result) = rows.next().await {
-                    match row_result {
-                        Ok(row_with_stats) => {
-                            match row_with_stats {
-                                RowWithStats::Row(row) => {
-                                    if columns.is_empty() && !row.is_empty() {
-                                        // Extract column names from schema
-                                        let schema = row.schema();
-                                        for field in schema.fields().iter() {
-                                            columns.push(field.name.clone());
-                                            types.push(field.data_type.to_string());
-                                        }
-                                    }
-
-                                    // Convert row values to string array
-                                    let mut row_values = Vec::new();
-                                    for value in row.values() {
-                                        let str_value = value.to_string();
-                                        row_values.push(str_value);
-                                    }
-                                    data.push(row_values);
-                                    row_count += 1;
-                                }
-                                RowWithStats::Stats(_stats) => {
-                                    // Skip stats for now, we could use them for additional info
-                                    continue;
-                                }
-                            }
-                        }
-                        Err(e) => {
+                let (last_query_id, results) =
+                    match run_query(&dsn, &new_session_id, &statements).await {
+                        Ok((last_query_id, results)) => (last_query_id, results),
+                        Err(err) => {
                             return HttpResponse::InternalServerError().json(serde_json::json!({
-                                "error": format!("Error processing row: {}", e)
+                                "error": format!("Query execution failed: {}", err)
                             }));
                         }
-                    }
-                }
-
-                let duration = format!("{}ms", start_time.elapsed().as_millis());
-                last_query_id = conn.last_query_id();
-                results.push(QueryResult {
-                    columns,
-                    types,
-                    data,
-                    row_count,
-                    duration,
-                });
-            }
-            Err(e) => {
+                    };
+                (last_query_id, results)
+            } else {
                 return HttpResponse::InternalServerError().json(serde_json::json!({
-                    "error": format!("Query execution failed: {}", e)
+                    "error": format!("Query execution failed: {}", err)
                 }));
             }
         }
-    }
+    };
 
     if let Some(ref last_id) = last_query_id {
         let shared_query = SharedQuery {
@@ -351,6 +324,71 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
         results,
         query_id: last_query_id,
     })
+}
+
+async fn run_query(
+    dsn: &str,
+    session_id: &str,
+    statements: &Vec<String>,
+) -> Result<(Option<String>, Vec<QueryResult>)> {
+    if !SESSION_CONNECTIONS.contains_key(session_id) {
+        let client = Client::new(dsn.to_string());
+        let conn = client.get_conn().await?;
+        SESSION_CONNECTIONS.insert(session_id.to_string(), conn);
+    }
+    let conn = SESSION_CONNECTIONS.get(session_id).unwrap();
+
+    let mut last_query_id = None;
+    let mut results = Vec::new();
+    for statement in statements {
+        let start_time = std::time::Instant::now();
+        let rows = &mut conn.query_iter_ext(statement).await?;
+        let mut data = Vec::new();
+        let mut columns = Vec::new();
+        let mut types = Vec::new();
+        let mut row_count = 0;
+
+        while let Some(row_result) = rows.next().await {
+            let row_with_stats = row_result?;
+            match row_with_stats {
+                RowWithStats::Row(row) => {
+                    if columns.is_empty() && !row.is_empty() {
+                        // Extract column names from schema
+                        let schema = row.schema();
+                        for field in schema.fields().iter() {
+                            columns.push(field.name.clone());
+                            types.push(field.data_type.to_string());
+                        }
+                    }
+
+                    // Convert row values to string array
+                    let mut row_values = Vec::new();
+                    for value in row.values() {
+                        let str_value = value.to_string();
+                        row_values.push(str_value);
+                    }
+                    data.push(row_values);
+                    row_count += 1;
+                }
+                RowWithStats::Stats(_stats) => {
+                    // Skip stats for now, we could use them for additional info
+                    continue;
+                }
+            }
+        }
+
+        let duration = format!("{}ms", start_time.elapsed().as_millis());
+        last_query_id = conn.last_query_id();
+        results.push(QueryResult {
+            columns,
+            types,
+            data,
+            row_count,
+            duration,
+        });
+    }
+
+    Ok((last_query_id, results))
 }
 
 #[get("/api/query/{query_id}")]
@@ -391,8 +429,19 @@ async fn get_message(query: Query<MessageQuery>) -> impl Responder {
 }
 
 pub fn start_server(listener: TcpListener) -> Server {
+    let secret_key = Key::generate();
+
     HttpServer::new(move || {
         App::new()
+            .wrap(
+                SessionMiddleware::builder(CookieSessionStore::default(), secret_key.clone())
+                    .cookie_name("bendsql_session".to_string())
+                    .cookie_secure(false)
+                    .session_lifecycle(
+                        PersistentSession::default().session_ttl(Duration::minutes(60)),
+                    )
+                    .build(),
+            )
             .wrap(Logger::default())
             .service(get_message)
             .service(execute_query)

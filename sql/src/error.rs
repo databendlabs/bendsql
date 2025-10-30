@@ -50,6 +50,23 @@ pub enum Error {
     Convert(ConvertError),
 }
 
+impl Error {
+    pub fn is_unauthenticated(&self) -> bool {
+        match self {
+            Error::Api(databend_client::Error::AuthFailure(_)) => {
+                return true;
+            }
+            Error::Arrow(arrow::error::ArrowError::IpcError(ref ipc_err)) => {
+                if ipc_err.contains("Unauthenticated") {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        false
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

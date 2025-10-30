@@ -30,6 +30,7 @@ hex = "0.4.3"
 itertools = "0.14"
 lexical-core = "1.0.5"
 memchr = "2.7"
+reqwest = { workspace = true }
 roaring = { version = "0.10.12", features = ["serde"] }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
