@@ -281,7 +281,7 @@ async fn execute_query(session: Session, req: web::Json<QueryRequest>) -> impl R
         Ok((last_query_id, results)) => (last_query_id, results),
         Err(err) => {
             // If connection is unauthenticated, generate a new session id,
-            // and try to reconnet to the server.
+            // and try to reconnect to the server.
             if err.is_unauthenticated() {
                 SESSION_CONNECTIONS.remove(&session_id);
                 let new_session_id = uuid::Uuid::new_v4().to_string();
