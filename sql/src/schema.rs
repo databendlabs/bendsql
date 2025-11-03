@@ -87,6 +87,7 @@ pub enum DataType {
     Number(NumberDataType),
     Decimal(DecimalDataType),
     Timestamp,
+    TimestampTz,
     Date,
     Nullable(Box<DataType>),
     Array(Box<DataType>),
@@ -137,6 +138,7 @@ impl std::fmt::Display for DataType {
                 write!(f, "Decimal({}, {})", size.precision, size.scale)
             }
             DataType::Timestamp => write!(f, "Timestamp"),
+            DataType::TimestampTz => write!(f, "TimestampTz"),
             DataType::Date => write!(f, "Date"),
             DataType::Nullable(inner) => write!(f, "Nullable({inner})"),
             DataType::Array(inner) => write!(f, "Array({inner})"),
@@ -283,6 +285,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
                 let dimension = desc.args[0].name.parse::<u64>()?;
                 DataType::Vector(dimension)
             }
+            "TimestampTz" => DataType::TimestampTz,
             _ => return Err(Error::Parsing(format!("Unknown type: {desc:?}"))),
         };
         Ok(dt)

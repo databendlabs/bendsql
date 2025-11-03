@@ -99,6 +99,7 @@ impl<'py> IntoPyObject<'py> for Value {
                 let tuple = PyTuple::new(py, inner.into_iter().map(Value))?;
                 tuple.into_bound_py_any(py)?
             }
+            databend_driver::Value::TimestampTz(s) => s.into_bound_py_any(py)?,
             databend_driver::Value::Bitmap(s) => s.into_bound_py_any(py)?,
             databend_driver::Value::Variant(s) => s.into_bound_py_any(py)?,
             databend_driver::Value::Geometry(s) => s.into_bound_py_any(py)?,
