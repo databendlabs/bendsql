@@ -85,6 +85,7 @@ pub enum Value {
     Number(NumberValue),
     /// Microseconds from 1970-01-01 00:00:00 UTC
     Timestamp(i64),
+    TimestampTz(String),
     Date(i32),
     Array(Vec<Value>),
     Map(Vec<(Value, Value)>),
@@ -121,6 +122,7 @@ impl Value {
                 NumberValue::Decimal256(_, s) => DataType::Decimal(DecimalDataType::Decimal256(*s)),
             },
             Self::Timestamp(_) => DataType::Timestamp,
+            Self::TimestampTz(_) => DataType::TimestampTz,
 
             Self::Date(_) => DataType::Date,
             Self::Interval(_) => DataType::Interval,
@@ -223,6 +225,7 @@ impl TryFrom<(&DataType, String)> for Value {
                     .and_utc()
                     .timestamp_micros(),
             )),
+            DataType::TimestampTz => Ok(Self::TimestampTz(v)),
             DataType::Date => Ok(Self::Date(
                 NaiveDate::parse_from_str(v.as_str(), "%Y-%m-%d")?.num_days_from_ce()
                     - DAYS_FROM_CE,
@@ -884,6 +887,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
         | Value::Bitmap(s)
         | Value::Variant(s)
         | Value::Interval(s)
+        | Value::TimestampTz(s)
         | Value::Geometry(s)
         | Value::Geography(s) => {
             if raw {
@@ -1670,6 +1674,7 @@ impl ValueDecoder {
             DataType::String => self.read_string(reader),
             DataType::Binary => self.read_binary(reader),
             DataType::Timestamp => self.read_timestamp(reader),
+            DataType::TimestampTz => self.read_timestamp_tz(reader),
             DataType::Date => self.read_date(reader),
             DataType::Bitmap => self.read_bitmap(reader),
             DataType::Variant => self.read_variant(reader),
@@ -1815,6 +1820,14 @@ impl ValueDecoder {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
         Ok(Value::Interval(unsafe { String::from_utf8_unchecked(buf) }))
+    }
+
+    fn read_timestamp_tz<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut buf = Vec::new();
+        reader.read_quoted_text(&mut buf, b'\'')?;
+        Ok(Value::TimestampTz(unsafe {
+            String::from_utf8_unchecked(buf)
+        }))
     }
 
     fn read_bitmap<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -2191,6 +2204,7 @@ impl Value {
                 let dt = DateTime::from_timestamp_micros(*ts).unwrap();
                 format!("'{}'", dt.format(TIMESTAMP_FORMAT))
             }
+            Value::TimestampTz(t) => format!("'{t}'"),
             Value::Date(d) => {
                 let date = NaiveDate::from_num_days_from_ce_opt(*d + DAYS_FROM_CE).unwrap();
                 format!("'{}'", date.format("%Y-%m-%d"))
