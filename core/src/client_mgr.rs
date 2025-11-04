@@ -98,3 +98,60 @@ impl ClientManager {
         self.clients.lock().remove(id);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn register_client_tracks_active_session() {
+        let mgr = Arc::new(ClientManager::new());
+        let mut client = APIClient::default();
+        client.session_id = "session-1".to_string();
+        let client = Arc::new(client);
+
+        let mgr_clone = Arc::clone(&mgr);
+        let client_clone = Arc::clone(&client);
+        GLOBAL_RUNTIME.block_on(async move {
+            mgr_clone.register_client(client_clone).await;
+        });
+
+        {
+            let guard = mgr.clients.lock();
+            let stored = guard.get("session-1").expect("client not stored");
+            assert!(
+                stored.upgrade().is_some(),
+                "stored weak reference is dangling"
+            );
+            assert_eq!(guard.len(), 1);
+        }
+
+        drop(client);
+        let guard = mgr.clients.lock();
+        let stored = guard.get("session-1").expect("client missing after drop");
+        assert!(
+            stored.upgrade().is_none(),
+            "weak reference should be cleared after client drop"
+        );
+    }
+
+    #[test]
+    fn unregister_client_removes_session() {
+        let mgr = Arc::new(ClientManager::new());
+        let mut client = APIClient::default();
+        client.session_id = "session-2".to_string();
+        let client = Arc::new(client);
+
+        let mgr_clone = Arc::clone(&mgr);
+        let client_clone = Arc::clone(&client);
+        GLOBAL_RUNTIME.block_on(async move {
+            mgr_clone.register_client(client_clone).await;
+        });
+
+        mgr.unregister_client("session-2");
+        assert!(
+            !mgr.clients.lock().contains_key("session-2"),
+            "client entry should be removed after unregister"
+        );
+    }
+}
