@@ -70,7 +70,8 @@ SELECT * FROM students;`);
 
   const executeQuery = useCallback(async () => {
     if (!query.trim()) {
-      alert('Please enter a SQL query');
+      setError('Please enter a SQL query');
+      setResults([]); // Clear any previous results
       return;
     }
 
@@ -89,7 +90,17 @@ SELECT * FROM students;`);
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // Try to extract error message from response body
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          if (errorData.error) {
+            errorMessage = errorData.error;
+          }
+        } catch (e) {
+          // If response is not JSON, use default error message
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
@@ -101,7 +112,10 @@ SELECT * FROM students;`);
       }
     } catch (error) {
       console.error('Query execution failed:', error);
-      alert('Query execution failed: ' + (error as Error).message);
+      // Replace \n with actual line breaks for better display
+      const errorMessage = (error as Error).message.replace(/\\n/g, '\n');
+      setError('Query execution failed: ' + errorMessage);
+      setResults([]); // Clear any previous results
     } finally {
       setLoading(false);
     }
@@ -258,9 +272,9 @@ SELECT * FROM students;`);
               <div className="p-2 h-full">
                 {error ? (
                   <div className="flex items-center justify-center h-full">
-                    <div className="bg-red-50 border border-red-300 rounded-lg p-4 text-red-700">
+                    <div className="bg-red-50 border border-red-300 rounded-lg p-4 text-red-700 max-w-full">
                       <div className="font-medium text-red-800 mb-1">Error</div>
-                      <div className="text-sm">{error}</div>
+                      <pre className="text-sm whitespace-pre-wrap break-words font-mono">{error}</pre>
                     </div>
                   </div>
                 ) : results.length > 0 ? (
