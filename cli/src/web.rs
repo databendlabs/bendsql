@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use rusqlite::{params, Connection};
 use std::env;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
@@ -20,7 +20,6 @@ use std::sync::{Arc, Mutex};
 use crate::sql_parser::parse_sql_for_web;
 use actix_web::dev::Server;
 use actix_web::middleware::Logger;
-use actix_web::web::Query;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
 use databend_driver::{Client, RowWithStats};
 use mime_guess::from_path;
@@ -162,23 +161,49 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
     }
 }
 
-static APP_DATA: Lazy<Arc<Mutex<HashMap<usize, String>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+// SQLite database for persistent query storage
+static DB: Lazy<Arc<Mutex<Connection>>> = Lazy::new(|| {
+    let home_dir = dirs::home_dir().expect("Failed to get home directory");
+    let bendsql_dir = home_dir.join(".bendsql");
+    std::fs::create_dir_all(&bendsql_dir).expect("Failed to create bendsql directory");
 
-// Storage for shared queries using actual query IDs
-static SHARED_QUERIES: Lazy<Arc<Mutex<HashMap<String, SharedQuery>>>> =
-    Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+    let db_path = bendsql_dir.join("queries.db");
+    let conn = Connection::open(&db_path).expect("Failed to open SQLite database");
+
+    // Create table if not exists
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS shared_queries (
+            query_id TEXT PRIMARY KEY,
+            sql TEXT NOT NULL,
+            kind INTEGER NOT NULL,
+            results TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )",
+        [],
+    )
+    .expect("Failed to create shared_queries table");
+
+    // Create index for better performance
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_created_at ON shared_queries(created_at)",
+        [],
+    )
+    .expect("Failed to create index");
+
+    // Clean up old queries (older than 90 days)
+    let _ = conn.execute(
+        "DELETE FROM shared_queries WHERE created_at < datetime('now', '-90 days')",
+        [],
+    );
+
+    Arc::new(Mutex::new(conn))
+});
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct SharedQuery {
     sql: String,
     kind: i32,
     results: Vec<QueryResult>,
-}
-
-#[derive(Deserialize, Debug)]
-struct MessageQuery {
-    perf_id: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -338,13 +363,16 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
             kind: req.kind,
             results: results.clone(),
         };
-        // Store the query for sharing
-        {
-            let shared_queries_guard = SHARED_QUERIES.as_ref();
-            shared_queries_guard
-                .lock()
-                .unwrap()
-                .insert(last_id.clone(), shared_query);
+
+        // Store the query in SQLite database
+        if let Ok(serialized_results) = serde_json::to_string(&shared_query.results) {
+            let db_guard = DB.as_ref();
+            let conn = db_guard.lock().unwrap();
+
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO shared_queries (query_id, sql, kind, results) VALUES (?1, ?2, ?3, ?4)",
+                params![last_id, &shared_query.sql, shared_query.kind, serialized_results],
+            );
         }
     }
     HttpResponse::Ok().json(QueryResponse {
@@ -357,44 +385,34 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
 async fn get_shared_query(path: web::Path<String>) -> impl Responder {
     let query_id = path.into_inner();
 
-    let shared_queries_guard = SHARED_QUERIES.as_ref();
-    let shared_queries = shared_queries_guard.lock().unwrap();
+    let db_guard = DB.as_ref();
+    let conn = db_guard.lock().unwrap();
 
-    match shared_queries.get(&query_id) {
-        Some(shared_query) => HttpResponse::Ok().json(shared_query),
-        None => HttpResponse::NotFound().json(serde_json::json!({
+    let mut stmt = conn
+        .prepare("SELECT sql, kind, results FROM shared_queries WHERE query_id = ?1")
+        .unwrap();
+
+    match stmt.query_row(params![&query_id], |row| {
+        let sql: String = row.get(0)?;
+        let kind: i32 = row.get(1)?;
+        let results_json: String = row.get(2)?;
+
+        let results: Vec<QueryResult> =
+            serde_json::from_str(&results_json).map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+        Ok(SharedQuery { sql, kind, results })
+    }) {
+        Ok(shared_query) => HttpResponse::Ok().json(shared_query),
+        Err(_) => HttpResponse::NotFound().json(serde_json::json!({
             "error": format!("Query ID '{}' not found", query_id)
         })),
     }
-}
-
-#[get("/api/message")]
-async fn get_message(query: Query<MessageQuery>) -> impl Responder {
-    query
-        .perf_id
-        .as_deref()
-        .unwrap_or("")
-        .parse::<usize>()
-        .ok()
-        .and_then(|id| {
-            APP_DATA.as_ref().lock().unwrap().get(&id).map(|result| {
-                HttpResponse::Ok().json(serde_json::json!({
-                    "result": result,
-                }))
-            })
-        })
-        .unwrap_or_else(|| {
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": format!("Perf ID {:?} not found", query.perf_id),
-            }))
-        })
 }
 
 pub fn start_server(listener: TcpListener) -> Server {
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
-            .service(get_message)
             .service(execute_query)
             .service(get_shared_query)
             .route("/{filename:.*}", web::get().to(embed_file))
