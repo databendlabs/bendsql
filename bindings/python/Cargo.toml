@@ -20,6 +20,7 @@ databend-driver-core = { workspace = true }
 tokio-stream = { workspace = true }
 
 ctor = "0.2"
+env_logger = "0.11.8"
 http = "1.0"
 once_cell = "1.21"
 pyo3 = { version = "0.24.2", features = ["abi3-py37", "chrono"] }

@@ -13,11 +13,18 @@
 # limitations under the License.
 
 import os
+import gc
 from datetime import datetime, date, timedelta
 from decimal import Decimal
+import time
 
 from behave import given, when, then
+
+os.environ["DATABEND_DRIVER_HEARTBEAT_INTERVAL_SECONDS"] = "1"
+os.environ["RUST_LOG"] = "warn,databend_driver=debug,databend_client=debug"
 import databend_driver
+
+NOW = int(time.time())
 
 DB_VERSION = os.getenv("DB_VERSION")
 if DB_VERSION is not None:
@@ -216,9 +223,18 @@ def _(context):
     assert ret == expected, f"ret: {ret}"
 
 
-@then("Temp table should work with cluster")
+@then("Temp table is cleaned up when conn is dropped")
 def _(context):
+    test_temp_table(context, 1)
+    if DRIVER_VERSION > (0, 30, 3):
+        test_temp_table(context, 0)
+
+
+def test_temp_table(context, by_close):
     cursor = context.client.cursor()
+    db_name = f"temp_table_cursor_{by_close}_{NOW}"
+    cursor.execute(f"create or replace database {db_name}")
+    cursor.execute(f"use {db_name}")
     for i in range(10):
         cursor.execute(f"create or replace temp table temp_{i}(a int)")
         cursor.execute(f"INSERT INTO temp_{i} VALUES (1),({i})")
@@ -227,24 +243,30 @@ def _(context):
         ret = [row.values() for row in rows]
         expected = [(1,), (i,)]
         assert ret == expected, f"ret: {ret}"
-        if i == 1:
-            cursor.execute(f"DROP TABLE temp_{i}")
+
+    cursor.execute(f"DROP TABLE temp_1")
 
     # use cursor which is stickied to the node
-    cursor.execute(f"SELECT COUNT(*) FROM system.temporary_tables")
+    sql = f"SELECT COUNT(*) FROM system.temporary_tables where database = '{db_name}'"
+    cursor.execute(sql)
     rows = cursor.fetchall()
     temp_table_count = list(rows)[0].values()[0]
     assert temp_table_count == 9, f"temp_table_count before close = {temp_table_count}"
 
-    cursor.close()
+    if by_close:
+        cursor.close()
+    else:
+        del cursor
+        gc.collect()
+        time.sleep(1)
 
     # check 3 nodes behind nginx
     for _ in range(3):
-        context.cursor.execute(f"SELECT COUNT(*) FROM system.temporary_tables")
+        context.cursor.execute(sql)
         rows = context.cursor.fetchall()
         temp_table_count = list(rows)[0].values()[0]
         assert temp_table_count == 0, (
-            f"temp_table_count after close = {temp_table_count}"
+            f"temp_table_count after close = {temp_table_count}, by_close={by_close}"
         )
 
 
@@ -266,3 +288,56 @@ def _(context):
 @then("killQuery should return error for non-existent query ID")
 def _(context):
     print("SKIP")
+
+
+@then("Query should not timeout")
+def _(context):
+    if not (DRIVER_VERSION > (0, 30, 3) and DB_VERSION >= (1, 2, 709)):
+        print("SKIP")
+        return
+
+    dsn = "databend://root:@localhost:8000/?sslmode=disable&wait_time_secs=3"
+    client = databend_driver.BlockingDatabendClient(dsn)
+
+    N = 10000
+    cursor = client.cursor()
+    cursor.execute("set http_handler_result_timeout_secs=3")
+
+    sql = "select * from numbers(1000000000)"
+    cursor.execute(sql)
+    batch = cursor.fetchmany(N)
+    assert len(batch) == N
+    time.sleep(10)
+    for i in range(3):
+        batch = cursor.fetchmany(N)
+    assert len(batch) == N
+
+
+@then("Drop result set should close it")
+def _(context):
+    if DRIVER_VERSION <= (0, 30, 3):
+        print("SKIP")
+        return
+    db_name = "drop_result_set_cursor"
+    n = (1 << 50) + 1
+    sql = f"select * from numbers({n})"
+    cursor = context.client.cursor()
+    cursor.execute(f"create or replace database {db_name}")
+    cursor.execute(f"use {db_name}")
+    cursor.execute(sql)
+    n = (1 << 50) + 2
+    sql = f"select * from numbers({n})"
+    cursor.execute(sql)
+    time.sleep(1)
+    sql = f"select count(1) from system.processes where database ='{db_name}'"
+    context.cursor.execute(sql)
+    assert context.cursor.fetchone()[0] == 1
+
+    # cursor.close()
+    del cursor
+    gc.collect()
+    time.sleep(1)
+
+    context.cursor.execute(sql)
+    n = context.cursor.fetchone()[0]
+    assert n == 0, n

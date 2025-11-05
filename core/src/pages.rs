@@ -12,14 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::client::QueryState;
 use crate::error::Result;
 use crate::response::QueryResponse;
 use crate::{APIClient, QueryStats, SchemaField};
+use log::debug;
+use parking_lot::Mutex;
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Instant;
 use tokio_stream::{Stream, StreamExt};
 
 #[derive(Default)]
@@ -60,6 +64,9 @@ pub struct Pages {
     next_page_future: Option<PageFut>,
     node_id: Option<String>,
     next_uri: Option<String>,
+
+    result_timeout_secs: Option<u64>,
+    last_access_time: Arc<Mutex<Instant>>,
 }
 
 impl Pages {
@@ -72,6 +79,8 @@ impl Pages {
             node_id: first_response.node_id.clone(),
             first_page: None,
             next_uri: first_response.next_uri.clone(),
+            result_timeout_secs: first_response.result_timeout_secs,
+            last_access_time: Arc::new(Mutex::new(Instant::now())),
         };
         let first_page = Page::from_response(first_response);
         s.first_page = Some(first_page);
@@ -94,6 +103,16 @@ impl Pages {
             {
                 let schema = page.schema.clone();
                 self.add_back(page);
+                let last_access_time = self.last_access_time.clone();
+                if let Some(node_id) = &self.node_id {
+                    let state = QueryState {
+                        node_id: node_id.to_string(),
+                        last_access_time,
+                        timeout_secs: self.result_timeout_secs.unwrap_or(60),
+                    };
+                    self.client
+                        .register_query_for_heartbeat(&self.query_id, state)
+                }
                 return Ok((self, schema));
             }
         }
@@ -116,6 +135,8 @@ impl Stream for Pages {
                     if resp.data.is_empty() && !self.need_progress {
                         self.poll_next(cx)
                     } else {
+                        let now = Instant::now();
+                        *self.last_access_time.lock() = now;
                         Poll::Ready(Some(Ok(Page::from_response(resp))))
                     }
                 }
@@ -139,6 +160,17 @@ impl Stream for Pages {
                 }
                 None => Poll::Ready(None),
             },
+        }
+    }
+}
+
+impl Drop for Pages {
+    fn drop(&mut self) {
+        if let Some(uri) = &self.next_uri {
+            if uri.contains("/page/") || self.next_page_future.is_none() {
+                debug!("Dropping pages for {}", self.query_id);
+                self.client.finalize_query(&self.query_id)
+            }
         }
     }
 }

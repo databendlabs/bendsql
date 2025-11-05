@@ -52,7 +52,7 @@ Feature: Databend Driver
 
     Scenario: Temp table
         Given A new Databend Driver Client
-        Then Temp table should work with cluster
+        Then Temp table is cleaned up when conn is dropped
 
     Scenario: Query ID tracking
         Given A new Databend Driver Client
@@ -61,3 +61,11 @@ Feature: Databend Driver
     Scenario: Kill Query API Error Handling
         Given A new Databend Driver Client
         Then killQuery should return error for non-existent query ID
+
+    Scenario: Heartbeat
+        Given A new Databend Driver Client
+        Then Query should not timeout
+
+	Scenario: Close result set
+        Given A new Databend Driver Client
+		Then Drop result set should close it

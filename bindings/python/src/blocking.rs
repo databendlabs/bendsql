@@ -20,7 +20,7 @@ use std::sync::Arc;
 use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
 use crate::utils::{options_as_ref, to_sql_params, wait_for_future};
 use databend_driver::{LoadMethod, SchemaRef};
-use pyo3::exceptions::{PyAttributeError, PyStopIteration};
+use pyo3::exceptions::{PyAttributeError, PyException, PyStopIteration};
 use pyo3::types::{PyList, PyTuple};
 use pyo3::{prelude::*, IntoPyObjectExt};
 use tokio::sync::Mutex;
@@ -251,6 +251,7 @@ pub struct BlockingDatabendCursor {
     // buffer is used to store only the first row after execute
     buffer: Vec<Row>,
     schema: Option<SchemaRef>,
+    closed: bool,
 }
 
 impl BlockingDatabendCursor {
@@ -260,6 +261,7 @@ impl BlockingDatabendCursor {
             rows: None,
             buffer: Vec::new(),
             schema: None,
+            closed: false,
         }
     }
 }
@@ -313,6 +315,7 @@ impl BlockingDatabendCursor {
     }
 
     pub fn close(&mut self, py: Python) -> PyResult<()> {
+        self.closed = true;
         self.reset();
         wait_for_future(py, async move {
             self.conn.close().await.map_err(DriverError::new)
@@ -330,6 +333,11 @@ impl BlockingDatabendCursor {
         params: Option<Bound<'p, PyAny>>,
         values: Option<Bound<'p, PyAny>>,
     ) -> PyResult<PyObject> {
+        if self.closed {
+            return Err(PyException::new_err(
+                "BlockingDatabendCursor already closed",
+            ));
+        }
         if let Some(values) = values {
             return self.executemany(py, operation, [values].to_vec());
         }

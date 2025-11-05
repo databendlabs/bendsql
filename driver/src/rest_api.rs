@@ -140,6 +140,11 @@ impl IConnection for RestAPIConnection {
         Ok(())
     }
 
+    fn close_with_spawn(&self) -> Result<()> {
+        self.client.close_with_spawn();
+        Ok(())
+    }
+
     async fn exec(&self, sql: &str) -> Result<i64> {
         info!("exec: {}", sql);
         let page = self.client.query_all(sql).await?;
@@ -153,7 +158,7 @@ impl IConnection for RestAPIConnection {
     async fn query_iter(&self, sql: &str) -> Result<RowIterator> {
         info!("query iter: {}", sql);
         let rows_with_progress = self.query_iter_ext(sql).await?;
-        let rows = rows_with_progress.filter_rows().await;
+        let rows = rows_with_progress.filter_rows().await?;
         Ok(rows)
     }
 

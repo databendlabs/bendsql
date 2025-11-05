@@ -20,6 +20,7 @@ use databend_driver::LoadMethod;
 use napi::{bindgen_prelude::*, Env};
 use once_cell::sync::Lazy;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::{collections::HashMap, path::Path};
 use tokio_stream::StreamExt;
 
@@ -75,7 +76,7 @@ impl Client {
 
 #[napi]
 pub struct Connection {
-    inner: databend_driver::Connection,
+    inner: Arc<databend_driver::Connection>,
     opts: ValueOptions,
 }
 
@@ -83,7 +84,10 @@ pub type Params = serde_json::Value;
 
 impl Connection {
     pub fn new(inner: databend_driver::Connection, opts: ValueOptions) -> Self {
-        Self { inner, opts }
+        Self {
+            inner: Arc::new(inner),
+            opts,
+        }
     }
 }
 
@@ -169,7 +173,11 @@ impl Connection {
             self.inner.query_iter(&sql).await
         };
         let iterator = iterator.map_err(format_napi_error)?;
-        Ok(RowIterator::new(iterator, self.opts.clone()))
+        Ok(RowIterator::new(
+            iterator,
+            self.opts.clone(),
+            self.inner.clone(),
+        ))
     }
 
     /// Execute a SQL query, and return all rows with schema and stats.
@@ -185,7 +193,11 @@ impl Connection {
             self.inner.query_iter_ext(&sql).await
         };
         let iterator = iterator.map_err(format_napi_error)?;
-        Ok(RowIteratorExt::new(iterator, self.opts.clone()))
+        Ok(RowIteratorExt::new(
+            iterator,
+            self.opts.clone(),
+            self.inner.clone(),
+        ))
     }
 
     /// Load data with stage attachment.
@@ -415,11 +427,16 @@ pub struct Field {
 pub struct RowIterator {
     inner: databend_driver::RowIterator,
     opts: ValueOptions,
+    _conn: Arc<databend_driver::Connection>,
 }
 
 impl RowIterator {
-    pub fn new(inner: databend_driver::RowIterator, opts: ValueOptions) -> Self {
-        Self { inner, opts }
+    pub fn new(
+        inner: databend_driver::RowIterator,
+        opts: ValueOptions,
+        _conn: Arc<databend_driver::Connection>,
+    ) -> Self {
+        Self { inner, opts, _conn }
     }
 }
 
@@ -429,6 +446,12 @@ impl RowIterator {
     #[napi]
     pub fn schema(&self) -> Schema {
         Schema(self.inner.schema().clone())
+    }
+
+    #[napi]
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn close(&mut self) {
+        self.inner.close()
     }
 
     /// Fetch next row.
@@ -454,11 +477,16 @@ impl RowIterator {
 pub struct RowIteratorExt {
     inner: databend_driver::RowStatsIterator,
     opts: ValueOptions,
+    _conn: Arc<databend_driver::Connection>,
 }
 
 impl RowIteratorExt {
-    pub fn new(inner: databend_driver::RowStatsIterator, opts: ValueOptions) -> Self {
-        Self { inner, opts }
+    pub fn new(
+        inner: databend_driver::RowStatsIterator,
+        opts: ValueOptions,
+        _conn: Arc<databend_driver::Connection>,
+    ) -> Self {
+        Self { inner, opts, _conn }
     }
 }
 
@@ -467,6 +495,12 @@ impl RowIteratorExt {
     #[napi]
     pub fn schema(&self) -> Schema {
         Schema(self.inner.schema().clone())
+    }
+
+    #[napi]
+    #[allow(clippy::missing_safety_doc)]
+    pub unsafe fn close(&mut self) {
+        self.inner.close()
     }
 
     /// Fetch next row or stats.
@@ -607,4 +641,11 @@ impl ServerStats {
 
 fn format_napi_error(err: databend_driver::Error) -> Error {
     Error::from_reason(format!("{err}"))
+}
+
+#[ctor]
+fn init_logger() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+        .target(env_logger::Target::Stdout)
+        .init();
 }
