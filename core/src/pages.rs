@@ -28,7 +28,7 @@ use tokio_stream::{Stream, StreamExt};
 
 #[derive(Default)]
 pub struct Page {
-    pub schema: Vec<SchemaField>,
+    pub raw_schema: Vec<SchemaField>,
     pub data: Vec<Vec<Option<String>>>,
     pub stats: QueryStats,
 }
@@ -36,14 +36,14 @@ pub struct Page {
 impl Page {
     pub fn from_response(response: QueryResponse) -> Self {
         Self {
-            schema: response.schema,
+            raw_schema: response.schema,
             data: response.data,
             stats: response.stats,
         }
     }
 
     pub fn update(&mut self, p: Page) {
-        self.schema = p.schema;
+        self.raw_schema = p.raw_schema;
         if self.data.is_empty() {
             self.data = p.data
         } else {
@@ -97,11 +97,11 @@ impl Pages {
     ) -> Result<(Self, Vec<SchemaField>)> {
         while let Some(page) = self.next().await {
             let page = page?;
-            if !page.schema.is_empty()
+            if !page.raw_schema.is_empty()
                 || !page.data.is_empty()
                 || (need_progress && page.stats.progresses.has_progress())
             {
-                let schema = page.schema.clone();
+                let schema = page.raw_schema.clone();
                 self.add_back(page);
                 let last_access_time = self.last_access_time.clone();
                 if let Some(node_id) = &self.node_id {

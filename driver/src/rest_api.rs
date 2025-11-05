@@ -333,7 +333,7 @@ impl<T: FromRowStats + std::marker::Unpin> Stream for RestAPIRows<T> {
         match Pin::new(&mut self.pages).poll_next(cx) {
             Poll::Ready(Some(Ok(page))) => {
                 if self.schema.fields().is_empty() {
-                    self.schema = Arc::new(page.schema.try_into()?);
+                    self.schema = Arc::new(page.raw_schema.try_into()?);
                 }
                 let mut new_data = page.data.into();
                 self.data.append(&mut new_data);
