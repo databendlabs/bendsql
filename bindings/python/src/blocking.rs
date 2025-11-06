@@ -501,9 +501,23 @@ fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
             } else if let Ok(v) = v.extract::<f64>() {
                 Ok(v.to_string())
             } else {
-                Err(PyAttributeError::new_err(format!(
-                    "Invalid parameter type for: {v:?}, expected str, bool, int or float"
-                )))
+                // Try to convert any object to string using its __str__ method
+                match v.call_method0("__str__") {
+                    Ok(str_obj) => {
+                        if let Ok(s) = str_obj.extract::<String>() {
+                            Ok(s)
+                        } else {
+                            Err(PyAttributeError::new_err(format!(
+                                "Failed to convert object to string: {v:?}"
+                            )))
+                        }
+                    }
+                    Err(_) => {
+                        Err(PyAttributeError::new_err(format!(
+                            "Invalid parameter type for: {v:?}, expected str, bool, int, float, or object with __str__ method"
+                        )))
+                    }
+                }
             }
         }
         Err(e) => Err(e.into()),
