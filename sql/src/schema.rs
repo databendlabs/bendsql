@@ -138,7 +138,7 @@ impl std::fmt::Display for DataType {
                 write!(f, "Decimal({}, {})", size.precision, size.scale)
             }
             DataType::Timestamp => write!(f, "Timestamp"),
-            DataType::TimestampTz => write!(f, "TimestampTz"),
+            DataType::TimestampTz => write!(f, "Timestamp_Tz"),
             DataType::Date => write!(f, "Date"),
             DataType::Nullable(inner) => write!(f, "Nullable({inner})"),
             DataType::Array(inner) => write!(f, "Array({inner})"),
