@@ -62,7 +62,8 @@ def _(context):
             s   String,
             s2  String,
             d   Date,
-            t   DateTime
+            t   DateTime,
+            v   Variant
         )
         """
     )
@@ -167,18 +168,49 @@ def _(context):
 
 @then("Insert and Select should be equal")
 def _(context):
+    values = []
+    if DRIVER_VERSION <= (0, 30, 3):
+        print("SKIP")
+        return
     context.cursor.execute(
         r"""
         INSERT INTO test VALUES
-            (-1, 1, 1.0, '\'', NULL, '2011-03-06', '2011-03-06 06:20:00'),
-            (-2, 2, 2.0, '"', '', '2012-05-31', '2012-05-31 11:20:00'),
-            (-3, 3, 3.0, '\\', 'NULL', '2016-04-04', '2016-04-04 11:30:00')
+            (-1, 1, 1.0, '\'', NULL, '2011-03-06', '2011-03-06 06:20:00', {'a': 1}),
+            (-2, 2, 2.0, '"', '', '2012-05-31', '2012-05-31 11:20:00', {'a': 2}),
+            (-3, 3, 3.0, '\\', 'NULL', '2016-04-04', '2016-04-04 11:30:00', {'a': 3})
         """
     )
     expected = [
-        (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, '"', "", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (
+            -1,
+            1,
+            1.0,
+            "'",
+            None,
+            date(2011, 3, 6),
+            datetime(2011, 3, 6, 6, 20),
+            '{"a":1}',
+        ),
+        (
+            -2,
+            2,
+            2.0,
+            '"',
+            "",
+            date(2012, 5, 31),
+            datetime(2012, 5, 31, 11, 20),
+            '{"a":2}',
+        ),
+        (
+            -3,
+            3,
+            3.0,
+            "\\",
+            "NULL",
+            date(2016, 4, 4),
+            datetime(2016, 4, 4, 11, 30),
+            '{"a":3}',
+        ),
     ]
 
     # fetchall
@@ -204,11 +236,27 @@ def _(context):
 
 @then("Stream load and Select should be equal")
 def _(context):
-    values = [
-        [-1, 1, 1.0, "'", None, "2011-03-06", "2011-03-06T06:20:00Z"],
-        (-2, "2", 2.0, '"', "", "2012-05-31", "2012-05-31T11:20:00Z"),
-        ["-3", 3, 3.0, "\\", "NULL", "2016-04-04", "2016-04-04T11:30:00Z"],
-    ]
+    # Skip dictionary parameters for old driver versions that don't support them
+    values = []
+    if DRIVER_VERSION <= (0, 30, 3):
+        print("SKIP")
+        return
+    else:
+        # For new versions, use actual dict objects
+        values = [
+            [-1, 1, 1.0, "'", None, "2011-03-06", "2011-03-06T06:20:00Z", {"a": 1}],
+            (-2, "2", 2.0, '"', "", "2012-05-31", "2012-05-31T11:20:00Z", {"a": 2}),
+            [
+                "-3",
+                3,
+                3.0,
+                "\\",
+                "NULL",
+                "2016-04-04",
+                "2016-04-04T11:30:00Z",
+                {"a": 3},
+            ],
+        ]
     count = context.cursor.executemany("INSERT INTO test VALUES", values)
     assert count == 3, f"count: {count}"
 
@@ -216,9 +264,36 @@ def _(context):
     rows = context.cursor.fetchall()
     ret = [row.values() for row in rows]
     expected = [
-        (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, '"', None, date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (
+            -1,
+            1,
+            1.0,
+            "'",
+            None,
+            date(2011, 3, 6),
+            datetime(2011, 3, 6, 6, 20),
+            '{"a":1}',
+        ),
+        (
+            -2,
+            2,
+            2.0,
+            '"',
+            None,
+            date(2012, 5, 31),
+            datetime(2012, 5, 31, 11, 20),
+            '{"a":2}',
+        ),
+        (
+            -3,
+            3,
+            3.0,
+            "\\",
+            "NULL",
+            date(2016, 4, 4),
+            datetime(2016, 4, 4, 11, 30),
+            '{"a":3}',
+        ),
     ]
     assert ret == expected, f"ret: {ret}"
 
