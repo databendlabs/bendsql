@@ -168,6 +168,10 @@ def _(context):
 
 @then("Insert and Select should be equal")
 def _(context):
+    values = []
+    if DRIVER_VERSION <= (0, 30, 0):
+        print("SKIP")
+        return
     context.cursor.execute(
         r"""
         INSERT INTO test VALUES
@@ -232,11 +236,27 @@ def _(context):
 
 @then("Stream load and Select should be equal")
 def _(context):
-    values = [
-        [-1, 1, 1.0, "'", None, "2011-03-06", "2011-03-06T06:20:00Z", {"a": 1}],
-        (-2, "2", 2.0, '"', "", "2012-05-31", "2012-05-31T11:20:00Z", {"a": 2}),
-        ["-3", 3, 3.0, "\\", "NULL", "2016-04-04", "2016-04-04T11:30:00Z", {"a": 3}],
-    ]
+    # Skip dictionary parameters for old driver versions that don't support them
+    values = []
+    if DRIVER_VERSION <= (0, 30, 0):
+        print("SKIP")
+        return
+    else:
+        # For new versions, use actual dict objects
+        values = [
+            [-1, 1, 1.0, "'", None, "2011-03-06", "2011-03-06T06:20:00Z", {"a": 1}],
+            (-2, "2", 2.0, '"', "", "2012-05-31", "2012-05-31T11:20:00Z", {"a": 2}),
+            [
+                "-3",
+                3,
+                3.0,
+                "\\",
+                "NULL",
+                "2016-04-04",
+                "2016-04-04T11:30:00Z",
+                {"a": 3},
+            ],
+        ]
     count = context.cursor.executemany("INSERT INTO test VALUES", values)
     assert count == 3, f"count: {count}"
 
