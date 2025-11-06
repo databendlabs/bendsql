@@ -285,7 +285,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
                 let dimension = desc.args[0].name.parse::<u64>()?;
                 DataType::Vector(dimension)
             }
-            "TimestampTz" => DataType::TimestampTz,
+            "Timestamp_Tz" => DataType::TimestampTz,
             _ => return Err(Error::Parsing(format!("Unknown type: {desc:?}"))),
         };
         Ok(dt)
