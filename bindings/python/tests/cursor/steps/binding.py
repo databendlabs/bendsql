@@ -169,7 +169,7 @@ def _(context):
 @then("Insert and Select should be equal")
 def _(context):
     values = []
-    if DRIVER_VERSION <= (0, 30, 0):
+    if DRIVER_VERSION <= (0, 30, 3):
         print("SKIP")
         return
     context.cursor.execute(
@@ -238,7 +238,7 @@ def _(context):
 def _(context):
     # Skip dictionary parameters for old driver versions that don't support them
     values = []
-    if DRIVER_VERSION <= (0, 30, 0):
+    if DRIVER_VERSION <= (0, 30, 3):
         print("SKIP")
         return
     else:
