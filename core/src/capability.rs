@@ -17,12 +17,14 @@ use semver::Version;
 #[derive(Default, Debug)]
 pub struct Capability {
     pub streaming_load: bool,
+    pub arrow_data: bool,
 }
 
 impl Capability {
     pub fn from_server_version(ver: &Version) -> Capability {
         Capability {
             streaming_load: ver > &Version::new(1, 2, 781),
+            arrow_data: ver >= &Version::new(1, 2, 831),
         }
     }
 }
