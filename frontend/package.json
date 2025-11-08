@@ -5,6 +5,7 @@
   "dependencies": {
     "@ant-design/charts": "v1",
     "@codemirror/autocomplete": "^6.4.2",
+    "@codemirror/lang-python": "^6.2.1",
     "@codemirror/lang-sql": "^6.4.0",
     "@codemirror/language": "^6.11.3",
     "@codemirror/state": "^6.5.2",

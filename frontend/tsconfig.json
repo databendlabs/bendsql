@@ -20,7 +20,11 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "preserve",
-    "incremental": true
+    "incremental": true,
+    "baseUrl": ".",
+    "paths": {
+      "@codemirror/lang-python": ["src/lib/codemirrorPython"]
+    }
   },
   "include": [
     "next-env.d.ts",

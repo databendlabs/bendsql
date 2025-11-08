@@ -2,10 +2,12 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import CodeMirror from '@uiw/react-codemirror';
 import { sql } from '@codemirror/lang-sql';
+import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { autocompletion } from '@codemirror/autocomplete';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { xcodeLight, xcodeLightPatch } from './components/CodeMirrorTheme';
+import { python_syntax } from './components/CodemirrorPython';
 
 interface QueryResult {
   columns: string[];
@@ -32,10 +34,12 @@ const SQLQuery: React.FC = () => {
   const legacyQueryId = router.query.queryId;
   const queryId = pathQueryId || legacyQueryId;
   const [query, setQuery] = useState(``);
+  const [engine, setEngine] = useState<'sql' | 'python'>('sql');
 
   const [results, setResults] = useState<QueryResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [showPythonHelp, setShowPythonHelp] = useState(false);
 
   // Load query from URL on component mount
   useEffect(() => {
@@ -61,6 +65,11 @@ SELECT * FROM students;`);
         const data = await response.json();
         setQuery(data.sql);
         setResults(data.results || []);
+        if (data.kind === 3) {
+          setEngine('python');
+        } else {
+          setEngine('sql');
+        }
       } else {
         // Query not found, but still render the page
         setError(`Run ID "${queryId}" not found`);
@@ -92,7 +101,7 @@ SELECT * FROM students;`);
         },
         body: JSON.stringify({
           sql: query,
-          kind: 0
+          kind: engine === 'python' ? 3 : 0
         }),
       });
 
@@ -126,7 +135,7 @@ SELECT * FROM students;`);
     } finally {
       setLoading(false);
     }
-  }, [query, router]);
+  }, [query, router, engine]);
 
   // Add global keyboard event listener for Cmd+Enter
   const runKeymap = useMemo(() => keymap.of([
@@ -213,6 +222,30 @@ SELECT * FROM students;`);
     );
   };
 
+  const editorPlaceholder = engine === 'python'
+    ? 'Enter your Python script here... (Press Cmd+Enter to run)'
+    : 'Enter your SQL queries here... (Press Cmd+Enter to run)';
+
+  const editorExtensions = useMemo(() => {
+    const base = [
+      xcodeLightPatch,
+      EditorView.lineWrapping,
+      lineNumbers(),
+      autocompletion({ icons: false }),
+    ];
+
+    if (engine === 'python') {
+      return [
+        ...base,
+        EditorState.tabSize.of(4),
+        python_syntax(),
+        runKeymap,
+      ];
+    }
+
+    return [...base, sql(), runKeymap];
+  }, [engine, runKeymap]);
+
   return (
     <div className="flex flex-1 min-h-0 flex-col bg-[#f9fbff]">
       <div className="border-b border-gray-200 bg-white px-4 py-3 flex items-center gap-3 text-sm text-gray-600">
@@ -238,6 +271,28 @@ SELECT * FROM students;`);
           )}
         </button>
         <span className="hidden sm:block">Press ⌘⏎ to run</span>
+        <div className="ml-auto flex items-center gap-2 text-xs text-gray-500">
+          {engine === 'python' && (
+            <button
+              type="button"
+              onClick={() => setShowPythonHelp(true)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:border-indigo-300 hover:text-indigo-600"
+              title="Python engine help"
+            >
+              ?
+            </button>
+          )}
+          <span>Engine</span>
+          <select
+            value={engine}
+            onChange={(e) => setEngine(e.target.value as 'sql' | 'python')}
+            className="rounded-full border border-gray-200 bg-white px-2 py-1 text-sm text-gray-700 focus:border-indigo-400 focus:outline-none"
+            disabled={loading}
+          >
+            <option value="sql">SQL</option>
+            <option value="python">Python</option>
+          </select>
+        </div>
       </div>
       <div className="flex-1 min-h-0 border border-gray-200 bg-white">
         <PanelGroup
@@ -250,19 +305,10 @@ SELECT * FROM students;`);
             <div className="h-full min-h-0 border-r border-gray-300 relative">
               <CodeMirror
                 value={query}
-                placeholder="Enter your SQL queries here... (Press Cmd+Enter to run)"
+                placeholder={editorPlaceholder}
                 theme={xcodeLight}
                 height="100%"
-                extensions={[
-                  xcodeLightPatch,
-                  EditorView.lineWrapping,
-                  lineNumbers(),
-                  autocompletion({
-                    icons: false,
-                  }),
-                  sql(),
-                  runKeymap,
-                ]}
+                extensions={editorExtensions}
                 basicSetup={false}
                 onChange={(value) => setQuery(value)}
                 editable={!loading}
@@ -301,6 +347,51 @@ SELECT * FROM students;`);
           </Panel>
         </PanelGroup>
       </div>
+      {engine === 'python' && showPythonHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Python Engine Help</h2>
+              <button
+                onClick={() => setShowPythonHelp(false)}
+                className="rounded-full border border-gray-200 px-2 py-1 text-sm text-gray-500 hover:border-gray-300"
+              >
+                Close
+              </button>
+            </div>
+            <div className="space-y-4 text-sm text-gray-700">
+              <p>
+                Python scripts run inside <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">ghcr.io/astral-sh/uv:debian</code> with
+                <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">uv run --script</code>. The following helpers are injected for you:
+              </p>
+              <ul className="list-disc pl-5 space-y-1 text-gray-600">
+                <li><code className="text-xs bg-gray-100 px-1 py-0.5 rounded">async_client</code>: an <code>AsyncDatabendClient</code> connected to your DSN.</li>
+                <li><code className="text-xs bg-gray-100 px-1 py-0.5 rounded">client</code>: a <code>BlockingDatabendClient</code> using the same DSN.</li>
+              </ul>
+              <p>Sync Example:</p>
+              <pre className="bg-gray-900 text-gray-100 text-xs rounded-xl p-3 overflow-auto">
+{`conn = client.get_conn()
+rows = conn.query_iter("SELECT * FROM numbers(10)")
+for row in rows:
+    print(row.values())
+conn.close()`}
+              </pre>
+              <p>Async Example:</p>
+              <pre className="bg-gray-900 text-gray-100 text-xs rounded-xl p-3 overflow-auto">
+{`async def main():
+  conn = await async_client.get_conn()
+  rows = await conn.query_iter("SELECT * FROM numbers(10)")
+  async for row in rows:
+      print(row.values())
+  await conn.close()
+
+asyncio.run(main())`}
+              </pre>
+              <p className="text-xs text-gray-500">Note: Docker must be installed locally for Python execution.</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
