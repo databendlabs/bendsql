@@ -471,9 +471,17 @@ client = BlockingDatabendClient(_BENDSQL_DSN)
     })?;
     let mount_cache = format!("{}:/root/.cache/uv", cache_host.display());
     let start_time = Instant::now();
-    let output = Command::new("docker")
+    let mut docker_cmd = Command::new("docker");
+    docker_cmd
         .arg("run")
-        .arg("--rm")
+        .arg("--rm");
+
+    if cfg!(target_os = "linux") {
+        // Share the host network so scripts can reach services bound to 127.0.0.1.
+        docker_cmd.arg("--network").arg("host");
+    }
+
+    let output = docker_cmd
         .arg("-v")
         .arg(&mount_workspace)
         .arg("-v")
