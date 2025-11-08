@@ -26,7 +26,14 @@ use mime_guess::from_path;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::Write;
+use std::process::Command as StdCommand;
+use std::time::Instant;
+use tempfile::tempdir;
+use tokio::process::Command;
 use tokio_stream::StreamExt;
+use uuid::Uuid;
 
 #[derive(RustEmbed)]
 #[folder = "frontend/build/"]
@@ -266,6 +273,12 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
         }
     }; // Lock is automatically dropped here
 
+    if req.kind == 3 {
+        return run_python_script(&req.sql, &dsn)
+            .await
+            .unwrap_or_else(|err| err);
+    }
+
     let sql = req.to_sql();
     if sql.is_empty() {
         return HttpResponse::BadRequest().json(serde_json::json!({
@@ -390,6 +403,114 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
         results,
         query_id: last_query_id,
     })
+}
+
+async fn run_python_script(code: &str, dsn: &str) -> Result<HttpResponse, HttpResponse> {
+    match StdCommand::new("docker").arg("--version").output() {
+        Ok(output) if output.status.success() => {}
+        _ => {
+            return Err(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Docker is required to execute Python scripts. Please install Docker and try again."
+            })));
+        }
+    }
+
+    let dir = tempdir().map_err(|e| {
+        HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to create temp directory: {}", e)
+        }))
+    })?;
+
+    let script_path = dir.path().join("script.py");
+    let mut file = File::create(&script_path).map_err(|e| {
+        HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to write script: {}", e)
+        }))
+    })?;
+
+    let bootstrap = format!(
+        r##"# /// script
+# requires-python = ">=3.12"
+# dependencies = ["databend-driver"]
+# ///
+import asyncio
+from databend_driver import AsyncDatabendClient, BlockingDatabendClient
+
+_BENDSQL_DSN = {dsn}
+async_client = AsyncDatabendClient(_BENDSQL_DSN)
+client = BlockingDatabendClient(_BENDSQL_DSN)
+
+"##,
+        dsn = serde_json::to_string(dsn).unwrap_or_else(|_| "\"\"".to_string())
+    );
+
+    file.write_all(bootstrap.as_bytes()).map_err(|e| {
+        HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to write bootstrap: {}", e)
+        }))
+    })?;
+    file.write_all(code.as_bytes()).map_err(|e| {
+        HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to write script: {}", e)
+        }))
+    })?;
+    drop(file);
+
+    let mount_arg = format!("{}:/workspace", dir.path().display());
+    let start_time = Instant::now();
+    let output = Command::new("docker")
+        .arg("run")
+        .arg("--rm")
+        .arg("-v")
+        .arg(&mount_arg)
+        .arg("-w")
+        .arg("/workspace")
+        .arg("ghcr.io/astral-sh/uv:debian")
+        .arg("uv")
+        .arg("run")
+        .arg("--script")
+        .arg("/workspace/script.py")
+        .output()
+        .await
+        .map_err(|e| {
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": format!("Failed to invoke Docker: {}", e)
+            }))
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Python execution failed: {}", stderr.trim())
+        })));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let rows: Vec<Vec<String>> = stdout.lines().map(|line| vec![line.to_string()]).collect();
+
+    let result = QueryResult {
+        columns: vec!["stdout".to_string()],
+        types: vec!["String".to_string()],
+        data: rows.clone(),
+        row_count: rows.len(),
+        duration: format!("{}ms", start_time.elapsed().as_millis()),
+    };
+    let results_vec = vec![result.clone()];
+    let query_id = Uuid::new_v4().to_string();
+
+    if let Ok(serialized_results) = serde_json::to_string(&results_vec) {
+        let db_guard = DB.as_ref();
+        let conn = db_guard.lock().unwrap();
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO shared_queries (query_id, sql, kind, results) VALUES (?1, ?2, ?3, ?4)",
+            params![query_id, code, 3, serialized_results],
+        );
+    }
+
+    Ok(HttpResponse::Ok().json(QueryResponse {
+        results: results_vec,
+        query_id: Some(query_id),
+    }))
 }
 
 #[get("/api/query/{query_id}")]
