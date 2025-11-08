@@ -161,17 +161,18 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
   const baseCardClasses = [
     'flex',
     'gap-3',
-    'rounded-xl',
+    'rounded-2xl',
     'border',
-    'bg-white',
+    'bg-white/95',
+    'backdrop-blur-[2px]',
     'transition-all',
-    dragState.isDragOver ? 'ring-1 ring-indigo-300 border-indigo-300' : 'border-gray-200',
+    dragState.isDragOver ? 'ring-1 ring-indigo-300 border-indigo-300' : 'border-gray-100',
     isFullscreen
       ? 'shadow-[0_0_0_2px_rgba(99,102,241,0.35)] border-indigo-300'
       : isActive
-        ? 'shadow-[0_0_0_1px_rgba(99,102,241,0.25)]'
-        : 'shadow-sm hover:border-gray-300',
-    cell.loading ? 'ring-1 ring-indigo-300 border-indigo-300 bg-blue-50/70' : '',
+        ? 'shadow-[0_15px_35px_-20px_rgba(79,70,229,0.45)]'
+        : 'shadow-sm hover:shadow-md hover:border-gray-200',
+    cell.loading ? 'ring-1 ring-blue-300 border-blue-200 bg-blue-50/80' : '',
   ].join(' ');
 
   // 放置指示器样式
@@ -412,7 +413,9 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
                   </div>
                 )}
               </div>
-              <span>{statusLabel}</span>
+              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${cell.loading ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                {statusLabel}
+              </span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -535,13 +538,13 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
 
               {!cell.error && showResult && cell.result && (
                 <div className={`${isFullscreen ? 'flex-1 flex flex-col' : ''}`}>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-                    {cell.result.rowCount} row{cell.result.rowCount === 1 ? '' : 's'} returned {cell.result.duration ? `in ${cell.result.duration}` : ''}
-                  </div>
-                  <div className={`${isFullscreen ? 'flex-1 overflow-auto rounded-xl bg-white mt-2' : 'space-y-3'}`}>
-                    {renderTable(cell.result)}
-                  </div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  {cell.result.rowCount} row{cell.result.rowCount === 1 ? '' : 's'} returned {cell.result.duration ? `in ${cell.result.duration}` : ''}
                 </div>
+                <div className={`${isFullscreen ? 'flex-1 overflow-auto rounded-xl border border-gray-100 bg-white mt-2' : 'space-y-3'}`}>
+                  {renderTable(cell.result)}
+                </div>
+              </div>
               )}
 
               {!cell.error && !showResult && !cell.collapsed}

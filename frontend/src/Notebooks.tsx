@@ -620,7 +620,7 @@ const Notebooks: React.FC = () => {
   );
 
   return (
-    <div className="relative flex h-full flex-1 flex-col bg-[#f9fbff]">
+    <div className="relative flex h-full flex-1 flex-col bg-[#f4f6fb]">
       <PanelGroup direction="horizontal" className="flex-1 overflow-hidden">
         <Panel defaultSize={15} minSize={15} maxSize={30} className="h-full">
           {renderSidebar()}
