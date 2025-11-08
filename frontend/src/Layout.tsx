@@ -16,10 +16,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   ];
 
   const isActive = (path: string) => {
+    const currentPath = router.asPath.split('?')[0] || '/';
     if (path === '/') {
-      return router.pathname === '/';
+      return currentPath === '/';
     }
-    return router.pathname.startsWith(path);
+    return currentPath.startsWith(path);
   };
 
   return (

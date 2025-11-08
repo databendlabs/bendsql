@@ -122,6 +122,9 @@ async fn embed_file(path: web::Path<String>) -> HttpResponse {
             // Handle Next.js static export structure for /perf/ routes
             // trailingSlash: false generates perf/[...slug].html
             "perf/[...slug].html".to_string()
+        } else if requested_path == "notebooks" || requested_path.starts_with("notebooks/") {
+            // Static notebooks page
+            "notebooks.html".to_string()
         } else if requested_path
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
@@ -294,6 +297,7 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
     let mut last_query_id = None;
     for statement in &statements {
         let start_time = std::time::Instant::now();
+        let mut stats_running_time: Option<f64> = None;
 
         match conn.query_iter_ext(statement).await {
             Ok(mut rows) => {
@@ -325,9 +329,8 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
                                     data.push(row_values);
                                     row_count += 1;
                                 }
-                                RowWithStats::Stats(_stats) => {
-                                    // Skip stats for now, we could use them for additional info
-                                    continue;
+                                RowWithStats::Stats(stats) => {
+                                    stats_running_time = Some(stats.running_time_ms);
                                 }
                             }
                         }
@@ -339,7 +342,15 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
                     }
                 }
 
-                let duration = format!("{}ms", start_time.elapsed().as_millis());
+                let duration = if let Some(ms) = stats_running_time {
+                    if ms.fract() == 0.0 {
+                        format!("{:.0}ms", ms)
+                    } else {
+                        format!("{:.2}ms", ms)
+                    }
+                } else {
+                    format!("{}ms", start_time.elapsed().as_millis())
+                };
                 last_query_id = conn.last_query_id();
                 results.push(QueryResult {
                     columns,

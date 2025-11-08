@@ -3,9 +3,11 @@ import React, {
   useEffect,
   useCallback,
   useMemo,
+  useRef,
 } from 'react';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import NotebookCellComponent from './components/NotebookCell';
+import { EllipsisIcon } from './components/icons';
 import { Notebook, NotebookCell } from './types/notebook';
 import { notebookStorage } from './utills/notebookStorage';
 import { formatRelativeTime } from './utills/time';
@@ -15,10 +17,22 @@ const Notebooks: React.FC = () => {
   const [currentNotebook, setCurrentNotebook] = useState<Notebook | null>(null);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
   const [notebookSearch, setNotebookSearch] = useState('');
-  const [resultSearch, setResultSearch] = useState('');
   const [draggingCellId, setDraggingCellId] = useState<string | null>(null);
-  const [dragOverCellId, setDragOverCellId] = useState<string | null>(null);
-  const [dragOverTail, setDragOverTail] = useState(false);
+  const [dragOverState, setDragOverState] = useState<{ id: string | null; placeAfter: boolean }>({
+    id: null,
+    placeAfter: false,
+  });
+  const [fullscreenCellId, setFullscreenCellId] = useState<string | null>(null);
+  const [notebookMenuOpen, setNotebookMenuOpen] = useState(false);
+  const [openNotebookMenuId, setOpenNotebookMenuId] = useState<string | null>(null);
+  const notebookNameRef = useRef<HTMLInputElement | null>(null);
+  const notebookMenuRef = useRef<HTMLDivElement | null>(null);
+  const [notebookListCollapsed, setNotebookListCollapsed] = useState(false);
+  const currentNotebookRef = useRef<Notebook | null>(null);
+
+  useEffect(() => {
+    currentNotebookRef.current = currentNotebook;
+  }, [currentNotebook]);
 
   // Load stored notebooks on mount
   useEffect(() => {
@@ -62,10 +76,32 @@ const Notebooks: React.FC = () => {
     }
   }, [currentNotebook, activeCellId]);
 
-  // Reset filters when switching cells
   useEffect(() => {
-    setResultSearch('');
-  }, [activeCellId]);
+    if (!notebookMenuOpen) {
+      return;
+    }
+    const handleClick = (event: MouseEvent) => {
+      if (notebookMenuRef.current && !notebookMenuRef.current.contains(event.target as Node)) {
+        setNotebookMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [notebookMenuOpen]);
+
+  useEffect(() => {
+    if (!openNotebookMenuId) {
+      return;
+    }
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('[data-notebook-menu]')) {
+        setOpenNotebookMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [openNotebookMenuId]);
 
   const filteredNotebooks = useMemo(() => {
     if (!notebookSearch.trim()) {
@@ -75,24 +111,6 @@ const Notebooks: React.FC = () => {
     const term = notebookSearch.toLowerCase();
     return notebooks.filter(nb => nb.name.toLowerCase().includes(term));
   }, [notebooks, notebookSearch]);
-
-  const activeCell = currentNotebook?.cells.find(cell => cell.id === activeCellId) || null;
-  const activeResult = activeCell?.result;
-
-  const filteredResultRows = useMemo(() => {
-    if (!activeResult) {
-      return [];
-    }
-
-    if (!resultSearch.trim()) {
-      return activeResult.data;
-    }
-
-    const term = resultSearch.toLowerCase();
-    return activeResult.data.filter(row =>
-      row.some(value => String(value ?? '').toLowerCase().includes(term))
-    );
-  }, [activeResult, resultSearch]);
 
   const createNewNotebook = useCallback(() => {
     const newNotebook = notebookStorage.createNotebook();
@@ -123,15 +141,19 @@ const Notebooks: React.FC = () => {
     }
   }, [currentNotebook]);
 
-  const addCell = useCallback(() => {
+  const addCellAt = useCallback((insertIndex: number) => {
     if (!currentNotebook) {
       return;
     }
 
     const newCell = notebookStorage.createCell();
+    const cells = [...currentNotebook.cells];
+    const clampedIndex = Math.max(0, Math.min(insertIndex, cells.length));
+    cells.splice(clampedIndex, 0, newCell);
+
     const updatedNotebook = {
       ...currentNotebook,
-      cells: [...currentNotebook.cells, newCell],
+      cells,
       updatedAt: new Date(),
     };
 
@@ -139,6 +161,61 @@ const Notebooks: React.FC = () => {
     setCurrentNotebook(updatedNotebook);
     setNotebooks(prev => prev.map(nb => nb.id === updatedNotebook.id ? updatedNotebook : nb));
   }, [currentNotebook]);
+
+  const focusNotebookName = useCallback(() => {
+    notebookNameRef.current?.focus();
+  }, []);
+
+  const closeNotebook = useCallback(() => {
+    setCurrentNotebook(null);
+    setActiveCellId(null);
+    setFullscreenCellId(null);
+  }, []);
+
+  const deleteAllCells = useCallback(() => {
+    if (!currentNotebook) {
+      return;
+    }
+
+    const freshCell = notebookStorage.createCell();
+    const updatedNotebook = {
+      ...currentNotebook,
+      cells: [freshCell],
+      updatedAt: new Date(),
+    };
+
+    setCurrentNotebook(updatedNotebook);
+    setNotebooks(prev => prev.map(nb => nb.id === updatedNotebook.id ? updatedNotebook : nb));
+    setActiveCellId(freshCell.id);
+    setFullscreenCellId(null);
+  }, [currentNotebook]);
+
+  const deleteNotebook = useCallback((notebookId: string) => {
+    setNotebooks(prev => {
+      const index = prev.findIndex(nb => nb.id === notebookId);
+      if (index === -1) {
+        return prev;
+      }
+
+      const updated = prev.filter(nb => nb.id !== notebookId);
+
+      if (currentNotebook?.id === notebookId) {
+        // 如果删除的是当前 notebook，选择新的当前 notebook
+        const fallback = updated.length > 0 ? updated[0] : null;
+        setCurrentNotebook(fallback);
+        setActiveCellId(fallback?.cells[0]?.id ?? null);
+        setFullscreenCellId(null);
+      }
+
+      return updated;
+    });
+
+    setOpenNotebookMenuId(null);
+  }, [currentNotebook]);
+
+  const closeFullscreen = useCallback(() => {
+    setFullscreenCellId(null);
+  }, []);
 
   const updateCellSql = useCallback((cellId: string, sql: string) => {
     if (!currentNotebook) {
@@ -178,22 +255,17 @@ const Notebooks: React.FC = () => {
 
   const reorderCells = useCallback((sourceId: string, targetId: string, placeAfter = false) => {
     if (!currentNotebook || sourceId === targetId) {
-      return;
+      return false;
     }
 
     const cells = [...currentNotebook.cells];
     const sourceIndex = cells.findIndex(cell => cell.id === sourceId);
-    if (sourceIndex === -1) {
-      return;
+    const targetIndex = cells.findIndex(cell => cell.id === targetId);
+    if (sourceIndex === -1 || targetIndex === -1) {
+      return false;
     }
 
     const [moved] = cells.splice(sourceIndex, 1);
-    const targetIndex = cells.findIndex(cell => cell.id === targetId);
-    if (targetIndex === -1) {
-      cells.splice(sourceIndex, 0, moved);
-      return;
-    }
-
     const insertIndex = placeAfter ? targetIndex + 1 : targetIndex;
     cells.splice(insertIndex, 0, moved);
 
@@ -206,6 +278,7 @@ const Notebooks: React.FC = () => {
     setCurrentNotebook(updatedNotebook);
     setNotebooks(prev => prev.map(nb => nb.id === updatedNotebook.id ? updatedNotebook : nb));
     setActiveCellId(moved.id);
+    return true;
   }, [currentNotebook]);
 
   const moveCellPosition = useCallback((cellId: string, direction: 'up' | 'down') => {
@@ -227,67 +300,52 @@ const Notebooks: React.FC = () => {
 
   const handleDragStart = useCallback((cellId: string) => {
     setDraggingCellId(cellId);
-    setDragOverCellId(null);
-    setDragOverTail(false);
+    setDragOverState({ id: null, placeAfter: false });
   }, []);
 
   const handleDragEnd = useCallback(() => {
     setDraggingCellId(null);
-    setDragOverCellId(null);
-    setDragOverTail(false);
+    setDragOverState({ id: null, placeAfter: false });
   }, []);
 
-  const handleDragOverCell = useCallback((cellId: string) => {
+  const handleDragOverCell = useCallback((cellId: string, placeAfter = false) => {
     if (!draggingCellId || draggingCellId === cellId) {
       return;
     }
-    setDragOverCellId(cellId);
-    setDragOverTail(false);
-  }, [draggingCellId]);
-
-  const handleDropOnCell = useCallback((cellId: string) => {
-    if (draggingCellId && draggingCellId !== cellId) {
-      reorderCells(draggingCellId, cellId);
+    if (reorderCells(draggingCellId, cellId, placeAfter)) {
+      setDragOverState({ id: cellId, placeAfter });
     }
-    setDraggingCellId(null);
-    setDragOverCellId(null);
-    setDragOverTail(false);
   }, [draggingCellId, reorderCells]);
 
-  const handleDropAtEnd = useCallback(() => {
-    if (!currentNotebook || !draggingCellId) {
-      return;
+  const handleDropOnCell = useCallback((cellId: string, placeAfter = false) => {
+    if (draggingCellId && draggingCellId !== cellId) {
+      reorderCells(draggingCellId, cellId, placeAfter);
     }
-    const lastCell = currentNotebook.cells[currentNotebook.cells.length - 1];
-    if (!lastCell || lastCell.id === draggingCellId) {
-      handleDragEnd();
-      return;
-    }
-    reorderCells(draggingCellId, lastCell.id, true);
     setDraggingCellId(null);
-    setDragOverCellId(null);
-    setDragOverTail(false);
-  }, [currentNotebook, draggingCellId, reorderCells, handleDragEnd]);
+    setDragOverState({ id: null, placeAfter: false });
+  }, [draggingCellId, reorderCells]);
 
   const executeCell = useCallback(async (cellId: string) => {
-    if (!currentNotebook) {
-      return;
+    const notebook = currentNotebookRef.current;
+    if (!notebook) {
+      return { success: false as const };
     }
 
-    const cell = currentNotebook.cells.find(c => c.id === cellId);
+    const cell = notebook.cells.find(c => c.id === cellId);
     if (!cell || !cell.sql.trim()) {
-      return;
+      return { success: false as const };
     }
 
     setActiveCellId(cellId);
 
     const updatedNotebook = {
-      ...currentNotebook,
-      cells: currentNotebook.cells.map(c =>
-        c.id === cellId ? { ...c, loading: true, error: undefined } : c
+      ...notebook,
+      cells: notebook.cells.map(c =>
+        c.id === cellId ? { ...c, loading: true, error: undefined, result: undefined } : c
       ),
     };
     setCurrentNotebook(updatedNotebook);
+    currentNotebookRef.current = updatedNotebook;
 
     try {
       const response = await fetch('/api/query', {
@@ -316,8 +374,8 @@ const Notebooks: React.FC = () => {
       const lastResult = results.length > 0 ? results[results.length - 1] : undefined;
 
       const finalNotebook = {
-        ...currentNotebook,
-        cells: currentNotebook.cells.map(c =>
+        ...updatedNotebook,
+        cells: updatedNotebook.cells.map(c =>
           c.id === cellId
             ? {
                 ...c,
@@ -332,14 +390,17 @@ const Notebooks: React.FC = () => {
       };
 
       setCurrentNotebook(finalNotebook);
+      currentNotebookRef.current = finalNotebook;
       setNotebooks(prev => prev.map(nb => nb.id === finalNotebook.id ? finalNotebook : nb));
+
+      return { success: true as const };
     } catch (error) {
       console.error('Cell execution failed:', error);
       const errorMessage = (error as Error).message.replace(/\\n/g, '\n');
 
       const finalNotebook = {
-        ...currentNotebook,
-        cells: currentNotebook.cells.map(c =>
+        ...updatedNotebook,
+        cells: updatedNotebook.cells.map(c =>
           c.id === cellId
             ? {
                 ...c,
@@ -353,9 +414,54 @@ const Notebooks: React.FC = () => {
       };
 
       setCurrentNotebook(finalNotebook);
+      currentNotebookRef.current = finalNotebook;
       setNotebooks(prev => prev.map(nb => nb.id === finalNotebook.id ? finalNotebook : nb));
+
+      return { success: false as const, error: errorMessage };
     }
-  }, [currentNotebook]);
+  }, []);
+
+  const runCellsFrom = useCallback(async (startIndex: number) => {
+    const notebook = currentNotebookRef.current;
+    if (!notebook) {
+      return;
+    }
+    const ids = notebook.cells.slice(startIndex).map(cell => cell.id);
+    for (const id of ids) {
+      const result = await executeCell(id);
+      if (!result?.success) {
+        break;
+      }
+    }
+  }, [executeCell]);
+
+  const runCellsTo = useCallback(async (endIndex: number) => {
+    const notebook = currentNotebookRef.current;
+    if (!notebook) {
+      return;
+    }
+    const ids = notebook.cells.slice(0, Math.min(endIndex + 1, notebook.cells.length)).map(cell => cell.id);
+    for (const id of ids) {
+      const result = await executeCell(id);
+      if (!result?.success) {
+        break;
+      }
+    }
+  }, [executeCell]);
+
+  useEffect(() => {
+    if (!fullscreenCellId) {
+      return;
+    }
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeFullscreen();
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [fullscreenCellId, closeFullscreen]);
 
   const deleteCell = useCallback((cellId: string) => {
     if (!currentNotebook || currentNotebook.cells.length <= 1) {
@@ -374,14 +480,33 @@ const Notebooks: React.FC = () => {
     setActiveCellId(prev => (prev === cellId ? fallbackCell?.id ?? null : prev));
     setCurrentNotebook(updatedNotebook);
     setNotebooks(prev => prev.map(nb => nb.id === updatedNotebook.id ? updatedNotebook : nb));
+    setFullscreenCellId(prev => (prev === cellId ? null : prev));
   }, [currentNotebook]);
 
-  const rowCount = activeResult?.rowCount ?? activeResult?.data.length ?? 0;
-  const columnCount = activeResult?.columns.length ?? 0;
+  const renderAddControl = (label: 'above' | 'between' | 'below', insertIndex: number) => {
+    if (fullscreenCellId) {
+      return null;
+    }
+    const labelText = label === 'between' ? 'Add cell between' : label === 'above' ? 'Add cell above' : 'Add cell below';
+    return (
+      <button
+        key={`add-control-${insertIndex}`}
+        type="button"
+        onClick={() => addCellAt(insertIndex)}
+        className="group relative flex w-full items-center justify-center py-1 focus:outline-none"
+        title={labelText}
+      >
+        <span className="pointer-events-none h-px w-full bg-gray-200 transition-colors group-hover:bg-indigo-300" />
+        <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-semibold text-gray-600 opacity-0 shadow group-hover:-translate-y-1 group-hover:opacity-100 group-hover:border-indigo-300 group-hover:text-indigo-600">
+          + {labelText}
+        </span>
+      </button>
+    );
+  };
 
   const renderSidebar = () => (
     <div className="flex h-full flex-col border-r border-gray-200 bg-white">
-      <div className="p-4 border-b border-gray-100">
+      <div className="p-3 border-b border-gray-100">
         <label className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2 block">
           Search
         </label>
@@ -401,192 +526,103 @@ const Notebooks: React.FC = () => {
             value={notebookSearch}
             onChange={(e) => setNotebookSearch(e.target.value)}
             placeholder="Find notebook"
-            className="w-full rounded-xl border border-gray-200 bg-gray-50 pl-9 pr-3 py-2 text-sm text-gray-700 focus:border-indigo-400 focus:bg-white focus:outline-none"
+            className="w-full rounded-lg border border-gray-200 bg-gray-50 pl-8 pr-3 py-2 text-sm text-gray-700 focus:border-indigo-400 focus:bg-white focus:outline-none"
           />
         </div>
-        <button
-          onClick={createNewNotebook}
-          className="mt-4 w-full rounded-xl border border-dashed border-gray-300 py-2 text-sm font-semibold text-gray-700 hover:border-indigo-300 hover:text-indigo-600"
-        >
-          + New Notebook
-        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
-          Notebooks
+        <div className="flex items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-full border border-transparent px-2 py-1 text-xs font-semibold text-gray-500 hover:text-gray-700"
+            onClick={() => setNotebookListCollapsed(prev => !prev)}
+          >
+            <span>{notebookListCollapsed ? '▶' : '▼'}</span>
+            <span>Notebooks</span>
+          </button>
+          <button
+            type="button"
+            onClick={createNewNotebook}
+            className="rounded-full border border-gray-200 px-2 py-1 text-sm font-semibold text-gray-600 hover:border-indigo-300 hover:text-indigo-600"
+            title="Add notebook"
+          >
+            +
+          </button>
         </div>
 
-        <div className="px-2 pb-4 space-y-1">
-          {filteredNotebooks.length === 0 && (
-            <div className="text-center text-sm text-gray-500 px-2 py-6">
-              No notebooks found
-            </div>
-          )}
-          {filteredNotebooks.map(nb => {
-            const isActive = currentNotebook?.id === nb.id;
-            return (
-              <button
-                key={nb.id}
-                onClick={() => selectNotebook(nb.id)}
-                className={`w-full text-left px-3 py-3 rounded-xl border transition-all ${
-                  isActive
-                    ? 'border-indigo-300 bg-indigo-50/70 text-indigo-700'
-                    : 'border-transparent hover:border-gray-200 hover:bg-gray-50'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-sm truncate">{nb.name || 'Untitled Notebook'}</span>
-                  <span className="text-[10px] uppercase text-gray-400">
-                    {formatRelativeTime(nb.updatedAt) || 'new'}
-                  </span>
-                </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {nb.cells.length} cell{nb.cells.length === 1 ? '' : 's'}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderResultPanel = () => (
-    <div className="flex h-full flex-col border-l border-gray-200 bg-white">
-      <div className="px-5 py-4 border-b border-gray-100">
-        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-          Result Inspector
-        </p>
-        <div className="mt-3 flex items-baseline gap-2">
-          <span className="text-2xl font-semibold text-gray-900">{rowCount}</span>
-          <span className="text-sm text-gray-500">Row{rowCount === 1 ? '' : 's'}</span>
-        </div>
-        <div className="text-sm text-gray-500 mt-1">
-          {columnCount} Column{columnCount === 1 ? '' : 's'}
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-5 space-y-4">
-        {!currentNotebook && (
-          <p className="text-sm text-gray-500">
-            Create a notebook to start running queries.
-          </p>
-        )}
-
-        {currentNotebook && !activeCell && (
-          <p className="text-sm text-gray-500">
-            Add a cell to see results.
-          </p>
-        )}
-
-        {currentNotebook && activeCell && (
-          <>
-            {activeCell.loading && (
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <span className="w-3 h-3 border-2 border-gray-300 border-t-indigo-500 rounded-full animate-spin" />
-                Running query...
+        {!notebookListCollapsed && (
+          <div className="px-2 pb-3 space-y-1">
+            {filteredNotebooks.length === 0 && (
+              <div className="text-center text-sm text-gray-500 px-2 py-4">
+                No notebooks found
               </div>
             )}
-
-            {activeCell.error && (
-              <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-                {activeCell.error}
-              </div>
-            )}
-
-            {!activeCell.loading && !activeCell.error && activeResult && (
-              <>
-                <div>
-                  <label className="text-xs font-semibold uppercase tracking-wide text-gray-400">
-                    Filter rows
-                  </label>
-                  <div className="relative mt-2">
-                    <span className="absolute inset-y-0 left-3 flex items-center text-gray-400">
-                      <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor">
-                        <path
-                          d="m13.5 13.5 3 3"
-                          strokeWidth="1.6"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        <circle cx="9" cy="9" r="5.5" strokeWidth="1.6" />
-                      </svg>
-                    </span>
-                    <input
-                      value={resultSearch}
-                      onChange={(e) => setResultSearch(e.target.value)}
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 pl-9 pr-3 py-2 text-sm text-gray-700 focus:border-indigo-400 focus:bg-white focus:outline-none"
-                      placeholder="Search results"
-                    />
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-gray-200 overflow-hidden">
-                  <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 text-xs text-gray-500">
-                    <span>{activeResult.duration || 'Result'}</span>
-                    <span>{filteredResultRows.length} shown</span>
-                  </div>
-                  <div className="overflow-auto max-h-80">
-                    <table className="min-w-full text-sm">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          {activeResult.columns.map((column, index) => (
-                            <th key={column + index} className="px-3 py-2 text-left font-semibold text-gray-700">
-                              <div>{column}</div>
-                              {activeResult.types[index] && (
-                                <div className="text-xs text-gray-400">{activeResult.types[index]}</div>
-                              )}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredResultRows.map((row, rowIndex) => (
-                          <tr key={rowIndex} className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                            {row.map((value, cellIndex) => (
-                              <td key={cellIndex} className="px-3 py-2 text-gray-800 font-mono text-xs">
-                                {value}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-dashed border-gray-200 p-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">
-                    Column types
-                  </p>
-                  <div className="space-y-1">
-                    {activeResult.columns.map((column, index) => (
-                      <div key={column + index} className="flex items-center justify-between text-sm">
-                        <span className="text-gray-700">{column}</span>
-                        <span className="text-gray-500 font-mono text-xs">{activeResult.types[index]}</span>
+            {filteredNotebooks.map(nb => {
+              const isActive = currentNotebook?.id === nb.id;
+              const isMenuOpen = openNotebookMenuId === nb.id;
+              return (
+                <div key={nb.id} className="space-y-1" data-notebook-menu={isMenuOpen ? 'true' : undefined}>
+                  <button
+                    onClick={() => selectNotebook(nb.id)}
+                    className={`w-full text-left px-3 py-2 rounded-lg border transition-all ${
+                      isActive
+                        ? 'border-indigo-300 bg-indigo-50/70 text-indigo-700'
+                        : 'border-transparent hover:border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-sm truncate">{nb.name || 'Untitled Notebook'}</span>
+                      <div className="flex items-center gap-2 text-[10px] text-gray-400">
+                        <span className="uppercase">{formatRelativeTime(nb.updatedAt) || 'new'}</span>
+                        <div className="relative" data-notebook-menu-button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenNotebookMenuId(prev => (prev === nb.id ? null : nb.id));
+                            }}
+                            className={`rounded-full border p-1 transition ${
+                              isMenuOpen ? 'border-indigo-300 text-indigo-600' : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                            }`}
+                            title="Notebook options"
+                          >
+                            <EllipsisIcon className="h-3.5 w-3.5" />
+                          </button>
+                          {isMenuOpen && (
+                            <div className="absolute right-0 mt-2 w-40 rounded-xl border border-gray-200 bg-white shadow-lg z-10">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  deleteNotebook(nb.id);
+                                  setOpenNotebookMenuId(null);
+                                }}
+                                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                              >
+                                Delete notebook
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {nb.cells.length} cell{nb.cells.length === 1 ? '' : 's'}
+                    </div>
+                  </button>
                 </div>
-              </>
-            )}
-
-            {!activeCell.loading && !activeCell.error && !activeResult && (
-              <p className="text-sm text-gray-500">
-                Run the selected cell to preview its data.
-              </p>
-            )}
-          </>
+              );
+            })}
+          </div>
         )}
       </div>
     </div>
   );
 
   return (
-    <div className="flex h-full flex-1 flex-col bg-[#f9fbff]">
+    <div className="relative flex h-full flex-1 flex-col bg-[#f9fbff]">
       <PanelGroup direction="horizontal" className="flex-1 overflow-hidden">
-        <Panel defaultSize={18} minSize={15} maxSize={30} className="h-full">
+        <Panel defaultSize={15} minSize={15} maxSize={30} className="h-full">
           {renderSidebar()}
         </Panel>
         <PanelResizeHandle className="group flex w-3 cursor-col-resize items-center justify-center">
@@ -596,73 +632,122 @@ const Notebooks: React.FC = () => {
           <div className="flex h-full flex-col overflow-hidden">
             {currentNotebook ? (
               <>
-                <header className="border-b border-gray-200 bg-white px-8 py-6 flex items-center justify-between">
+                <header className="border-b border-gray-200 bg-white px-4 py-3 flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <input
+                      ref={notebookNameRef}
                       type="text"
                       value={currentNotebook.name}
                       onChange={(e) => updateNotebookName(currentNotebook.id, e.target.value)}
-                      className="w-full border-none bg-transparent text-2xl font-semibold text-gray-900 focus:outline-none"
+                      className="w-full border-none bg-transparent text-xl font-semibold text-gray-900 focus:outline-none"
                       placeholder="Notebook name"
                     />
-                    <p className="text-sm text-gray-500 mt-1">
+                    <p className="text-xs text-gray-500 mt-1">
                       Updated {formatRelativeTime(currentNotebook.updatedAt) || 'just now'} · {currentNotebook.cells.length} cell{currentNotebook.cells.length === 1 ? '' : 's'}
                     </p>
                   </div>
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <span className="hidden sm:inline">⌘⏎ to run cell</span>
+                    <div className="relative" ref={notebookMenuRef}>
+                      <button
+                        type="button"
+                        onClick={() => setNotebookMenuOpen(prev => !prev)}
+                        className={`rounded-full border p-1.5 transition ${
+                          notebookMenuOpen ? 'border-indigo-300 text-indigo-600' : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                        }`}
+                        title="Notebook options"
+                      >
+                        <EllipsisIcon className="h-4 w-4" />
+                      </button>
+                      {notebookMenuOpen && (
+                        <div className="absolute right-0 mt-2 w-44 rounded-xl border border-gray-200 bg-white shadow-lg z-10">
+                          <button
+                            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                            onClick={() => {
+                              focusNotebookName();
+                              setNotebookMenuOpen(false);
+                            }}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                            onClick={() => {
+                              closeNotebook();
+                              setNotebookMenuOpen(false);
+                            }}
+                          >
+                            Close
+                          </button>
+                          <button
+                            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50"
+                            onClick={() => {
+                              deleteAllCells();
+                              setNotebookMenuOpen(false);
+                            }}
+                          >
+                            Delete all cells
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </header>
 
-                <div className="flex-1 overflow-y-auto px-8 py-6 space-y-5">
-                  {currentNotebook.cells.map((cell, index) => (
-                    <NotebookCellComponent
-                      key={cell.id}
-                      cell={cell}
-                      index={index}
-                      onSqlChange={(sql) => updateCellSql(cell.id, sql)}
-                      onExecute={() => executeCell(cell.id)}
-                      onDelete={() => deleteCell(cell.id)}
-                      canDelete={currentNotebook.cells.length > 1}
-                      isActive={cell.id === activeCellId}
-                      onSelect={() => setActiveCellId(cell.id)}
-                      onToggleCollapse={() => toggleCellSection(cell.id, 'collapsed')}
-                      onToggleEditor={() => toggleCellSection(cell.id, 'hideEditor')}
-                      onToggleResult={() => toggleCellSection(cell.id, 'hideResult')}
-                      onMoveUp={() => moveCellPosition(cell.id, 'up')}
-                      onMoveDown={() => moveCellPosition(cell.id, 'down')}
-                      dragState={{
-                        isDragging: draggingCellId === cell.id,
-                        isDragOver: dragOverCellId === cell.id,
-                      }}
-                      onDragStart={() => handleDragStart(cell.id)}
-                      onDragEnd={handleDragEnd}
-                      onDragOver={() => handleDragOverCell(cell.id)}
-                      onDrop={() => handleDropOnCell(cell.id)}
-                    />
-                  ))}
-
-                  <button
-                    onClick={addCell}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      if (draggingCellId) {
-                        setDragOverTail(true);
-                      }
-                    }}
-                    onDragLeave={() => setDragOverTail(false)}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      handleDropAtEnd();
-                    }}
-                    className={`w-full rounded-2xl border-2 border-dashed py-4 text-sm font-semibold text-gray-500 transition ${
-                      dragOverTail
-                        ? 'border-indigo-300 text-indigo-600 bg-indigo-50/30'
-                        : 'border-gray-300 hover:border-indigo-300 hover:text-indigo-600'
-                    }`}
-                  >
-                    + Add Cell
-                  </button>
-                </div>
-              </>
-            ) : (
+                <div className={`flex-1 overflow-y-auto px-4 py-4 ${fullscreenCellId ? 'space-y-0' : 'space-y-3'}`}>
+                  {!fullscreenCellId && renderAddControl('above', 0)}
+                  {currentNotebook.cells.map((cell, index) => {
+                    if (fullscreenCellId && cell.id !== fullscreenCellId) {
+                      return null;
+                    }
+                    return (
+                      <React.Fragment key={cell.id}>
+                        <NotebookCellComponent
+                          cell={cell}
+                          index={index}
+                          onSqlChange={(sql) => updateCellSql(cell.id, sql)}
+                          onExecute={() => executeCell(cell.id)}
+                          onDelete={() => deleteCell(cell.id)}
+                          canDelete={currentNotebook.cells.length > 1}
+                          isActive={cell.id === activeCellId || fullscreenCellId === cell.id}
+                          onSelect={() => setActiveCellId(cell.id)}
+                          onToggleCollapse={() => toggleCellSection(cell.id, 'collapsed')}
+                          onToggleEditor={() => toggleCellSection(cell.id, 'hideEditor')}
+                          onToggleResult={() => toggleCellSection(cell.id, 'hideResult')}
+                          onToggleFullscreen={() =>
+                            setFullscreenCellId(prev => (prev === cell.id ? null : cell.id))
+                          }
+                          isFullscreen={fullscreenCellId === cell.id}
+                          onMoveUp={() => moveCellPosition(cell.id, 'up')}
+                          onMoveDown={() => moveCellPosition(cell.id, 'down')}
+                        dragState={{
+                            isDragging: draggingCellId === cell.id,
+                            isDragOver: dragOverState.id === cell.id,
+                            dragOverPosition:
+                              dragOverState.id === cell.id
+                                ? dragOverState.placeAfter
+                                  ? 'after'
+                                  : 'before'
+                                : undefined,
+                          }}
+                        onDragStart={() => handleDragStart(cell.id)}
+                        onDragEnd={handleDragEnd}
+                        onDragOver={(placeAfter) => handleDragOverCell(cell.id, placeAfter)}
+                        onDrop={(placeAfter) => handleDropOnCell(cell.id, placeAfter)}
+                        onRunFromHere={() => { void runCellsFrom(index); }}
+                        onRunToHere={() => { void runCellsTo(index); }}
+                      />
+                        {!fullscreenCellId && renderAddControl(
+                          index === currentNotebook.cells.length - 1 ? 'below' : 'between',
+                          index + 1
+                        )}
+                  </React.Fragment>
+                );
+              })}
+              {!fullscreenCellId && renderAddControl('below', currentNotebook.cells.length)}
+            </div>
+          </>
+        ) : (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center max-w-xs">
                   <p className="text-lg font-semibold text-gray-800 mb-2">No notebooks yet</p>
@@ -680,13 +765,18 @@ const Notebooks: React.FC = () => {
             )}
           </div>
         </Panel>
-        <PanelResizeHandle className="group flex w-3 cursor-col-resize items-center justify-center">
-          <span className="h-10 w-0.5 rounded-full bg-gray-200 group-hover:bg-indigo-400" />
-        </PanelResizeHandle>
-        <Panel defaultSize={22} minSize={20} maxSize={35} className="h-full">
-          {renderResultPanel()}
-        </Panel>
       </PanelGroup>
+
+      {fullscreenCellId && (
+        <div className="absolute inset-x-0 top-[68px] z-10 flex justify-end px-6">
+          <button
+            onClick={closeFullscreen}
+            className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-600 shadow-sm hover:border-gray-400"
+          >
+            Exit fullscreen ⎋
+          </button>
+        </div>
+      )}
     </div>
   );
 };

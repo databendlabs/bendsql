@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import CodeMirror from '@uiw/react-codemirror';
 import { sql } from '@codemirror/lang-sql';
-import { EditorView } from '@codemirror/view';
+import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { autocompletion } from '@codemirror/autocomplete';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { xcodeLight, xcodeLightPatch } from './components/CodeMirrorTheme';
@@ -16,6 +16,13 @@ interface QueryResult {
 }
 
 const SQLQuery: React.FC = () => {
+  const isExecutionShortcut = (event: KeyboardEvent) => {
+    if (!(event.metaKey || event.ctrlKey)) {
+      return false;
+    }
+    return event.key === 'Enter' || event.key === 'NumpadEnter' || event.key === 'Return';
+  };
+
   const router = useRouter();
   // Get query ID from path parameters (for catch-all routes like [slug])
   const pathQueryId = router.query.slug && Array.isArray(router.query.slug)
@@ -122,21 +129,24 @@ SELECT * FROM students;`);
   }, [query, router]);
 
   // Add global keyboard event listener for Cmd+Enter
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        e.preventDefault();
+  const runKeymap = useMemo(() => keymap.of([
+    {
+      key: 'Mod-Enter',
+      run: () => {
         executeQuery();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    // Cleanup event listener on component unmount
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [executeQuery]);
+        return true;
+      },
+      preventDefault: true,
+    },
+    {
+      key: 'Ctrl-Enter',
+      run: () => {
+        executeQuery();
+        return true;
+      },
+      preventDefault: true,
+    },
+  ]), [executeQuery]);
 
   const renderTable = (result: QueryResult, index: number) => {
     // Handle empty data
@@ -205,11 +215,7 @@ SELECT * FROM students;`);
 
   return (
     <div className="flex flex-1 min-h-0 flex-col bg-[#f9fbff]">
-      <div className="border-b border-gray-200 bg-white px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3 text-sm text-gray-600">
-          <span className="font-semibold text-gray-900">SQL Query</span>
-          <span className="hidden sm:block">Press ⌘⏎ to run</span>
-        </div>
+      <div className="border-b border-gray-200 bg-white px-4 py-3 flex items-center gap-3 text-sm text-gray-600">
         <button
           onClick={executeQuery}
           disabled={loading}
@@ -231,6 +237,7 @@ SELECT * FROM students;`);
             </>
           )}
         </button>
+        <span className="hidden sm:block">Press ⌘⏎ to run</span>
       </div>
       <div className="flex-1 min-h-0 border border-gray-200 bg-white">
         <PanelGroup
@@ -249,18 +256,14 @@ SELECT * FROM students;`);
                 extensions={[
                   xcodeLightPatch,
                   EditorView.lineWrapping,
+                  lineNumbers(),
                   autocompletion({
                     icons: false,
                   }),
                   sql(),
+                  runKeymap,
                 ]}
-                basicSetup={{
-                lineNumbers: true,
-                foldGutter: false,
-                indentOnInput: false,
-                autocompletion: true,
-                highlightActiveLine: false,
-                }}
+                basicSetup={false}
                 onChange={(value) => setQuery(value)}
                 editable={!loading}
                 style={{

@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import CodeMirror from '@uiw/react-codemirror';
 import { sql } from '@codemirror/lang-sql';
-import { EditorView } from '@codemirror/view';
+import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { autocompletion } from '@codemirror/autocomplete';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { xcodeLight, xcodeLightPatch } from './components/CodeMirrorTheme';
@@ -30,9 +30,16 @@ interface QueryResponse {
   queryId?: string;
 }
 
-const DEFAULT_PERF_SQL = `SELECT * FROM system.tables LIMIT 10;`;
+const DEFAULT_PERF_SQL = `select number % 3 a, number % 4 b, number % 5 c from numbers(100000000) group by all limit 3;`;
 
 const PerfQuery: React.FC = () => {
+  const isExecutionShortcut = (event: KeyboardEvent) => {
+    if (!(event.metaKey || event.ctrlKey)) {
+      return false;
+    }
+    return event.key === 'Enter' || event.key === 'NumpadEnter' || event.key === 'Return';
+  };
+
   const router = useRouter();
   // Get query ID from path parameters (for catch-all routes like [slug])
   const pathQueryId = router.query.slug && Array.isArray(router.query.slug)
@@ -188,21 +195,24 @@ const PerfQuery: React.FC = () => {
   }, [router.isReady, queryId, loadSharedPerfQuery]);
 
   // Add global keyboard event listener for Cmd+Enter
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        e.preventDefault();
+  const runKeymap = useMemo(() => keymap.of([
+    {
+      key: 'Mod-Enter',
+      run: () => {
         executePerfQuery();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    // Cleanup event listener on component unmount
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [executePerfQuery]);
+        return true;
+      },
+      preventDefault: true,
+    },
+    {
+      key: 'Mod-NumpadEnter',
+      run: () => {
+        executePerfQuery();
+        return true;
+      },
+      preventDefault: true,
+    },
+  ]), [executePerfQuery]);
 
   // Add resizeIframe function for HTML content
   useEffect(() => {
@@ -303,18 +313,14 @@ const PerfQuery: React.FC = () => {
                 extensions={[
                   xcodeLightPatch,
                   EditorView.lineWrapping,
+                  lineNumbers(),
                   autocompletion({
                     icons: false,
                   }),
                   sql(),
+                  runKeymap,
                 ]}
-                basicSetup={{
-                  lineNumbers: true,
-                  foldGutter: false,
-                  indentOnInput: false,
-                  autocompletion: true,
-                  highlightActiveLine: false,
-                }}
+                basicSetup={false}
                 onChange={(value) => setQuery(value)}
                 editable={!loading}
                 style={{
