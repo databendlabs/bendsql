@@ -26,7 +26,7 @@ use mime_guess::from_path;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use std::fs::File;
+use std::fs::{File, create_dir_all};
 use std::io::Write;
 use std::process::Command as StdCommand;
 use std::time::Instant;
@@ -456,13 +456,28 @@ client = BlockingDatabendClient(_BENDSQL_DSN)
     })?;
     drop(file);
 
-    let mount_arg = format!("{}:/workspace", dir.path().display());
+    let mount_workspace = format!("{}:/workspace", dir.path().display());
+    let cache_host = dirs::home_dir()
+        .map(|p| p.join(".bendsql/pyenv"))
+        .ok_or_else(|| {
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to locate home directory for Python cache",
+            }))
+        })?;
+    create_dir_all(&cache_host).map_err(|e| {
+        HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to prepare Python cache directory: {}", e)
+        }))
+    })?;
+    let mount_cache = format!("{}:/root/.cache/uv", cache_host.display());
     let start_time = Instant::now();
     let output = Command::new("docker")
         .arg("run")
         .arg("--rm")
         .arg("-v")
-        .arg(&mount_arg)
+        .arg(&mount_workspace)
+        .arg("-v")
+        .arg(&mount_cache)
         .arg("-w")
         .arg("/workspace")
         .arg("ghcr.io/astral-sh/uv:debian")
