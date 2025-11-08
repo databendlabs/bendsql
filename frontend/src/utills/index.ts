@@ -1,4 +1,5 @@
 export * from "./graph";
+export * from "./time";
 
 /**
  * Formats a given percentage value.

@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import CodeMirror from '@uiw/react-codemirror';
 import { sql } from '@codemirror/lang-sql';
-import { EditorView } from '@codemirror/view';
+import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { autocompletion } from '@codemirror/autocomplete';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { xcodeLight, xcodeLightPatch } from './components/CodeMirrorTheme';
@@ -30,14 +30,23 @@ interface QueryResponse {
   queryId?: string;
 }
 
+const DEFAULT_PERF_SQL = `select number % 3 a, number % 4 b, number % 5 c from numbers(100000000) group by all limit 3;`;
+
 const PerfQuery: React.FC = () => {
+  const isExecutionShortcut = (event: KeyboardEvent) => {
+    if (!(event.metaKey || event.ctrlKey)) {
+      return false;
+    }
+    return event.key === 'Enter' || event.key === 'NumpadEnter' || event.key === 'Return';
+  };
+
   const router = useRouter();
   // Get query ID from path parameters (for catch-all routes like [slug])
   const pathQueryId = router.query.slug && Array.isArray(router.query.slug)
     ? router.query.slug.join('/')
     : router.query.slug;
   const queryId = pathQueryId;
-  const [query, setQuery] = useState(`SELECT number % 7 as a, number % 11 as b, number % 13 as c, count(distinct number) FROM numbers(100000000) group by a, b, c;`);
+  const [query, setQuery] = useState(DEFAULT_PERF_SQL);
   const [analysisType, setAnalysisType] = useState<'graph' | 'perf'>('graph');
 
   const [perfData, setPerfData] = useState<string>('');
@@ -113,14 +122,20 @@ const PerfQuery: React.FC = () => {
           setGraphData(null);
         }
       } else {
-        // Query not found, but still render the page
+        // Query not found, restore defaults so editor isn't empty
         setError(`Run ID "${queryId}" not found`);
         setPerfData('');
+        setGraphData(null);
+        setQuery(DEFAULT_PERF_SQL);
+        setAnalysisType('graph');
       }
     } catch (error) {
       console.error('Failed to load shared perf query:', error);
       setError(`Failed to load run ID "${queryId}"`);
       setPerfData('');
+      setGraphData(null);
+      setQuery(DEFAULT_PERF_SQL);
+      setAnalysisType('graph');
     } finally {
       setLoading(false);
     }
@@ -172,29 +187,32 @@ const PerfQuery: React.FC = () => {
 
   // Load query from URL on component mount
   useEffect(() => {
-    if (router.isReady && queryId && typeof queryId === 'string') {
+    if (router.isReady && queryId && typeof queryId === 'string' && queryId !== '0') {
       loadSharedPerfQuery(queryId);
     } else {
-      setQuery(`SELECT * FROM system.tables LIMIT 10;`);
+      setQuery(DEFAULT_PERF_SQL);
     }
   }, [router.isReady, queryId, loadSharedPerfQuery]);
 
   // Add global keyboard event listener for Cmd+Enter
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-        e.preventDefault();
+  const runKeymap = useMemo(() => keymap.of([
+    {
+      key: 'Mod-Enter',
+      run: () => {
         executePerfQuery();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    // Cleanup event listener on component unmount
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [executePerfQuery]);
+        return true;
+      },
+      preventDefault: true,
+    },
+    {
+      key: 'Mod-NumpadEnter',
+      run: () => {
+        executePerfQuery();
+        return true;
+      },
+      preventDefault: true,
+    },
+  ]), [executePerfQuery]);
 
   // Add resizeIframe function for HTML content
   useEffect(() => {
@@ -227,7 +245,7 @@ const PerfQuery: React.FC = () => {
 
     if (analysisType === 'graph' && graphData) {
       return (
-        <div className="h-full overflow-auto">
+        <div className="h-full min-h-0 overflow-auto">
           <ProfileGraphDashboard perfData={graphData} />
         </div>
       );
@@ -235,7 +253,7 @@ const PerfQuery: React.FC = () => {
       // For perf mode, render the HTML content
       return (
         <div
-          className="h-full overflow-auto p-4 bg-white"
+          className="h-full min-h-0 overflow-auto p-4 bg-white"
           dangerouslySetInnerHTML={{ __html: perfData }}
         />
       );
@@ -243,46 +261,50 @@ const PerfQuery: React.FC = () => {
   };
 
   return (
-    <div className="h-full bg-gray-100">
-      {/* Header */}
-      <div className="bg-yellow-400 px-4 py-2 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <span className="font-bold">Performance Analysis</span>
-          <div className="flex items-center gap-2">
-            <select
-              value={analysisType}
-              onChange={(e) => setAnalysisType(e.target.value as 'perf' | 'graph')}
-              className="border border-gray-300 rounded px-2 py-1 text-sm"
-            >
-              <option value="perf">Perf</option>
-              <option value="graph">Graph</option>
-            </select>
-            <button
-              onClick={executePerfQuery}
-              disabled={loading}
-              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed text-white px-4 py-1.5 rounded-md flex items-center gap-2 text-sm"
-            >
-              {loading ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  ANALYZING...
-                </>
-              ) : (
-                <>
-                  ▶ ANALYZE PERFORMANCE
-                </>
-              )}
-            </button>
-          </div>
+    <div className="flex flex-1 min-h-0 flex-col bg-[#f9fbff]">
+      <div className="border-b border-gray-200 bg-white px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-sm font-semibold text-gray-900">Performance Analysis</div>
+        <div className="flex items-center gap-2">
+          <select
+            value={analysisType}
+            onChange={(e) => setAnalysisType(e.target.value as 'perf' | 'graph')}
+            className="rounded-full border border-gray-200 px-3 py-1 text-sm text-gray-700"
+          >
+            <option value="perf">Perf</option>
+            <option value="graph">Graph</option>
+          </select>
+          <button
+            onClick={executePerfQuery}
+            disabled={loading}
+            className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-semibold ${
+              loading
+                ? 'cursor-not-allowed border-gray-200 text-gray-400'
+                : 'border-indigo-200 text-indigo-600 hover:bg-indigo-50'
+            }`}
+          >
+            {loading ? (
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                Analyzing...
+              </>
+            ) : (
+              <>
+                <span className="text-base">▶</span>
+                Analyze
+              </>
+            )}
+          </button>
         </div>
       </div>
-
-      {/* Content - Resizable Vertical Panels */}
-      <div className="h-[calc(100vh-48px)] border border-gray-300">
-        <PanelGroup direction="vertical" className="h-full">
+      <div className="flex-1 min-h-0 border border-gray-200 bg-white">
+        <PanelGroup
+          direction="vertical"
+          className="h-full min-h-0"
+          style={{ height: '100%' }}
+        >
           {/* Top Panel - SQL Editor (small initial height) */}
-          <Panel defaultSize={15} minSize={5} maxSize={40} className="h-full">
-            <div className="h-full border-b border-gray-300 relative">
+          <Panel defaultSize={25} minSize={10} maxSize={60} className="h-full min-h-0">
+            <div className="h-full min-h-0 border-b border-gray-300 relative">
               <CodeMirror
                 value={query}
                 placeholder="Enter your SQL query here... (Press Cmd+Enter to analyze performance)"
@@ -291,18 +313,14 @@ const PerfQuery: React.FC = () => {
                 extensions={[
                   xcodeLightPatch,
                   EditorView.lineWrapping,
+                  lineNumbers(),
                   autocompletion({
                     icons: false,
                   }),
                   sql(),
+                  runKeymap,
                 ]}
-                basicSetup={{
-                  lineNumbers: true,
-                  foldGutter: false,
-                  indentOnInput: false,
-                  autocompletion: true,
-                  highlightActiveLine: false,
-                }}
+                basicSetup={false}
                 onChange={(value) => setQuery(value)}
                 editable={!loading}
                 style={{
@@ -316,9 +334,9 @@ const PerfQuery: React.FC = () => {
           <PanelResizeHandle className="h-1 bg-gray-300 hover:bg-gray-400 cursor-row-resize" />
 
           {/* Bottom Panel - Performance Results */}
-          <Panel defaultSize={80} minSize={60} className="h-full">
-            <div className="h-full bg-white relative">
-              <div className="p-2 h-full">
+          <Panel defaultSize={75} minSize={40} className="h-full min-h-0">
+            <div className="h-full min-h-0 bg-white relative">
+              <div className="p-2 h-full min-h-0">
                 {error ? (
                   <div className="flex items-center justify-center h-full">
                     <div className="bg-red-50 border border-red-300 rounded-lg p-4 text-red-700">
