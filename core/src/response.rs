@@ -15,6 +15,7 @@
 use crate::error_code::ErrorCode;
 use crate::session::SessionState;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Deserialize, Debug, Default)]
 pub struct QueryStats {
@@ -77,6 +78,7 @@ pub struct QueryResponse {
     pub schema: Vec<SchemaField>,
     pub data: Vec<Vec<Option<String>>>,
     pub state: String,
+    pub settings: Option<BTreeMap<String, String>>,
     pub error: Option<ErrorCode>,
     // make it optional for backward compatibility
     pub warnings: Option<Vec<String>>,

@@ -24,7 +24,7 @@ impl Capability {
     pub fn from_server_version(ver: &Version) -> Capability {
         Capability {
             streaming_load: ver > &Version::new(1, 2, 781),
-            arrow_data: ver >= &Version::new(1, 2, 831),
+            arrow_data: ver >= &Version::new(1, 2, 836),
         }
     }
 }

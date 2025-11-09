@@ -19,12 +19,12 @@ use std::task::Poll;
 use serde::Deserialize;
 use tokio_stream::{Stream, StreamExt};
 
-#[cfg(feature = "flight-sql")]
-use arrow::record_batch::RecordBatch;
-
 use crate::error::{Error, Result};
 use crate::schema::SchemaRef;
 use crate::value::Value;
+#[cfg(feature = "flight-sql")]
+use arrow::record_batch::RecordBatch;
+use chrono_tz::Tz;
 
 #[derive(Clone, Debug)]
 pub enum RowWithStats {
@@ -135,13 +135,13 @@ impl Row {
     }
 }
 
-impl TryFrom<(SchemaRef, Vec<Option<String>>)> for Row {
+impl TryFrom<(SchemaRef, Vec<Option<String>>, Tz)> for Row {
     type Error = Error;
 
-    fn try_from((schema, data): (SchemaRef, Vec<Option<String>>)) -> Result<Self> {
+    fn try_from((schema, data, tz): (SchemaRef, Vec<Option<String>>, Tz)) -> Result<Self> {
         let mut values: Vec<Value> = Vec::with_capacity(data.len());
         for (field, val) in schema.fields().iter().zip(data.into_iter()) {
-            values.push(Value::try_from((&field.data_type, val))?);
+            values.push(Value::try_from((&field.data_type, val, tz))?);
         }
         Ok(Self::new(schema, values))
     }
@@ -184,9 +184,9 @@ impl Rows {
 }
 
 #[cfg(feature = "flight-sql")]
-impl TryFrom<RecordBatch> for Rows {
+impl TryFrom<(RecordBatch, Tz)> for Rows {
     type Error = Error;
-    fn try_from(batch: RecordBatch) -> Result<Self> {
+    fn try_from((batch, ltz): (RecordBatch, Tz)) -> Result<Self> {
         let batch_schema = batch.schema();
         let schema = SchemaRef::new(batch_schema.clone().try_into()?);
         let mut rows: Vec<Row> = Vec::new();
@@ -195,7 +195,7 @@ impl TryFrom<RecordBatch> for Rows {
             for j in 0..batch_schema.fields().len() {
                 let v = batch.column(j);
                 let field = batch_schema.field(j);
-                let value = Value::try_from((field, v, i))?;
+                let value = Value::try_from((field, v, i, ltz))?;
                 values.push(value);
             }
             rows.push(Row::new(schema.clone(), values));

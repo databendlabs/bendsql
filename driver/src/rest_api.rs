@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use async_trait::async_trait;
+use chrono_tz::Tz;
 use log::info;
 use std::collections::{BTreeMap, VecDeque};
 use std::marker::PhantomData;
@@ -31,7 +32,9 @@ use databend_client::APIClient;
 use databend_client::Pages;
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
-use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
+use databend_driver_core::rows::{
+    Row, RowIterator, RowStatsIterator, RowWithStats, Rows, ServerStats,
+};
 use databend_driver_core::schema::{Schema, SchemaRef};
 
 const LOAD_PLACEHOLDER: &str = "@_databend_load";
@@ -293,7 +296,11 @@ pub struct RestAPIRows<T> {
     pages: Pages,
 
     schema: SchemaRef,
+    timezone: Tz,
+
     data: VecDeque<Vec<Option<String>>>,
+    rows: VecDeque<Row>,
+
     stats: Option<ServerStats>,
 
     _phantom: std::marker::PhantomData<T>,
@@ -303,10 +310,13 @@ impl<T> RestAPIRows<T> {
     async fn from_pages(pages: Pages) -> Result<(Schema, Self)> {
         let (pages, schema) = pages.wait_for_schema(true).await?;
         let schema: Schema = schema.try_into()?;
+        let timezone = pages.timezone();
         let rows = Self {
             pages,
             schema: Arc::new(schema.clone()),
+            timezone,
             data: Default::default(),
+            rows: Default::default(),
             stats: None,
             _phantom: PhantomData,
         };
@@ -325,7 +335,12 @@ impl<T: FromRowStats + std::marker::Unpin> Stream for RestAPIRows<T> {
         // Therefore, we could guarantee the `/final` called before the last row.
         if self.data.len() > 1 {
             if let Some(row) = self.data.pop_front() {
-                let row = T::try_from_row(row, self.schema.clone())?;
+                let row = T::try_from_raw_row(row, self.schema.clone(), self.timezone)?;
+                return Poll::Ready(Some(Ok(row)));
+            }
+        } else if self.rows.len() > 1 {
+            if let Some(row) = self.rows.pop_front() {
+                let row = T::from_row(row);
                 return Poll::Ready(Some(Ok(row)));
             }
         }
@@ -335,18 +350,29 @@ impl<T: FromRowStats + std::marker::Unpin> Stream for RestAPIRows<T> {
                 if self.schema.fields().is_empty() {
                     self.schema = Arc::new(page.raw_schema.try_into()?);
                 }
-                let mut new_data = page.data.into();
-                self.data.append(&mut new_data);
+                if page.batches.is_empty() {
+                    let mut new_data = page.data.into();
+                    self.data.append(&mut new_data);
+                } else {
+                    for batch in page.batches.into_iter() {
+                        let rows = Rows::try_from((batch, self.timezone))?;
+                        self.rows.extend(rows);
+                    }
+                }
                 Poll::Ready(Some(Ok(T::from_stats(page.stats.into()))))
             }
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
-            Poll::Ready(None) => match self.data.pop_front() {
-                Some(row) => {
-                    let row = T::try_from_row(row, self.schema.clone())?;
+            Poll::Ready(None) => {
+                if let Some(row) = self.rows.pop_front() {
+                    let row = T::from_row(row);
                     Poll::Ready(Some(Ok(row)))
+                } else if let Some(row) = self.data.pop_front() {
+                    let row = T::try_from_raw_row(row, self.schema.clone(), self.timezone)?;
+                    Poll::Ready(Some(Ok(row)))
+                } else {
+                    Poll::Ready(None)
                 }
-                None => Poll::Ready(None),
-            },
+            }
             Poll::Pending => Poll::Pending,
         }
     }
@@ -354,7 +380,8 @@ impl<T: FromRowStats + std::marker::Unpin> Stream for RestAPIRows<T> {
 
 trait FromRowStats: Send + Sync + Clone {
     fn from_stats(stats: ServerStats) -> Self;
-    fn try_from_row(row: Vec<Option<String>>, schema: SchemaRef) -> Result<Self>;
+    fn try_from_raw_row(row: Vec<Option<String>>, schema: SchemaRef, tz: Tz) -> Result<Self>;
+    fn from_row(row: Row) -> Self;
 }
 
 impl FromRowStats for RowWithStats {
@@ -362,8 +389,11 @@ impl FromRowStats for RowWithStats {
         RowWithStats::Stats(stats)
     }
 
-    fn try_from_row(row: Vec<Option<String>>, schema: SchemaRef) -> Result<Self> {
-        Ok(RowWithStats::Row(Row::try_from((schema, row))?))
+    fn try_from_raw_row(row: Vec<Option<String>>, schema: SchemaRef, tz: Tz) -> Result<Self> {
+        Ok(RowWithStats::Row(Row::try_from((schema, row, tz))?))
+    }
+    fn from_row(row: Row) -> Self {
+        RowWithStats::Row(row)
     }
 }
 
@@ -372,8 +402,12 @@ impl FromRowStats for RawRowWithStats {
         RawRowWithStats::Stats(stats)
     }
 
-    fn try_from_row(row: Vec<Option<String>>, schema: SchemaRef) -> Result<Self> {
-        let rows = Row::try_from((schema, row.clone()))?;
+    fn try_from_raw_row(row: Vec<Option<String>>, schema: SchemaRef, tz: Tz) -> Result<Self> {
+        let rows = Row::try_from((schema, row.clone(), tz))?;
         Ok(RawRowWithStats::Row(RawRow::new(rows, row)))
+    }
+
+    fn from_row(row: Row) -> Self {
+        RawRowWithStats::Row(RawRow::from(row))
     }
 }

@@ -32,14 +32,16 @@ use crate::{
     QueryStats,
 };
 use crate::{Page, Pages};
+use arrow_array::RecordBatch;
+use arrow_ipc::reader::StreamReader;
 use base64::engine::general_purpose::URL_SAFE;
 use base64::Engine;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use percent_encoding::percent_decode_str;
 use reqwest::cookie::CookieStore;
-use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE};
 use reqwest::multipart::{Form, Part};
 use reqwest::{Body, Client as HttpClient, Request, RequestBuilder, Response, StatusCode};
 use semver::Version;
@@ -65,6 +67,9 @@ const TXN_STATE_ACTIVE: &str = "Active";
 const HEADER_SQL: &str = "X-DATABEND-SQL";
 const HEADER_QUERY_CONTEXT: &str = "X-DATABEND-QUERY-CONTEXT";
 const HEADER_SESSION_ID: &str = "X-DATABEND-SESSION-ID";
+const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
+const CONTENT_TYPE_ARROW_OR_JSON: &str = "application/vnd.apache.arrow.stream";
+//const CONTENT_TYPE_ARROW_OR_JSON: &str = "application/vnd.apache.arrow.stream,application/json";
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -102,6 +107,7 @@ pub struct APIClient {
     route_hint: RouteHintGenerator,
 
     disable_login: bool,
+    body_format: String,
     disable_session_token: bool,
     session_token_info: Option<Arc<Mutex<(SessionTokenInfo, Instant)>>>,
 
@@ -252,6 +258,17 @@ impl APIClient {
                         _ => {
                             return Err(Error::BadArgument(format!(
                                 "Invalid value for session_token: {v}"
+                            )))
+                        }
+                    }
+                }
+                "body_format" => {
+                    let v = v.to_string().to_lowercase();
+                    match v.as_str() {
+                        "json" | "arrow" => client.body_format = v.to_string(),
+                        _ => {
+                            return Err(Error::BadArgument(format!(
+                                "Invalid value for body_format: {v}"
                             )))
                         }
                     }
@@ -425,9 +442,8 @@ impl APIClient {
 
     pub async fn start_query(self: &Arc<Self>, sql: &str, need_progress: bool) -> Result<Pages> {
         info!("start query: {sql}");
-        let resp = self.start_query_inner(sql, None).await?;
-        let pages = Pages::new(self.clone(), resp, need_progress);
-        Ok(pages)
+        let (resp, batches) = self.start_query_inner(sql, None).await?;
+        Pages::new(self.clone(), resp, batches, need_progress)
     }
 
     pub fn finalize_query(self: &Arc<Self>, query_id: &str) {
@@ -459,7 +475,7 @@ impl APIClient {
         &self,
         sql: &str,
         stage_attachment_config: Option<StageAttachmentConfig<'_>>,
-    ) -> Result<QueryResponse> {
+    ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
         if !self.in_active_transaction() {
             self.route_hint.next();
         }
@@ -476,6 +492,11 @@ impl APIClient {
         // headers
         let query_id = self.gen_query_id();
         let mut headers = self.make_headers(Some(&query_id))?;
+        if self.capability.arrow_data && self.body_format == "arrow" {
+            debug!("accept arrow data");
+            headers.insert(ACCEPT, HeaderValue::from_static(CONTENT_TYPE_ARROW_OR_JSON));
+        }
+
         if need_sticky {
             if let Some(node_id) = self.last_node_id() {
                 headers.insert(HEADER_STICKY_NODE, node_id.parse()?);
@@ -485,22 +506,77 @@ impl APIClient {
         builder = self.wrap_auth_or_session_token(builder)?;
         let request = builder.headers(headers.clone()).build()?;
         let response = self.query_request_helper(request, true, true).await?;
-        if let Some(route_hint) = response.headers().get(HEADER_ROUTE_HINT) {
-            self.route_hint.set(route_hint.to_str().unwrap_or_default());
-        }
-        let body = response.bytes().await?;
-        let result: QueryResponse = json_from_slice(&body)?;
-        self.handle_session(&result.session).await;
-        if let Some(err) = result.error {
-            return Err(Error::QueryFailed(err));
-        }
+        self.handle_page(response, true).await
+    }
 
-        self.set_last_query_id(Some(query_id));
-        self.handle_warnings(&result);
-        if let Some(node_id) = &result.node_id {
-            self.set_last_node_id(node_id.clone());
+    fn is_arrow_data(response: &Response) -> bool {
+        if let Some(typ) = response.headers().get(CONTENT_TYPE) {
+            if let Ok(t) = typ.to_str() {
+                return t == CONTENT_TYPE_ARROW;
+            }
         }
-        Ok(result)
+        false
+    }
+
+    async fn handle_page(
+        &self,
+        response: Response,
+        is_first: bool,
+    ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
+        let status = response.status();
+        if status != 200 {
+            return Err(Error::response_error(status, &response.bytes().await?));
+        }
+        let is_arrow_data = Self::is_arrow_data(&response);
+        if is_first {
+            if let Some(route_hint) = response.headers().get(HEADER_ROUTE_HINT) {
+                self.route_hint.set(route_hint.to_str().unwrap_or_default());
+            }
+        }
+        let mut body = response.bytes().await?;
+        let mut batches = vec![];
+        if is_arrow_data {
+            if is_first {
+                debug!("received arrow data");
+            }
+            let cursor = std::io::Cursor::new(body.as_ref());
+            let reader = StreamReader::try_new(cursor, None)
+                .map_err(|e| Error::Decode(format!("failed to decode arrow stream: {e}")))?;
+            let schema = reader.schema();
+            let json_body = if let Some(json_resp) = schema.metadata.get("response_header") {
+                bytes::Bytes::copy_from_slice(json_resp.as_bytes())
+            } else {
+                return Err(Error::Decode(
+                    "missing response_header metadata in arrow payload".to_string(),
+                ));
+            };
+            for batch in reader {
+                let batch = batch
+                    .map_err(|e| Error::Decode(format!("failed to decode arrow batch: {e}")))?;
+                batches.push(batch);
+            }
+            body = json_body
+        };
+        let resp: QueryResponse = json_from_slice(&body).map_err(|e| {
+            if let Error::Logic(status, ec) = &e {
+                if *status == 404 {
+                    return Error::QueryNotFound(ec.message.clone());
+                }
+            }
+            e
+        })?;
+        self.handle_session(&resp.session).await;
+        if let Some(err) = &resp.error {
+            return Err(Error::QueryFailed(err.clone()));
+        }
+        if is_first {
+            self.handle_warnings(&resp);
+            self.set_last_query_id(Some(resp.id.clone()));
+            if let Some(node_id) = &resp.node_id {
+                self.set_last_node_id(node_id.clone());
+            }
+        }
+        Ok((resp, batches))
     }
 
     pub async fn query_page(
@@ -508,10 +584,13 @@ impl APIClient {
         query_id: &str,
         next_uri: &str,
         node_id: &Option<String>,
-    ) -> Result<QueryResponse> {
+    ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
         info!("query page: {next_uri}");
         let endpoint = self.endpoint.join(next_uri)?;
-        let headers = self.make_headers(Some(query_id))?;
+        let mut headers = self.make_headers(Some(query_id))?;
+        if self.capability.arrow_data && self.body_format == "arrow" {
+            headers.insert(ACCEPT, HeaderValue::from_static(CONTENT_TYPE_ARROW_OR_JSON));
+        }
         let mut builder = self.cli.get(endpoint.clone());
         builder = self
             .wrap_auth_or_session_token(builder)?
@@ -523,24 +602,7 @@ impl APIClient {
         let request = builder.build()?;
 
         let response = self.query_request_helper(request, false, true).await?;
-        let status = response.status();
-        if status != 200 {
-            return Err(Error::response_error(status, &response.bytes().await?));
-        }
-        let body = response.bytes().await?;
-        let resp: QueryResponse = json_from_slice(&body).map_err(|e| {
-            if let Error::Logic(status, ec) = &e {
-                if *status == 404 {
-                    return Error::QueryNotFound(ec.message.clone());
-                }
-            }
-            e
-        })?;
-        self.handle_session(&resp.session).await;
-        match resp.error {
-            Some(err) => Err(Error::QueryFailed(err)),
-            None => Ok(resp),
-        }
+        self.handle_page(response, false).await
     }
 
     pub async fn kill_query(&self, query_id: &str) -> Result<()> {
@@ -643,8 +705,8 @@ impl APIClient {
             file_format_options: Some(file_format_options),
             copy_options: Some(copy_options),
         });
-        let resp = self.start_query_inner(sql, stage_attachment).await?;
-        let mut pages = Pages::new(self.clone(), resp, false);
+        let (resp, batches) = self.start_query_inner(sql, stage_attachment).await?;
+        let mut pages = Pages::new(self.clone(), resp, batches, false)?;
         let mut all = Page::default();
         while let Some(page) = pages.next().await {
             all.update(page?);
@@ -1206,6 +1268,7 @@ impl Default for APIClient {
             last_node_id: Default::default(),
             disable_session_token: true,
             disable_login: false,
+            body_format: "json".to_string(),
             session_token_info: None,
             closed: AtomicBool::new(false),
             last_query_id: Default::default(),

@@ -19,6 +19,7 @@ arrow-array = { workspace = true, optional = true }
 arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true, optional = true }
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 databend-client = { workspace = true }
 jsonb = { workspace = true, optional = true }
 tokio-stream = { workspace = true }

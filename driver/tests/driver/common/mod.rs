@@ -12,4 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use env_logger::Builder;
+use log::LevelFilter;
+use once_cell::sync::Lazy;
+
 pub static DEFAULT_DSN: &str = "databend://root:@localhost:8000/default?sslmode=disable";
+
+pub static INIT_LOG: Lazy<()> = Lazy::new(|| {
+    Builder::new()
+        .filter(None, LevelFilter::Debug)
+        .try_init()
+        .ok();
+});

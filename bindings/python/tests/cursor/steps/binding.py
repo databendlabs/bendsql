@@ -14,7 +14,7 @@
 
 import os
 import gc
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
 import time
 
@@ -38,6 +38,11 @@ if DRIVER_VERSION is not None:
 else:
     DRIVER_VERSION = (100, 0, 0)
 
+if DRIVER_VERSION > (0, 30, 3):
+    default_tzinfo = timezone.utc
+else:
+    default_tzinfo = None
+
 
 @given("A new Databend Driver Client")
 def _(context):
@@ -45,6 +50,8 @@ def _(context):
         "TEST_DATABEND_DSN",
         "databend://root:root@localhost:8000/?sslmode=disable",
     )
+    if os.getenv("BODY_FORMAT") == "arrow":
+        dsn += "&body_format=arrow"
     client = databend_driver.BlockingDatabendClient(dsn)
     context.client = client
     context.cursor = client.cursor()
@@ -145,7 +152,7 @@ def _(context):
         (
             10,
             "20",
-            datetime(2024, 4, 16, 12, 34, 56, 789000),
+            datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=default_tzinfo),
         ),
     )
     assert row.values() == expected, f"Tuple: {row.values()}"
@@ -188,7 +195,7 @@ def _(context):
             "'",
             None,
             date(2011, 3, 6),
-            datetime(2011, 3, 6, 6, 20),
+            datetime(2011, 3, 6, 6, 20, tzinfo=default_tzinfo),
             '{"a":1}',
         ),
         (
@@ -198,7 +205,7 @@ def _(context):
             '"',
             "",
             date(2012, 5, 31),
-            datetime(2012, 5, 31, 11, 20),
+            datetime(2012, 5, 31, 11, 20, tzinfo=default_tzinfo),
             '{"a":2}',
         ),
         (
@@ -208,7 +215,7 @@ def _(context):
             "\\",
             "NULL",
             date(2016, 4, 4),
-            datetime(2016, 4, 4, 11, 30),
+            datetime(2016, 4, 4, 11, 30, tzinfo=default_tzinfo),
             '{"a":3}',
         ),
     ]
@@ -271,7 +278,7 @@ def _(context):
             "'",
             None,
             date(2011, 3, 6),
-            datetime(2011, 3, 6, 6, 20),
+            datetime(2011, 3, 6, 6, 20, tzinfo=default_tzinfo),
             '{"a":1}',
         ),
         (
@@ -281,7 +288,7 @@ def _(context):
             '"',
             None,
             date(2012, 5, 31),
-            datetime(2012, 5, 31, 11, 20),
+            datetime(2012, 5, 31, 11, 20, tzinfo=default_tzinfo),
             '{"a":2}',
         ),
         (
@@ -291,7 +298,7 @@ def _(context):
             "\\",
             "NULL",
             date(2016, 4, 4),
-            datetime(2016, 4, 4, 11, 30),
+            datetime(2016, 4, 4, 11, 30, tzinfo=default_tzinfo),
             '{"a":3}',
         ),
     ]

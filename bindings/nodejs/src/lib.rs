@@ -15,7 +15,8 @@
 #[macro_use]
 extern crate napi_derive;
 
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono_tz::Tz;
 use databend_driver::LoadMethod;
 use napi::{bindgen_prelude::*, Env};
 use once_cell::sync::Lazy;
@@ -314,10 +315,10 @@ impl ToNapiValue for Value<'_> {
             databend_driver::Value::Number(n) => {
                 NumberValue::to_napi_value(env, NumberValue(n.clone()))
             }
-            databend_driver::Value::Timestamp(_) => {
+            databend_driver::Value::Timestamp(_, _tz) => {
                 let inner = val.inner.clone();
-                let v = NaiveDateTime::try_from(inner).map_err(format_napi_error)?;
-                NaiveDateTime::to_napi_value(env, v)
+                let v = DateTime::<Tz>::try_from(inner).map_err(format_napi_error)?;
+                DateTime::to_napi_value(env, v)
             }
             databend_driver::Value::Date(_) => {
                 let inner = val.inner.clone();

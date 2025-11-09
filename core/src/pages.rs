@@ -15,12 +15,15 @@
 use crate::client::QueryState;
 use crate::error::Result;
 use crate::response::QueryResponse;
-use crate::{APIClient, QueryStats, SchemaField};
+use crate::{APIClient, Error, QueryStats, SchemaField};
+use arrow_array::RecordBatch;
+use chrono_tz::Tz;
 use log::debug;
 use parking_lot::Mutex;
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
@@ -30,15 +33,17 @@ use tokio_stream::{Stream, StreamExt};
 pub struct Page {
     pub raw_schema: Vec<SchemaField>,
     pub data: Vec<Vec<Option<String>>>,
+    pub batches: Vec<RecordBatch>,
     pub stats: QueryStats,
 }
 
 impl Page {
-    pub fn from_response(response: QueryResponse) -> Self {
+    pub fn from_response(response: QueryResponse, batches: Vec<RecordBatch>) -> Self {
         Self {
             raw_schema: response.schema,
             data: response.data,
             stats: response.stats,
+            batches,
         }
     }
 
@@ -53,13 +58,14 @@ impl Page {
     }
 }
 
-type PageFut = Pin<Box<dyn Future<Output = Result<QueryResponse>> + Send>>;
+type PageFut = Pin<Box<dyn Future<Output = Result<(QueryResponse, Vec<RecordBatch>)>> + Send>>;
 
 pub struct Pages {
     query_id: String,
     client: Arc<APIClient>,
     first_page: Option<Page>,
     need_progress: bool,
+    timezone: Tz,
 
     next_page_future: Option<PageFut>,
     node_id: Option<String>,
@@ -70,7 +76,20 @@ pub struct Pages {
 }
 
 impl Pages {
-    pub fn new(client: Arc<APIClient>, first_response: QueryResponse, need_progress: bool) -> Self {
+    pub fn new(
+        client: Arc<APIClient>,
+        first_response: QueryResponse,
+        record_batches: Vec<RecordBatch>,
+        need_progress: bool,
+    ) -> Result<Self> {
+        let utc = "UTC".to_owned();
+        let timezone = first_response
+            .settings
+            .as_ref()
+            .and_then(|m| m.get("timezone"))
+            .unwrap_or(&utc);
+        let timezone = Tz::from_str(timezone).map_err(|e| Error::Decode(e.to_string()))?;
+
         let mut s = Self {
             query_id: first_response.id.clone(),
             need_progress,
@@ -81,10 +100,15 @@ impl Pages {
             next_uri: first_response.next_uri.clone(),
             result_timeout_secs: first_response.result_timeout_secs,
             last_access_time: Arc::new(Mutex::new(Instant::now())),
+            timezone,
         };
-        let first_page = Page::from_response(first_response);
+        let first_page = Page::from_response(first_response, record_batches);
         s.first_page = Some(first_page);
-        s
+        Ok(s)
+    }
+
+    pub fn timezone(&self) -> Tz {
+        self.timezone
     }
 
     pub fn add_back(&mut self, page: Page) {
@@ -99,6 +123,7 @@ impl Pages {
             let page = page?;
             if !page.raw_schema.is_empty()
                 || !page.data.is_empty()
+                || !page.batches.is_empty()
                 || (need_progress && page.stats.progresses.has_progress())
             {
                 let schema = page.raw_schema.clone();
@@ -129,7 +154,7 @@ impl Stream for Pages {
         };
         match self.next_page_future {
             Some(ref mut next_page) => match Pin::new(next_page).poll(cx) {
-                Poll::Ready(Ok(resp)) => {
+                Poll::Ready(Ok((resp, batches))) => {
                     self.next_uri = resp.next_uri.clone();
                     self.next_page_future = None;
                     if resp.data.is_empty() && !self.need_progress {
@@ -137,7 +162,7 @@ impl Stream for Pages {
                     } else {
                         let now = Instant::now();
                         *self.last_access_time.lock() = now;
-                        Poll::Ready(Some(Ok(Page::from_response(resp))))
+                        Poll::Ready(Some(Ok(Page::from_response(resp, batches))))
                     }
                 }
                 Poll::Ready(Err(e)) => {

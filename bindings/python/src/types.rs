@@ -14,7 +14,9 @@
 
 use std::sync::Arc;
 
-use chrono::{Duration, NaiveDate, NaiveDateTime};
+use chrono::offset::Offset;
+use chrono::{DateTime, Duration, FixedOffset, NaiveDate};
+use chrono_tz::Tz;
 use once_cell::sync::Lazy;
 use pyo3::exceptions::{PyAttributeError, PyException, PyStopAsyncIteration, PyStopIteration};
 use pyo3::sync::GILOnceCell;
@@ -73,10 +75,16 @@ impl<'py> IntoPyObject<'py> for Value {
                 let v = NumberValue(n);
                 v.into_bound_py_any(py)?
             }
-            databend_driver::Value::Timestamp(_) => {
-                let t = NaiveDateTime::try_from(self.0).map_err(|e| {
+            databend_driver::Value::Timestamp(_, _) => {
+                let t = DateTime::<Tz>::try_from(self.0).map_err(|e| {
                     PyException::new_err(format!("failed to convert timestamp: {e}"))
                 })?;
+                // impl of IntoPyObject for chrono_tz::Tz is gated by #![cfg(all(Py_3_9, feature = "chrono-tz"))]
+                // Convert to a fixed-offset datetime so it works on Python < 3.9 (no zoneinfo).
+                // other options:
+                //  1. abi3-py37 -> abi3-py39: abandon py3.8
+                //  2. rm abi3-py37: a wheel for each version of python
+                let t: DateTime<FixedOffset> = t.with_timezone(&t.offset().fix());
                 t.into_bound_py_any(py)?
             }
             databend_driver::Value::Date(_) => {

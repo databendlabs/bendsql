@@ -15,7 +15,7 @@
 import os
 import gc
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
 
 from behave import given, when, then
@@ -37,6 +37,11 @@ if DRIVER_VERSION is not None:
 else:
     DRIVER_VERSION = (100, 0, 0)
 
+if DRIVER_VERSION > (0, 30, 3):
+    default_tzinfo = timezone.utc
+else:
+    default_tzinfo = None
+
 
 @given("A new Databend Driver Client")
 async def _(context):
@@ -44,6 +49,8 @@ async def _(context):
         "TEST_DATABEND_DSN",
         "databend://root:root@localhost:8000/?sslmode=disable",
     )
+    if os.getenv("BODY_FORMAT") == "arrow":
+        dsn += "&body_format=arrow"
     client = databend_driver.AsyncDatabendClient(dsn)
     context.conn = await client.get_conn()
     context.client = client
@@ -130,9 +137,9 @@ async def _(context):
     row = await context.conn.query_row(
         "select (10, '20', to_datetime('2024-04-16 12:34:56.789'))"
     )
-    assert row.values() == ((10, "20", datetime(2024, 4, 16, 12, 34, 56, 789000)),), (
-        f"Tuple: {row.values()}"
-    )
+    assert row.values() == (
+        (10, "20", datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=default_tzinfo)),
+    ), f"Tuple: {row.values()}"
 
 
 @then("Select numbers should iterate all rows")
@@ -156,9 +163,33 @@ async def _(context):
     rows = await context.conn.query_iter("SELECT * FROM test")
     ret = [row.values() for row in rows]
     expected = [
-        (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, '"', "", date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (
+            -1,
+            1,
+            1.0,
+            "'",
+            None,
+            date(2011, 3, 6),
+            datetime(2011, 3, 6, 6, 20, tzinfo=default_tzinfo),
+        ),
+        (
+            -2,
+            2,
+            2.0,
+            '"',
+            "",
+            date(2012, 5, 31),
+            datetime(2012, 5, 31, 11, 20, tzinfo=default_tzinfo),
+        ),
+        (
+            -3,
+            3,
+            3.0,
+            "\\",
+            "NULL",
+            date(2016, 4, 4),
+            datetime(2016, 4, 4, 11, 30, tzinfo=default_tzinfo),
+        ),
     ]
     assert ret == expected, f"ret: {ret}"
 
@@ -176,9 +207,33 @@ async def _(context):
     rows = await context.conn.query_iter("SELECT * FROM test")
     ret = [row.values() for row in rows]
     expected = [
-        (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, '"', None, date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (
+            -1,
+            1,
+            1.0,
+            "'",
+            None,
+            date(2011, 3, 6),
+            datetime(2011, 3, 6, 6, 20, tzinfo=default_tzinfo),
+        ),
+        (
+            -2,
+            2,
+            2.0,
+            '"',
+            None,
+            date(2012, 5, 31),
+            datetime(2012, 5, 31, 11, 20, tzinfo=default_tzinfo),
+        ),
+        (
+            -3,
+            3,
+            3.0,
+            "\\",
+            "NULL",
+            date(2016, 4, 4),
+            datetime(2016, 4, 4, 11, 30, tzinfo=default_tzinfo),
+        ),
     ]
     assert ret == expected, f"ret: {ret}"
 
@@ -213,9 +268,33 @@ async def test_load_file(context, load_method):
     rows = await context.conn.query_iter("SELECT * FROM test1")
     ret = [row.values() for row in rows]
     expected = [
-        (-1, 1, 1.0, "'", None, date(2011, 3, 6), datetime(2011, 3, 6, 6, 20)),
-        (-2, 2, 2.0, '"', None, date(2012, 5, 31), datetime(2012, 5, 31, 11, 20)),
-        (-3, 3, 3.0, "\\", "NULL", date(2016, 4, 4), datetime(2016, 4, 4, 11, 30)),
+        (
+            -1,
+            1,
+            1.0,
+            "'",
+            None,
+            date(2011, 3, 6),
+            datetime(2011, 3, 6, 6, 20, tzinfo=default_tzinfo),
+        ),
+        (
+            -2,
+            2,
+            2.0,
+            '"',
+            None,
+            date(2012, 5, 31),
+            datetime(2012, 5, 31, 11, 20, tzinfo=default_tzinfo),
+        ),
+        (
+            -3,
+            3,
+            3.0,
+            "\\",
+            "NULL",
+            date(2016, 4, 4),
+            datetime(2016, 4, 4, 11, 30, tzinfo=default_tzinfo),
+        ),
     ]
     assert ret == expected, f"{load_method} ret: {ret}"
 

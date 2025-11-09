@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use arrow_buffer::i256;
+use chrono::{DateTime, Datelike, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
+use chrono_tz::Tz;
+use geozero::wkb::FromWkb;
+use geozero::wkb::WkbDialect;
+use geozero::wkt::Ewkt;
+use hex;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Write};
 use std::hash::Hash;
 use std::io::BufRead;
 use std::io::Cursor;
-
-use arrow_buffer::i256;
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime};
-use geozero::wkb::FromWkb;
-use geozero::wkb::WkbDialect;
-use geozero::wkt::Ewkt;
-use hex;
 
 use crate::cursor_ext::{
     collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
@@ -84,7 +84,7 @@ pub enum Value {
     String(String),
     Number(NumberValue),
     /// Microseconds from 1970-01-01 00:00:00 UTC
-    Timestamp(i64),
+    Timestamp(i64, Tz),
     TimestampTz(String),
     Date(i32),
     Array(Vec<Value>),
@@ -121,7 +121,7 @@ impl Value {
                 NumberValue::Decimal128(_, s) => DataType::Decimal(DecimalDataType::Decimal128(*s)),
                 NumberValue::Decimal256(_, s) => DataType::Decimal(DecimalDataType::Decimal256(*s)),
             },
-            Self::Timestamp(_) => DataType::Timestamp,
+            Self::Timestamp(_, _) => DataType::Timestamp,
             Self::TimestampTz(_) => DataType::TimestampTz,
 
             Self::Date(_) => DataType::Date,
@@ -154,12 +154,12 @@ impl Value {
     }
 }
 
-impl TryFrom<(&DataType, Option<String>)> for Value {
+impl TryFrom<(&DataType, Option<String>, Tz)> for Value {
     type Error = Error;
 
-    fn try_from((t, v): (&DataType, Option<String>)) -> Result<Self> {
+    fn try_from((t, v, tz): (&DataType, Option<String>, Tz)) -> Result<Self> {
         match v {
-            Some(v) => Self::try_from((t, v)),
+            Some(v) => Self::try_from((t, v, tz)),
             None => match t {
                 DataType::Null => Ok(Self::Null),
                 DataType::Nullable(_) => Ok(Self::Null),
@@ -171,10 +171,10 @@ impl TryFrom<(&DataType, Option<String>)> for Value {
     }
 }
 
-impl TryFrom<(&DataType, String)> for Value {
+impl TryFrom<(&DataType, String, Tz)> for Value {
     type Error = Error;
 
-    fn try_from((t, v): (&DataType, String)) -> Result<Self> {
+    fn try_from((t, v, tz): (&DataType, String, Tz)) -> Result<Self> {
         match t {
             DataType::Null => Ok(Self::Null),
             DataType::EmptyArray => Ok(Self::EmptyArray),
@@ -220,11 +220,20 @@ impl TryFrom<(&DataType, String)> for Value {
                 let d = parse_decimal(v.as_str(), *size)?;
                 Ok(Self::Number(d))
             }
-            DataType::Timestamp => Ok(Self::Timestamp(
-                NaiveDateTime::parse_from_str(v.as_str(), "%Y-%m-%d %H:%M:%S%.6f")?
-                    .and_utc()
-                    .timestamp_micros(),
-            )),
+            DataType::Timestamp => {
+                let naive_dt = NaiveDateTime::parse_from_str(v.as_str(), "%Y-%m-%d %H:%M:%S%.6f")?;
+                let dt_with_tz = match tz.from_local_datetime(&naive_dt) {
+                    LocalResult::Single(dt) => dt,
+                    LocalResult::None => {
+                        return Err(Error::Parsing(format!(
+                            "time {v} not exists in timezone {tz}"
+                        )))
+                    }
+                    LocalResult::Ambiguous(dt1, _dt2) => dt1,
+                };
+                let ts = dt_with_tz.timestamp_micros();
+                Ok(Self::Timestamp(ts, tz))
+            }
             DataType::TimestampTz => Ok(Self::TimestampTz(v)),
             DataType::Date => Ok(Self::Date(
                 NaiveDate::parse_from_str(v.as_str(), "%Y-%m-%d")?.num_days_from_ce()
@@ -248,7 +257,7 @@ impl TryFrom<(&DataType, String)> for Value {
                     if v == NULL_VALUE {
                         Ok(Self::Null)
                     } else {
-                        Self::try_from((inner.as_ref(), v))
+                        Self::try_from((inner.as_ref(), v, tz))
                     }
                 }
             },
@@ -257,10 +266,10 @@ impl TryFrom<(&DataType, String)> for Value {
 }
 
 #[cfg(feature = "flight-sql")]
-impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
+impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
     type Error = Error;
     fn try_from(
-        (field, array, seq): (&ArrowField, &Arc<dyn ArrowArray>, usize),
+        (field, array, seq, ltz): (&ArrowField, &Arc<dyn ArrowArray>, usize, Tz),
     ) -> std::result::Result<Self, Self::Error> {
         if let Some(extend_type) = field.metadata().get(EXTENSION_KEY) {
             return match extend_type.as_str() {
@@ -497,7 +506,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                         }
                         let ts = array.value(seq);
                         match tz {
-                            None => Ok(Value::Timestamp(ts)),
+                            None => Ok(Value::Timestamp(ts, ltz)),
                             Some(tz) => Err(ConvertError::new("timestamp", format!("{array:?}"))
                                 .with_message(format!("non-UTC timezone not supported: {tz:?}"))
                                 .into()),
@@ -515,7 +524,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                     let inner_array = unsafe { array.value_unchecked(seq) };
                     let mut values = Vec::with_capacity(inner_array.len());
                     for i in 0..inner_array.len() {
-                        let value = Value::try_from((f.as_ref(), &inner_array, i))?;
+                        let value = Value::try_from((f.as_ref(), &inner_array, i, ltz))?;
                         values.push(value);
                     }
                     Ok(Value::Array(values))
@@ -527,7 +536,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                     let inner_array = unsafe { array.value_unchecked(seq) };
                     let mut values = Vec::with_capacity(inner_array.len());
                     for i in 0..inner_array.len() {
-                        let value = Value::try_from((f.as_ref(), &inner_array, i))?;
+                        let value = Value::try_from((f.as_ref(), &inner_array, i, ltz))?;
                         values.push(value);
                     }
                     Ok(Value::Array(values))
@@ -540,8 +549,10 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                         let inner_array = unsafe { array.value_unchecked(seq) };
                         let mut values = Vec::with_capacity(inner_array.len());
                         for i in 0..inner_array.len() {
-                            let key = Value::try_from((fs[0].as_ref(), inner_array.column(0), i))?;
-                            let val = Value::try_from((fs[1].as_ref(), inner_array.column(1), i))?;
+                            let key =
+                                Value::try_from((fs[0].as_ref(), inner_array.column(0), i, ltz))?;
+                            let val =
+                                Value::try_from((fs[1].as_ref(), inner_array.column(1), i, ltz))?;
                             values.push((key, val));
                         }
                         Ok(Value::Map(values))
@@ -558,7 +569,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize)> for Value {
                 Some(array) => {
                     let mut values = Vec::with_capacity(array.len());
                     for (f, inner_array) in fs.iter().zip(array.columns().iter()) {
-                        let value = Value::try_from((f.as_ref(), inner_array, seq))?;
+                        let value = Value::try_from((f.as_ref(), inner_array, seq, ltz))?;
                         values.push(value);
                     }
                     Ok(Value::Tuple(values))
@@ -589,10 +600,11 @@ impl TryFrom<Value> for String {
                     })?;
                 Ok(date.format("%Y-%m-%d").to_string())
             }
-            Value::Timestamp(ts) => {
+            Value::Timestamp(ts, tz) => {
                 let dt = DateTime::from_timestamp_micros(ts).ok_or_else(|| {
                     ConvertError::new("timestamp", format!("invalid timestamp: {}", ts))
                 })?;
+                let dt = dt.with_timezone(&tz);
                 Ok(dt.format(TIMESTAMP_FORMAT).to_string())
             }
             _ => Err(ConvertError::new("string", format!("{val:?}")).into()),
@@ -630,7 +642,7 @@ macro_rules! impl_try_from_number_value {
                         Value::Number(NumberValue::Float32(i)) => Ok(i as $t),
                         Value::Number(NumberValue::Float64(i)) => Ok(i as $t),
                         Value::Date(i) => Ok(i as $t),
-                        Value::Timestamp(i) => Ok(i as $t),
+                        Value::Timestamp(i, _) => Ok(i as $t),
                         _ => Err(ConvertError::new("number", format!("{:?}", val)).into()),
                     }
                 }
@@ -654,15 +666,32 @@ impl TryFrom<Value> for NaiveDateTime {
     type Error = Error;
     fn try_from(val: Value) -> Result<Self> {
         match val {
-            Value::Timestamp(i) => {
+            Value::Timestamp(i, _tz) => {
                 let secs = i / 1_000_000;
                 let nanos = ((i % 1_000_000) * 1000) as u32;
                 match DateTime::from_timestamp(secs, nanos) {
                     Some(t) => Ok(t.naive_utc()),
-                    None => Err(ConvertError::new("NaiveDateTime", "".to_string()).into()),
+                    None => Err(ConvertError::new("NaiveDateTime", format!("{val}")).into()),
                 }
             }
             _ => Err(ConvertError::new("NaiveDateTime", format!("{val}")).into()),
+        }
+    }
+}
+
+impl TryFrom<Value> for DateTime<Tz> {
+    type Error = Error;
+    fn try_from(val: Value) -> Result<Self> {
+        match val {
+            Value::Timestamp(i, tz) => {
+                let secs = i / 1_000_000;
+                let nanos = ((i % 1_000_000) * 1000) as u32;
+                match DateTime::from_timestamp(secs, nanos) {
+                    Some(t) => Ok(tz.from_utc_datetime(&t.naive_utc())),
+                    None => Err(ConvertError::new("Datetime", format!("{val}")).into()),
+                }
+            }
+            _ => Err(ConvertError::new("DateTime", format!("{val}")).into()),
         }
     }
 }
@@ -896,7 +925,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
                 write!(f, "'{s}'")
             }
         }
-        Value::Timestamp(micros) => {
+        Value::Timestamp(micros, _tz) => {
             let (mut secs, mut nanos) = (*micros / 1_000_000, (*micros % 1_000_000) * 1_000);
             if nanos < 0 {
                 secs -= 1;
@@ -1813,7 +1842,7 @@ impl ValueDecoder {
         let ts = NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.6f")?
             .and_utc()
             .timestamp_micros();
-        Ok(Value::Timestamp(ts))
+        Ok(Value::Timestamp(ts, Tz::UTC))
     }
 
     fn read_interval<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -2169,14 +2198,14 @@ impl From<&NaiveDate> for Value {
 impl From<NaiveDateTime> for Value {
     fn from(dt: NaiveDateTime) -> Self {
         let timestamp_micros = dt.and_utc().timestamp_micros();
-        Value::Timestamp(timestamp_micros)
+        Value::Timestamp(timestamp_micros, Tz::UTC)
     }
 }
 
 impl From<&NaiveDateTime> for Value {
     fn from(dt: &NaiveDateTime) -> Self {
         let timestamp_micros = dt.and_utc().timestamp_micros();
-        Value::Timestamp(timestamp_micros)
+        Value::Timestamp(timestamp_micros, Tz::UTC)
     }
 }
 
@@ -2200,8 +2229,10 @@ impl Value {
             }
             Value::String(s) => format!("'{}'", s),
             Value::Number(n) => n.to_string(),
-            Value::Timestamp(ts) => {
+            Value::Timestamp(ts, tz) => {
+                // TODO: use ts directly?
                 let dt = DateTime::from_timestamp_micros(*ts).unwrap();
+                let dt = dt.with_timezone(tz);
                 format!("'{}'", dt.format(TIMESTAMP_FORMAT))
             }
             Value::TimestampTz(t) => format!("'{t}'"),
