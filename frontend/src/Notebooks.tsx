@@ -332,8 +332,11 @@ const Notebooks: React.FC = () => {
     }
 
     const cell = notebook.cells.find(c => c.id === cellId);
-    if (!cell || !cell.sql.trim()) {
+    if (!cell) {
       return { success: false as const };
+    }
+    if (!cell.sql.trim()) {
+      return { success: true as const };
     }
 
     setActiveCellId(cellId);
@@ -448,6 +451,10 @@ const Notebooks: React.FC = () => {
       }
     }
   }, [executeCell]);
+
+  const runAllCells = useCallback(async () => {
+    await runCellsFrom(0);
+  }, [runCellsFrom]);
 
   useEffect(() => {
     if (!fullscreenCellId) {
@@ -647,7 +654,13 @@ const Notebooks: React.FC = () => {
                     </p>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-gray-500">
-                    <span className="hidden sm:inline">⌘⏎ to run cell</span>
+                    <button
+                      type="button"
+                      onClick={() => { void runAllCells(); }}
+                      className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-600 shadow-sm hover:bg-indigo-100"
+                    >
+                      Run all cells
+                    </button>
                     <div className="relative" ref={notebookMenuRef}>
                       <button
                         type="button"

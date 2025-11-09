@@ -26,7 +26,7 @@ use mime_guess::from_path;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use std::fs::{File, create_dir_all};
+use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::process::Command as StdCommand;
 use std::time::Instant;
@@ -472,9 +472,7 @@ client = BlockingDatabendClient(_BENDSQL_DSN)
     let mount_cache = format!("{}:/root/.cache/uv", cache_host.display());
     let start_time = Instant::now();
     let mut docker_cmd = Command::new("docker");
-    docker_cmd
-        .arg("run")
-        .arg("--rm");
+    docker_cmd.arg("run").arg("--rm");
 
     if cfg!(target_os = "linux") {
         // Share the host network so scripts can reach services bound to 127.0.0.1.

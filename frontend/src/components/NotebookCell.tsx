@@ -419,6 +419,9 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
             </div>
 
             <div className="flex items-center gap-2">
+              <span className="text-[11px] font-medium text-gray-400">
+                ⌘⏎ to run cell
+              </span>
               <button
                 type="button"
                 onClick={(e) => {
