@@ -1,6 +1,7 @@
 import React from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
+import DsnSelector from './components/DsnSelector';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -45,6 +46,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 </Link>
               ))}
             </nav>
+          </div>
+          <div className="flex items-center gap-3">
+            <DsnSelector />
           </div>
         </div>
       </header>

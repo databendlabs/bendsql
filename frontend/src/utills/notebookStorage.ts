@@ -1,4 +1,4 @@
-import { Notebook, NotebookCell, NotebookStorage } from '../types/notebook';
+import { Notebook, NotebookCell, NotebookStorage, NotebookCellKind } from '../types/notebook';
 
 const STORAGE_KEY = 'bendsql-notebooks';
 
@@ -21,6 +21,8 @@ export const notebookStorage = {
               hideEditor: cell.hideEditor ?? false,
               hideResult: cell.hideResult ?? false,
               lastExecutedAt: cell.lastExecutedAt ? new Date(cell.lastExecutedAt) : undefined,
+              kind: (cell.kind as NotebookCellKind) ?? 'sql',
+              renderedMarkdown: typeof cell.renderedMarkdown === 'string' ? cell.renderedMarkdown : undefined,
             })),
           })),
           currentNotebookId: data.currentNotebookId,
@@ -56,6 +58,8 @@ export const notebookStorage = {
         collapsed: false,
         hideEditor: false,
         hideResult: false,
+        kind: 'sql',
+        renderedMarkdown: undefined,
       }],
       createdAt: now,
       updatedAt: now,
@@ -71,6 +75,8 @@ export const notebookStorage = {
       collapsed: false,
       hideEditor: false,
       hideResult: false,
+      kind: 'sql',
+      renderedMarkdown: undefined,
     };
   },
 };
