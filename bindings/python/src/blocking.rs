@@ -183,7 +183,7 @@ impl BlockingDatabendConnection {
                 .iter()
                 .map(|v| v.iter().map(|s| s.as_ref()).collect())
                 .collect();
-            this.stream_load(&sql, data, LoadMethod::Stage)
+            this.stream_load(&sql, data, LoadMethod::Streaming)
                 .await
                 .map_err(DriverError::new)
         })?;

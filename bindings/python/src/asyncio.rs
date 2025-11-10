@@ -211,7 +211,7 @@ impl AsyncDatabendConnection {
                 .map(|v| v.iter().map(|s| s.as_ref()).collect())
                 .collect();
             let ss = this
-                .stream_load(&sql, data, LoadMethod::Stage)
+                .stream_load(&sql, data, LoadMethod::Streaming)
                 .await
                 .map_err(DriverError::new)?;
             Ok(ServerStats::new(ss))
