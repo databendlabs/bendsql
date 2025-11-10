@@ -11,8 +11,15 @@ import { EllipsisIcon } from './components/icons';
 import { Notebook, NotebookCell } from './types/notebook';
 import { notebookStorage } from './utills/notebookStorage';
 import { formatRelativeTime } from './utills/time';
+import { useDsn } from './context/DsnContext';
 
+type DeletedCellEntry = {
+  notebookId: string;
+  cell: NotebookCell;
+  index: number;
+};
 const Notebooks: React.FC = () => {
+  const { currentDsn } = useDsn();
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [currentNotebook, setCurrentNotebook] = useState<Notebook | null>(null);
   const [activeCellId, setActiveCellId] = useState<string | null>(null);
@@ -29,10 +36,23 @@ const Notebooks: React.FC = () => {
   const notebookMenuRef = useRef<HTMLDivElement | null>(null);
   const [notebookListCollapsed, setNotebookListCollapsed] = useState(false);
   const currentNotebookRef = useRef<Notebook | null>(null);
+  const [editingCellId, setEditingCellId] = useState<string | null>(null);
+  const [deletedCellsHistory, setDeletedCellsHistory] = useState<DeletedCellEntry[]>([]);
+  const lastCommandRef = useRef<{ key: string; timestamp: number } | null>(null);
 
   useEffect(() => {
     currentNotebookRef.current = currentNotebook;
   }, [currentNotebook]);
+
+  useEffect(() => {
+    if (!currentNotebook) {
+      setEditingCellId(null);
+      return;
+    }
+    if (editingCellId && !currentNotebook.cells.some(cell => cell.id === editingCellId)) {
+      setEditingCellId(null);
+    }
+  }, [currentNotebook, editingCellId]);
 
   // Load stored notebooks on mount
   useEffect(() => {
@@ -53,14 +73,12 @@ const Notebooks: React.FC = () => {
     }
   }, []);
 
-  // Persist notebooks whenever they change
+  // Persist notebooks whenever they change (including empty state)
   useEffect(() => {
-    if (notebooks.length > 0) {
-      notebookStorage.saveNotebooks({
-        notebooks,
-        currentNotebookId: currentNotebook?.id,
-      });
-    }
+    notebookStorage.saveNotebooks({
+      notebooks,
+      currentNotebookId: currentNotebook?.id,
+    });
   }, [notebooks, currentNotebook]);
 
   // Ensure the active cell always exists inside the current notebook
@@ -117,6 +135,7 @@ const Notebooks: React.FC = () => {
     setNotebooks(prev => [...prev, newNotebook]);
     setCurrentNotebook(newNotebook);
     setActiveCellId(newNotebook.cells[0]?.id ?? null);
+    setEditingCellId(null);
   }, []);
 
   const selectNotebook = useCallback((notebookId: string) => {
@@ -126,6 +145,7 @@ const Notebooks: React.FC = () => {
     }
     setCurrentNotebook(notebook);
     setActiveCellId(notebook.cells[0]?.id ?? null);
+    setEditingCellId(null);
   }, [notebooks]);
 
   const updateNotebookName = useCallback((notebookId: string, name: string) => {
@@ -158,6 +178,7 @@ const Notebooks: React.FC = () => {
     };
 
     setActiveCellId(newCell.id);
+    setEditingCellId(null);
     setCurrentNotebook(updatedNotebook);
     setNotebooks(prev => prev.map(nb => nb.id === updatedNotebook.id ? updatedNotebook : nb));
   }, [currentNotebook]);
@@ -170,6 +191,7 @@ const Notebooks: React.FC = () => {
     setCurrentNotebook(null);
     setActiveCellId(null);
     setFullscreenCellId(null);
+    setEditingCellId(null);
   }, []);
 
   const deleteAllCells = useCallback(() => {
@@ -188,6 +210,7 @@ const Notebooks: React.FC = () => {
     setNotebooks(prev => prev.map(nb => nb.id === updatedNotebook.id ? updatedNotebook : nb));
     setActiveCellId(freshCell.id);
     setFullscreenCellId(null);
+    setEditingCellId(null);
   }, [currentNotebook]);
 
   const deleteNotebook = useCallback((notebookId: string) => {
@@ -200,18 +223,24 @@ const Notebooks: React.FC = () => {
       const updated = prev.filter(nb => nb.id !== notebookId);
 
       if (currentNotebook?.id === notebookId) {
-        // 如果删除的是当前 notebook，选择新的当前 notebook
         const fallback = updated.length > 0 ? updated[0] : null;
         setCurrentNotebook(fallback);
         setActiveCellId(fallback?.cells[0]?.id ?? null);
         setFullscreenCellId(null);
+        setEditingCellId(null);
+      } else if (editingCellId) {
+        const notebook = prev.find(nb => nb.id === notebookId);
+        if (notebook?.cells.some(cell => cell.id === editingCellId)) {
+          setEditingCellId(null);
+        }
       }
 
       return updated;
     });
 
+    setDeletedCellsHistory(prev => prev.filter(entry => entry.notebookId !== notebookId));
     setOpenNotebookMenuId(null);
-  }, [currentNotebook]);
+  }, [currentNotebook, editingCellId]);
 
   const closeFullscreen = useCallback(() => {
     setFullscreenCellId(null);
@@ -332,20 +361,72 @@ const Notebooks: React.FC = () => {
     }
 
     const cell = notebook.cells.find(c => c.id === cellId);
-    if (!cell || !cell.sql.trim()) {
+    if (!cell) {
       return { success: false as const };
     }
-
     setActiveCellId(cellId);
 
-    const updatedNotebook = {
+    const processingNotebook = {
       ...notebook,
-      cells: notebook.cells.map(c =>
-        c.id === cellId ? { ...c, loading: true, error: undefined, result: undefined } : c
-      ),
+      cells: notebook.cells.map(c => {
+        if (c.id !== cellId) {
+          return c;
+        }
+        const baseCell = {
+          ...c,
+          loading: true,
+          error: undefined,
+          result: undefined,
+        };
+        if (c.kind === 'markdown') {
+          return { ...baseCell, renderedMarkdown: undefined };
+        }
+        return baseCell;
+      }),
     };
-    setCurrentNotebook(updatedNotebook);
-    currentNotebookRef.current = updatedNotebook;
+    setCurrentNotebook(processingNotebook);
+    currentNotebookRef.current = processingNotebook;
+
+    if (cell.kind === 'markdown') {
+      const finalNotebook = {
+        ...processingNotebook,
+        cells: processingNotebook.cells.map(c =>
+          c.id === cellId
+            ? {
+                ...c,
+                loading: false,
+                renderedMarkdown: cell.sql,
+                lastExecutedAt: new Date(),
+              }
+            : c
+        ),
+        updatedAt: new Date(),
+      };
+
+      setCurrentNotebook(finalNotebook);
+      currentNotebookRef.current = finalNotebook;
+      setNotebooks(prev => prev.map(nb => nb.id === finalNotebook.id ? finalNotebook : nb));
+
+      return { success: true as const };
+    }
+    if (!cell.sql.trim()) {
+      const finalNotebook = {
+        ...processingNotebook,
+        cells: processingNotebook.cells.map(c =>
+          c.id === cellId
+            ? {
+                ...c,
+                loading: false,
+              }
+            : c
+        ),
+        updatedAt: new Date(),
+      };
+      setCurrentNotebook(finalNotebook);
+      currentNotebookRef.current = finalNotebook;
+      setNotebooks(prev => prev.map(nb => nb.id === finalNotebook.id ? finalNotebook : nb));
+      return { success: true as const };
+    }
 
     try {
       const response = await fetch('/api/query', {
@@ -353,7 +434,7 @@ const Notebooks: React.FC = () => {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ sql: cell.sql, kind: 0 }),
+        body: JSON.stringify({ sql: cell.sql, kind: 0, dsn: currentDsn.dsn || undefined }),
       });
 
       if (!response.ok) {
@@ -374,8 +455,8 @@ const Notebooks: React.FC = () => {
       const lastResult = results.length > 0 ? results[results.length - 1] : undefined;
 
       const finalNotebook = {
-        ...updatedNotebook,
-        cells: updatedNotebook.cells.map(c =>
+        ...processingNotebook,
+        cells: processingNotebook.cells.map(c =>
           c.id === cellId
             ? {
                 ...c,
@@ -399,8 +480,8 @@ const Notebooks: React.FC = () => {
       const errorMessage = (error as Error).message.replace(/\\n/g, '\n');
 
       const finalNotebook = {
-        ...updatedNotebook,
-        cells: updatedNotebook.cells.map(c =>
+        ...processingNotebook,
+        cells: processingNotebook.cells.map(c =>
           c.id === cellId
             ? {
                 ...c,
@@ -419,7 +500,7 @@ const Notebooks: React.FC = () => {
 
       return { success: false as const, error: errorMessage };
     }
-  }, []);
+  }, [currentDsn]);
 
   const runCellsFrom = useCallback(async (startIndex: number) => {
     const notebook = currentNotebookRef.current;
@@ -449,6 +530,198 @@ const Notebooks: React.FC = () => {
     }
   }, [executeCell]);
 
+  const deleteCell = useCallback((cellId: string, options?: { recordHistory?: boolean }) => {
+    if (!currentNotebook || currentNotebook.cells.length <= 1) {
+      return;
+    }
+
+    const cellIndex = currentNotebook.cells.findIndex(cell => cell.id === cellId);
+    if (cellIndex === -1) {
+      return;
+    }
+
+    const targetCell = currentNotebook.cells[cellIndex];
+    const fallbackCell = currentNotebook.cells[cellIndex + 1] || currentNotebook.cells[cellIndex - 1];
+
+    const updatedNotebook = {
+      ...currentNotebook,
+      cells: currentNotebook.cells.filter(cell => cell.id !== cellId),
+      updatedAt: new Date(),
+    };
+
+    if (options?.recordHistory !== false) {
+      setDeletedCellsHistory(prev => [...prev, { notebookId: currentNotebook.id, cell: targetCell, index: cellIndex }]);
+    }
+
+    setActiveCellId(prev => (prev === cellId ? fallbackCell?.id ?? null : prev));
+    setEditingCellId(prev => (prev === cellId ? null : prev));
+    setCurrentNotebook(updatedNotebook);
+    setNotebooks(prev => prev.map(nb => nb.id === updatedNotebook.id ? updatedNotebook : nb));
+    setFullscreenCellId(prev => (prev === cellId ? null : prev));
+  }, [currentNotebook]);
+
+  const undoLastDeletion = useCallback(() => {
+    setDeletedCellsHistory(prev => {
+      const next = [...prev];
+      while (next.length > 0) {
+        const entry = next.pop()!;
+        const restoreNotebook = (source: Notebook): Notebook => {
+          const cells = [...source.cells];
+          const insertIndex = Math.min(entry.index, cells.length);
+          cells.splice(insertIndex, 0, { ...entry.cell, loading: false });
+          return { ...source, cells, updatedAt: new Date() };
+        };
+
+        let restored = false;
+        setNotebooks(prevNotebooks => {
+          if (!prevNotebooks.some(nb => nb.id === entry.notebookId)) {
+            return prevNotebooks;
+          }
+          restored = true;
+          return prevNotebooks.map(nb =>
+            nb.id === entry.notebookId ? restoreNotebook(nb) : nb
+          );
+        });
+
+        if (restored && currentNotebookRef.current?.id === entry.notebookId) {
+          const updated = restoreNotebook(currentNotebookRef.current);
+          setCurrentNotebook(updated);
+          currentNotebookRef.current = updated;
+          setActiveCellId(entry.cell.id);
+          setEditingCellId(null);
+          break;
+        } else if (restored) {
+          break;
+        }
+      }
+      return next;
+    });
+  }, [setNotebooks]);
+
+  const changeCellKind = useCallback((cellId: string, nextKind: 'sql' | 'markdown') => {
+    if (!currentNotebook) {
+      return;
+    }
+    const cellExists = currentNotebook.cells.some(cell => cell.id === cellId);
+    if (!cellExists) {
+      return;
+    }
+
+    const updatedNotebook = {
+      ...currentNotebook,
+      cells: currentNotebook.cells.map(cell =>
+        cell.id === cellId
+          ? {
+              ...cell,
+              kind: nextKind,
+              hideEditor: false,
+              result: nextKind === 'markdown' ? undefined : cell.result,
+              error: nextKind === 'markdown' ? undefined : cell.error,
+              renderedMarkdown: undefined,
+            }
+          : cell
+      ),
+      updatedAt: new Date(),
+    };
+
+    setCurrentNotebook(updatedNotebook);
+    setNotebooks(prev => prev.map(nb => nb.id === updatedNotebook.id ? updatedNotebook : nb));
+    if (nextKind === 'markdown') {
+      setEditingCellId(null);
+    }
+  }, [currentNotebook]);
+
+  const runAllCells = useCallback(async () => {
+    await runCellsFrom(0);
+  }, [runCellsFrom]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const notebook = currentNotebookRef.current;
+      if (!notebook || !activeCellId) {
+        return;
+      }
+
+      const isEditing = editingCellId === activeCellId;
+      if (isEditing) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setEditingCellId(null);
+          const activeElement = document.activeElement as HTMLElement | null;
+          if (activeElement && typeof activeElement.blur === 'function') {
+            activeElement.blur();
+          }
+        }
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      if (tagName === 'input' || tagName === 'textarea' || target?.isContentEditable) {
+        return;
+      }
+
+      const activeIndex = notebook.cells.findIndex(cell => cell.id === activeCellId);
+      if (activeIndex === -1) {
+        return;
+      }
+
+      if (event.metaKey || event.ctrlKey) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === 'd') {
+        const prev = lastCommandRef.current;
+        const now = Date.now();
+        if (prev && prev.key === 'd' && now - prev.timestamp < 500) {
+          event.preventDefault();
+          lastCommandRef.current = null;
+          deleteCell(activeCellId);
+          return;
+        }
+        lastCommandRef.current = { key: 'd', timestamp: now };
+        return;
+      }
+
+      lastCommandRef.current = null;
+
+      switch (key) {
+        case 'a':
+          event.preventDefault();
+          addCellAt(activeIndex);
+          break;
+        case 'b':
+          event.preventDefault();
+          addCellAt(activeIndex + 1);
+          break;
+        case 'x':
+          event.preventDefault();
+          deleteCell(activeCellId);
+          break;
+        case 'z':
+          if (deletedCellsHistory.length > 0) {
+            event.preventDefault();
+            undoLastDeletion();
+          }
+          break;
+        case 'm':
+          event.preventDefault();
+          changeCellKind(activeCellId, 'markdown');
+          break;
+        case 'y':
+          event.preventDefault();
+          changeCellKind(activeCellId, 'sql');
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeCellId, editingCellId, addCellAt, deleteCell, undoLastDeletion, changeCellKind, deletedCellsHistory.length]);
+
   useEffect(() => {
     if (!fullscreenCellId) {
       return;
@@ -462,26 +735,6 @@ const Notebooks: React.FC = () => {
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
   }, [fullscreenCellId, closeFullscreen]);
-
-  const deleteCell = useCallback((cellId: string) => {
-    if (!currentNotebook || currentNotebook.cells.length <= 1) {
-      return;
-    }
-
-    const cellIndex = currentNotebook.cells.findIndex(cell => cell.id === cellId);
-    const fallbackCell = currentNotebook.cells[cellIndex + 1] || currentNotebook.cells[cellIndex - 1];
-
-    const updatedNotebook = {
-      ...currentNotebook,
-      cells: currentNotebook.cells.filter(cell => cell.id !== cellId),
-      updatedAt: new Date(),
-    };
-
-    setActiveCellId(prev => (prev === cellId ? fallbackCell?.id ?? null : prev));
-    setCurrentNotebook(updatedNotebook);
-    setNotebooks(prev => prev.map(nb => nb.id === updatedNotebook.id ? updatedNotebook : nb));
-    setFullscreenCellId(prev => (prev === cellId ? null : prev));
-  }, [currentNotebook]);
 
   const renderAddControl = (label: 'above' | 'between' | 'below', insertIndex: number) => {
     if (fullscreenCellId) {
@@ -593,7 +846,8 @@ const Notebooks: React.FC = () => {
                             <div className="absolute right-0 mt-2 w-40 rounded-xl border border-gray-200 bg-white shadow-lg z-10">
                               <button
                                 type="button"
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   deleteNotebook(nb.id);
                                   setOpenNotebookMenuId(null);
                                 }}
@@ -647,7 +901,13 @@ const Notebooks: React.FC = () => {
                     </p>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-gray-500">
-                    <span className="hidden sm:inline">⌘⏎ to run cell</span>
+                    <button
+                      type="button"
+                      onClick={() => { void runAllCells(); }}
+                      className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-600 shadow-sm hover:bg-indigo-100"
+                    >
+                      Run all cells
+                    </button>
                     <div className="relative" ref={notebookMenuRef}>
                       <button
                         type="button"
@@ -710,7 +970,18 @@ const Notebooks: React.FC = () => {
                           onDelete={() => deleteCell(cell.id)}
                           canDelete={currentNotebook.cells.length > 1}
                           isActive={cell.id === activeCellId || fullscreenCellId === cell.id}
-                          onSelect={() => setActiveCellId(cell.id)}
+                          isEditing={editingCellId === cell.id}
+                          onSelect={() => {
+                            setActiveCellId(cell.id);
+                            setEditingCellId(null);
+                          }}
+                          onEnterEditMode={() => {
+                            setActiveCellId(cell.id);
+                            setEditingCellId(cell.id);
+                          }}
+                          onExitEditMode={() => {
+                            setEditingCellId(prev => (prev === cell.id ? null : prev));
+                          }}
                           onToggleCollapse={() => toggleCellSection(cell.id, 'collapsed')}
                           onToggleEditor={() => toggleCellSection(cell.id, 'hideEditor')}
                           onToggleResult={() => toggleCellSection(cell.id, 'hideResult')}
@@ -720,7 +991,7 @@ const Notebooks: React.FC = () => {
                           isFullscreen={fullscreenCellId === cell.id}
                           onMoveUp={() => moveCellPosition(cell.id, 'up')}
                           onMoveDown={() => moveCellPosition(cell.id, 'down')}
-                        dragState={{
+                          dragState={{
                             isDragging: draggingCellId === cell.id,
                             isDragOver: dragOverState.id === cell.id,
                             dragOverPosition:
@@ -730,13 +1001,13 @@ const Notebooks: React.FC = () => {
                                   : 'before'
                                 : undefined,
                           }}
-                        onDragStart={() => handleDragStart(cell.id)}
-                        onDragEnd={handleDragEnd}
-                        onDragOver={(placeAfter) => handleDragOverCell(cell.id, placeAfter)}
-                        onDrop={(placeAfter) => handleDropOnCell(cell.id, placeAfter)}
-                        onRunFromHere={() => { void runCellsFrom(index); }}
-                        onRunToHere={() => { void runCellsTo(index); }}
-                      />
+                          onDragStart={() => handleDragStart(cell.id)}
+                          onDragEnd={handleDragEnd}
+                          onDragOver={(placeAfter) => handleDragOverCell(cell.id, placeAfter)}
+                          onDrop={(placeAfter) => handleDropOnCell(cell.id, placeAfter)}
+                          onRunFromHere={() => { void runCellsFrom(index); }}
+                          onRunToHere={() => { void runCellsTo(index); }}
+                        />
                         {!fullscreenCellId && renderAddControl(
                           index === currentNotebook.cells.length - 1 ? 'below' : 'between',
                           index + 1

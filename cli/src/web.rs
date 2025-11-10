@@ -26,7 +26,7 @@ use mime_guess::from_path;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use std::fs::File;
+use std::fs::{create_dir_all, File};
 use std::io::Write;
 use std::process::Command as StdCommand;
 use std::time::Instant;
@@ -221,6 +221,8 @@ struct QueryRequest {
     sql: String,
     // default 0: query, 1: EXPLAIN ANALYZE GRAPHICAL, 2: EXPLAIN PERF
     kind: i32,
+    #[serde(default)]
+    dsn: Option<String>,
 }
 
 impl QueryRequest {
@@ -259,7 +261,7 @@ pub fn set_dsn(dsn: String) {
 
 #[post("/api/query")]
 async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
-    let dsn = {
+    let default_dsn = {
         let dsn_guard = DSN.as_ref();
         let dsn_option = dsn_guard.lock().unwrap();
 
@@ -273,8 +275,15 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
         }
     }; // Lock is automatically dropped here
 
+    let effective_dsn = req
+        .dsn
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default_dsn);
+
     if req.kind == 3 {
-        return run_python_script(&req.sql, &dsn)
+        return run_python_script(&req.sql, &effective_dsn)
             .await
             .unwrap_or_else(|err| err);
     }
@@ -297,7 +306,7 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
 
     let mut results = Vec::new();
     // use one client for each http query
-    let client = Client::new(dsn.clone());
+    let client = Client::new(effective_dsn.clone());
     let conn = client.get_conn().await;
     let conn = match conn {
         Ok(conn) => conn,
@@ -456,13 +465,34 @@ client = BlockingDatabendClient(_BENDSQL_DSN)
     })?;
     drop(file);
 
-    let mount_arg = format!("{}:/workspace", dir.path().display());
+    let mount_workspace = format!("{}:/workspace", dir.path().display());
+    let cache_host = dirs::home_dir()
+        .map(|p| p.join(".bendsql/pyenv"))
+        .ok_or_else(|| {
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "Failed to locate home directory for Python cache",
+            }))
+        })?;
+    create_dir_all(&cache_host).map_err(|e| {
+        HttpResponse::InternalServerError().json(serde_json::json!({
+            "error": format!("Failed to prepare Python cache directory: {}", e)
+        }))
+    })?;
+    let mount_cache = format!("{}:/root/.cache/uv", cache_host.display());
     let start_time = Instant::now();
-    let output = Command::new("docker")
-        .arg("run")
-        .arg("--rm")
+    let mut docker_cmd = Command::new("docker");
+    docker_cmd.arg("run").arg("--rm");
+
+    if cfg!(target_os = "linux") {
+        // Share the host network so scripts can reach services bound to 127.0.0.1.
+        docker_cmd.arg("--network").arg("host");
+    }
+
+    let output = docker_cmd
         .arg("-v")
-        .arg(&mount_arg)
+        .arg(&mount_workspace)
+        .arg("-v")
+        .arg(&mount_cache)
         .arg("-w")
         .arg("/workspace")
         .arg("ghcr.io/astral-sh/uv:debian")

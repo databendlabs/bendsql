@@ -6,6 +6,8 @@ export interface QueryResult {
   duration: string;
 }
 
+export type NotebookCellKind = 'sql' | 'markdown';
+
 export interface NotebookCell {
   id: string;
   sql: string;
@@ -16,6 +18,8 @@ export interface NotebookCell {
   collapsed?: boolean;
   hideEditor?: boolean;
   hideResult?: boolean;
+  kind?: NotebookCellKind;
+  renderedMarkdown?: string;
 }
 
 export interface Notebook {
