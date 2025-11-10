@@ -171,19 +171,23 @@ impl BlockingDatabendConnection {
         Ok(RowIterator::new(it))
     }
 
+    #[pyo3(signature = (sql, data, method=None))]
     pub fn stream_load(
         &self,
         py: Python,
         sql: String,
         data: Vec<Vec<String>>,
+        method: Option<String>,
     ) -> PyResult<ServerStats> {
         let this = self.0.clone();
         let ret = wait_for_future(py, async move {
+            let load_method = LoadMethod::from_str(&method.unwrap_or_else(|| "stage".to_string()))
+                .map_err(DriverError::new)?;
             let data = data
                 .iter()
                 .map(|v| v.iter().map(|s| s.as_ref()).collect())
                 .collect();
-            this.stream_load(&sql, data, LoadMethod::Streaming)
+            this.stream_load(&sql, data, load_method)
                 .await
                 .map_err(DriverError::new)
         })?;
