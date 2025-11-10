@@ -221,6 +221,8 @@ struct QueryRequest {
     sql: String,
     // default 0: query, 1: EXPLAIN ANALYZE GRAPHICAL, 2: EXPLAIN PERF
     kind: i32,
+    #[serde(default)]
+    dsn: Option<String>,
 }
 
 impl QueryRequest {
@@ -259,7 +261,7 @@ pub fn set_dsn(dsn: String) {
 
 #[post("/api/query")]
 async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
-    let dsn = {
+    let default_dsn = {
         let dsn_guard = DSN.as_ref();
         let dsn_option = dsn_guard.lock().unwrap();
 
@@ -273,8 +275,15 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
         }
     }; // Lock is automatically dropped here
 
+    let effective_dsn = req
+        .dsn
+        .as_ref()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default_dsn);
+
     if req.kind == 3 {
-        return run_python_script(&req.sql, &dsn)
+        return run_python_script(&req.sql, &effective_dsn)
             .await
             .unwrap_or_else(|err| err);
     }
@@ -297,7 +306,7 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
 
     let mut results = Vec::new();
     // use one client for each http query
-    let client = Client::new(dsn.clone());
+    let client = Client::new(effective_dsn.clone());
     let conn = client.get_conn().await;
     let conn = match conn {
         Ok(conn) => conn,

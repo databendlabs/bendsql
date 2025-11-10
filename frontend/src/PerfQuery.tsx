@@ -7,6 +7,7 @@ import { autocompletion } from '@codemirror/autocomplete';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { xcodeLight, xcodeLightPatch } from './components/CodeMirrorTheme';
 import dynamic from 'next/dynamic';
+import { useDsn } from './context/DsnContext';
 
 const ProfileGraphDashboard = dynamic(() => import('./ProfileGraphDashboard'), {
   ssr: false
@@ -33,6 +34,7 @@ interface QueryResponse {
 const DEFAULT_PERF_SQL = `select number % 3 a, number % 4 b, number % 5 c from numbers(100000000) group by all limit 3;`;
 
 const PerfQuery: React.FC = () => {
+  const { currentDsn } = useDsn();
   const isExecutionShortcut = (event: KeyboardEvent) => {
     if (!(event.metaKey || event.ctrlKey)) {
       return false;
@@ -158,7 +160,8 @@ const PerfQuery: React.FC = () => {
         },
         body: JSON.stringify({
           sql: query,
-          kind
+          kind,
+          dsn: currentDsn.dsn || undefined,
         }),
       });
 
@@ -183,7 +186,7 @@ const PerfQuery: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [query, router, processPerfResults, analysisType]);
+  }, [query, router, processPerfResults, analysisType, currentDsn]);
 
   // Load query from URL on component mount
   useEffect(() => {

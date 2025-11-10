@@ -8,6 +8,7 @@ import { autocompletion } from '@codemirror/autocomplete';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { xcodeLight, xcodeLightPatch } from './components/CodeMirrorTheme';
 import { python_syntax } from './components/CodemirrorPython';
+import { useDsn } from './context/DsnContext';
 
 interface QueryResult {
   columns: string[];
@@ -18,6 +19,7 @@ interface QueryResult {
 }
 
 const SQLQuery: React.FC = () => {
+  const { currentDsn } = useDsn();
   const isExecutionShortcut = (event: KeyboardEvent) => {
     if (!(event.metaKey || event.ctrlKey)) {
       return false;
@@ -101,7 +103,8 @@ SELECT * FROM students;`);
         },
         body: JSON.stringify({
           sql: query,
-          kind: engine === 'python' ? 3 : 0
+          kind: engine === 'python' ? 3 : 0,
+          dsn: currentDsn.dsn || undefined,
         }),
       });
 
@@ -135,7 +138,7 @@ SELECT * FROM students;`);
     } finally {
       setLoading(false);
     }
-  }, [query, router, engine]);
+  }, [query, router, engine, currentDsn]);
 
   // Add global keyboard event listener for Cmd+Enter
   const runKeymap = useMemo(() => keymap.of([

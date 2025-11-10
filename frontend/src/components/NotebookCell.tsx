@@ -6,6 +6,7 @@ import { autocompletion } from '@codemirror/autocomplete';
 import { xcodeLight, xcodeLightPatch } from './CodeMirrorTheme';
 import { NotebookCell, QueryResult } from '../types/notebook';
 import { formatRelativeTime } from '../utills/time';
+import { renderBasicMarkdown } from '../utills/markdown';
 import {
   PlayIcon,
   ChevronDownIcon,
@@ -21,11 +22,14 @@ interface NotebookCellProps {
   cell: NotebookCell;
   index: number;
   isActive: boolean;
+  isEditing: boolean;
   canDelete: boolean;
   onSqlChange: (sql: string) => void;
   onExecute: () => void;
   onDelete: () => void;
   onSelect: () => void;
+  onEnterEditMode: () => void;
+  onExitEditMode: () => void;
   onToggleCollapse: () => void;
   onToggleEditor: () => void;
   onToggleResult: () => void;
@@ -50,11 +54,14 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
   cell,
   index,
   isActive,
+  isEditing,
   canDelete,
   onSqlChange,
   onExecute,
   onDelete,
   onSelect,
+  onEnterEditMode,
+  onExitEditMode,
   onToggleCollapse,
   onToggleEditor,
   onToggleResult,
@@ -81,6 +88,23 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [runMenuOpen, setRunMenuOpen] = useState(false);
   const runMenuRef = useRef<HTMLDivElement | null>(null);
+  const showEditor = !cell.hideEditor && !cell.collapsed;
+  const showResult = !cell.hideResult && !cell.collapsed;
+  const isMarkdownCell = (cell.kind ?? 'sql') === 'markdown';
+  const commandModeActive = isActive && !isEditing && !isFullscreen;
+  const editorWrapperClass = [
+    'rounded-xl',
+    'border',
+    'transition-all',
+    isEditing
+      ? 'border-blue-400 ring-2 ring-blue-200 bg-white shadow-sm'
+      : commandModeActive
+        ? 'border-gray-300 bg-gray-50'
+        : 'border-gray-200 bg-white',
+  ].join(' ');
+  const canExecute =
+    !isMarkdownCell && !cell.loading && !!cell.sql.trim();
+  const markdownRows = Math.min(20, Math.max(4, cell.sql.split('\n').length + 1));
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -104,16 +128,28 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
     return () => document.removeEventListener('mousedown', handleClick);
   }, [runMenuOpen]);
 
-  const showEditor = !cell.hideEditor && !cell.collapsed;
-  const showResult = !cell.hideResult && !cell.collapsed;
+  useEffect(() => {
+    if (isMarkdownCell && runMenuOpen) {
+      setRunMenuOpen(false);
+    }
+  }, [isMarkdownCell, runMenuOpen]);
 
   const statusLabel = useMemo(() => {
+    if (isMarkdownCell) {
+      if (cell.loading) {
+        return 'Rendering markdown';
+      }
+      if (cell.lastExecutedAt) {
+        return `Rendered ${formatRelativeTime(cell.lastExecutedAt)}`;
+      }
+      return 'Markdown cell';
+    }
     if (cell.loading) return 'Running query';
     if (cell.lastExecutedAt) {
       return `Ran ${formatRelativeTime(cell.lastExecutedAt)}`;
     }
     return 'Ready to run';
-  }, [cell.loading, cell.lastExecutedAt]);
+  }, [cell.loading, cell.lastExecutedAt, isMarkdownCell]);
 
   const renderTable = (result: QueryResult) => {
     if (!result.data || result.data.length === 0) {
@@ -166,7 +202,11 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
     'bg-white/95',
     'backdrop-blur-[2px]',
     'transition-all',
-    dragState.isDragOver ? 'ring-1 ring-indigo-300 border-indigo-300' : 'border-gray-100',
+    dragState.isDragOver
+      ? 'ring-1 ring-indigo-300 border-indigo-300'
+      : commandModeActive
+        ? 'border-blue-400 ring-2 ring-blue-200'
+        : 'border-gray-100',
     isFullscreen
       ? 'shadow-[0_0_0_2px_rgba(99,102,241,0.35)] border-indigo-300'
       : isActive
@@ -273,6 +313,22 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
     onDragEnd();
   };
 
+  const handleEditorFocus = () => {
+    onSelect();
+    onEnterEditMode();
+  };
+
+  const handleEditorBlur = () => {
+    onExitEditMode();
+  };
+
+  const handleMarkdownKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((event.metaKey || event.ctrlKey) && (event.key === 'Enter' || event.key === 'NumpadEnter')) {
+      event.preventDefault();
+      onExecute();
+    }
+  };
+
   return (
     <div className="relative">
       {showTopIndicator && (
@@ -342,40 +398,64 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
 
       <div className={`flex-1 ${showSideControls ? 'p-3' : 'p-1 sm:p-3'} ${showSideControls ? '' : 'md:px-6'}`} draggable={false}>
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs text-gray-500">
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            {isMarkdownCell ? (
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!canExecute) {
+                    return;
+                  }
+                  onExecute();
+                }}
+                disabled={!canExecute}
+                className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                  !canExecute
+                    ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                    : 'border-blue-200 bg-blue-50 text-blue-600 hover:border-blue-300'
+                }`}
+                title="Render markdown"
+              >
+                <PlayIcon className="h-3 w-3" />
+                Render
+              </button>
+            ) : (
               <div
                 className="relative"
                 ref={runMenuRef}
                 onMouseEnter={() => {
-                  if (!cell.loading && cell.sql.trim()) {
+                  if (canExecute) {
                     setRunMenuOpen(true);
                   }
                 }}
                 onMouseLeave={() => setRunMenuOpen(false)}
               >
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (cell.loading || !cell.sql.trim()) {
-                      return;
-                    }
-                    onExecute();
-                    setRunMenuOpen(false);
-                  }}
-                  disabled={cell.loading || !cell.sql.trim()}
-                  className={`flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold transition ${
-                    cell.loading || !cell.sql.trim()
-                      ? 'border-gray-200 text-gray-400 cursor-not-allowed'
-                      : runMenuOpen
-                        ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
-                        : 'border-gray-300 text-gray-600 hover:border-indigo-300 hover:text-indigo-600'
-                  }`}
-                  title="Run cell"
-                >
-                  <PlayIcon className="h-4 w-4" />
-                </button>
-                {runMenuOpen && !cell.loading && cell.sql.trim() && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!canExecute) {
+                        return;
+                      }
+                      onExecute();
+                      setRunMenuOpen(false);
+                    }}
+                    disabled={!canExecute}
+                className={`flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold transition ${
+                  !canExecute
+                    ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                    : runMenuOpen
+                      ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
+                      : 'border-gray-300 text-gray-600 hover:border-indigo-300 hover:text-indigo-600'
+                }`}
+                    title="Run cell"
+                  >
+                    <PlayIcon className="h-4 w-4" />
+                  </button>
+                {runMenuOpen && canExecute && (
                   <div className="absolute left-0 mt-2 w-44 rounded-xl border border-gray-200 bg-white shadow-lg z-10">
                     <button
                       className="flex w-full items-center justify-between px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
@@ -413,10 +493,11 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
                   </div>
                 )}
               </div>
-              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${cell.loading ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                {statusLabel}
-              </span>
-            </div>
+            )}
+            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${cell.loading ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+              {statusLabel}
+            </span>
+          </div>
 
             <div className="flex items-center gap-2">
               <span className="text-[11px] font-medium text-gray-400">
@@ -428,6 +509,8 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
                   e.stopPropagation();
                   onToggleFullscreen();
                 }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onDragStart={(e) => e.preventDefault()}
                 className={`rounded-full border p-1.5 text-gray-500 hover:text-gray-700 ${
                   isFullscreen ? 'border-indigo-300 text-indigo-500' : 'border-gray-200 hover:border-gray-300'
                 }`}
@@ -494,33 +577,50 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
           {!cell.collapsed && (
             <div className={`mt-2 space-y-3 ${isFullscreen ? 'flex-1 flex flex-col overflow-hidden' : ''}`} onClick={onSelect}>
               {showEditor ? (
-                <div className="rounded-xl bg-white">
-                  <CodeMirror
-                    value={cell.sql}
-                    theme={xcodeLight}
-                    height={editorHeight}
-                    extensions={[
-                      xcodeLightPatch,
-                      EditorView.lineWrapping,
-                      lineNumbers(),
-                      autocompletion({ icons: false }),
-                      sql(),
-                      runKeymap,
-                    ]}
-                    basicSetup={false}
-                    onChange={onSqlChange}
-                    editable={!cell.loading}
-                    onFocus={onSelect}
-                    style={{
-                      fontSize: '14px',
-                      height: editorHeight,
-                      minHeight: editorMinHeight,
-                    }}
-                  />
+                <div className={`${editorWrapperClass} overflow-hidden`} data-notebook-editor="true">
+                  {isMarkdownCell ? (
+                    <textarea
+                      value={cell.sql}
+                      onChange={(event) => onSqlChange(event.target.value)}
+                      onFocus={handleEditorFocus}
+                      onBlur={handleEditorBlur}
+                      onKeyDown={handleMarkdownKeyDown}
+                      rows={markdownRows}
+                      disabled={cell.loading}
+                      className={`w-full resize-none border-none bg-transparent px-4 py-3 text-sm text-gray-900 focus:outline-none ${cell.loading ? 'text-gray-400' : ''}`}
+                      placeholder="Write markdown..."
+                    />
+                  ) : (
+                    <CodeMirror
+                      value={cell.sql}
+                      theme={xcodeLight}
+                      height={editorHeight}
+                      extensions={[
+                        xcodeLightPatch,
+                        EditorView.lineWrapping,
+                        lineNumbers(),
+                        autocompletion({ icons: false }),
+                        sql(),
+                        runKeymap,
+                      ]}
+                      basicSetup={false}
+                      onChange={onSqlChange}
+                      editable={!cell.loading}
+                      onFocus={handleEditorFocus}
+                      onBlur={handleEditorBlur}
+                      style={{
+                        fontSize: '14px',
+                        height: editorHeight,
+                        minHeight: editorMinHeight,
+                      }}
+                    />
+                  )}
                 </div>
               ) : (
                 <div
-                  className="w-full rounded-xl border border-dashed border-gray-200 px-3 py-2 text-left text-sm text-gray-600 bg-white cursor-pointer hover:border-indigo-300 hover:text-indigo-600"
+                  className={`w-full rounded-xl border border-dashed px-3 py-2 text-left text-sm cursor-pointer ${
+                    commandModeActive ? 'border-blue-200 text-blue-600 bg-blue-50/50' : 'border-gray-200 text-gray-600 bg-white'
+                  } hover:border-indigo-300 hover:text-indigo-600`}
                   onClick={(e) => {
                     e.stopPropagation();
                     onToggleEditor();
@@ -533,13 +633,28 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
                 </div>
               )}
 
+              {isMarkdownCell && showResult && (
+                <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-800">
+                  {cell.renderedMarkdown ? (
+                    <div
+                      className="space-y-2 leading-relaxed markdown-preview"
+                      dangerouslySetInnerHTML={{ __html: renderBasicMarkdown(cell.renderedMarkdown) }}
+                    />
+                  ) : (
+                    <p className="text-xs text-gray-500">
+                      Run the cell to render its markdown preview.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {cell.error && showResult && (
                 <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                   {cell.error}
                 </div>
               )}
 
-              {!cell.error && showResult && cell.result && (
+              {!isMarkdownCell && !cell.error && showResult && cell.result && (
                 <div className={`${isFullscreen ? 'flex-1 flex flex-col' : ''}`}>
                 <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">
                   {cell.result.rowCount} row{cell.result.rowCount === 1 ? '' : 's'} returned {cell.result.duration ? `in ${cell.result.duration}` : ''}
@@ -550,7 +665,7 @@ const NotebookCellComponent: React.FC<NotebookCellProps> = ({
               </div>
               )}
 
-              {!cell.error && !showResult && !cell.collapsed}
+              {!cell.error && !showResult && !cell.collapsed && !isMarkdownCell}
             </div>
           )}
         </div>
