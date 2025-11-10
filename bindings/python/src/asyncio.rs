@@ -198,20 +198,24 @@ impl AsyncDatabendConnection {
         })
     }
 
+    #[pyo3(signature = (sql, data, method=None))]
     pub fn stream_load<'p>(
         &'p self,
         py: Python<'p>,
         sql: String,
         data: Vec<Vec<String>>,
+        method: Option<String>,
     ) -> PyResult<Bound<'p, PyAny>> {
         let this = self.0.clone();
         future_into_py(py, async move {
+            let load_method = LoadMethod::from_str(&method.unwrap_or_else(|| "stage".to_string()))
+                .map_err(DriverError::new)?;
             let data = data
                 .iter()
                 .map(|v| v.iter().map(|s| s.as_ref()).collect())
                 .collect();
             let ss = this
-                .stream_load(&sql, data, LoadMethod::Stage)
+                .stream_load(&sql, data, load_method)
                 .await
                 .map_err(DriverError::new)?;
             Ok(ServerStats::new(ss))

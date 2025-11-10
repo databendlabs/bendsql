@@ -203,10 +203,17 @@ impl Connection {
     /// Load data with stage attachment.
     /// The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
     #[napi]
-    pub async fn stream_load(&self, sql: String, data: Vec<Vec<&str>>) -> Result<ServerStats> {
+    pub async fn stream_load(
+        &self,
+        sql: String,
+        data: Vec<Vec<&str>>,
+        method: Option<String>,
+    ) -> Result<ServerStats> {
+        let method = LoadMethod::from_str(&method.unwrap_or_else(|| "stage".to_string()))
+            .map_err(format_napi_error)?;
         let ss = self
             .inner
-            .stream_load(&sql, data, LoadMethod::Stage)
+            .stream_load(&sql, data, method)
             .await
             .map_err(format_napi_error)?;
         Ok(ServerStats(ss))
