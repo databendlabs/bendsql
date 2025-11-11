@@ -12,6 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::cursor_ext::{
+    collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
+    ReadNumberExt,
+};
+use crate::error::{ConvertError, Error, Result};
+use crate::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use arrow_buffer::i256;
 use chrono::{DateTime, Datelike, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
 use chrono_tz::Tz;
@@ -19,24 +25,20 @@ use geozero::wkb::FromWkb;
 use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
 use hex;
+use jiff::fmt::strtime;
+use jiff::{tz, Timestamp};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Write};
 use std::hash::Hash;
 use std::io::BufRead;
 use std::io::Cursor;
 
-use crate::cursor_ext::{
-    collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
-    ReadNumberExt,
-};
-use crate::error::{ConvertError, Error, Result};
-use crate::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
-
 use {
     crate::schema::{
         ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
         ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
-        ARROW_EXT_TYPE_VARIANT, ARROW_EXT_TYPE_VECTOR, EXTENSION_KEY,
+        ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE, ARROW_EXT_TYPE_VARIANT, ARROW_EXT_TYPE_VECTOR,
+        EXTENSION_KEY,
     },
     arrow_array::{
         Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array,
@@ -56,6 +58,7 @@ const NULL_VALUE: &str = "NULL";
 const TRUE_VALUE: &str = "1";
 const FALSE_VALUE: &str = "0";
 const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.6f";
+const TIMESTAMP_TIMEZONE_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.6f %z";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NumberValue {
@@ -84,7 +87,8 @@ pub enum Value {
     Number(NumberValue),
     /// Microseconds from 1970-01-01 00:00:00 UTC
     Timestamp(i64, Tz),
-    TimestampTz(String),
+    TimestampTz(i64, i32),
+    TimestampTzString(String),
     Date(i32),
     Array(Vec<Value>),
     Map(Vec<(Value, Value)>),
@@ -121,7 +125,8 @@ impl Value {
                 NumberValue::Decimal256(_, s) => DataType::Decimal(DecimalDataType::Decimal256(*s)),
             },
             Self::Timestamp(_, _) => DataType::Timestamp,
-            Self::TimestampTz(_) => DataType::TimestampTz,
+            Self::TimestampTz(_, _) => DataType::TimestampTz,
+            Self::TimestampTzString(_) => DataType::TimestampTz,
 
             Self::Date(_) => DataType::Date,
             Self::Interval(_) => DataType::Interval,
@@ -233,7 +238,7 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
                 let ts = dt_with_tz.timestamp_micros();
                 Ok(Self::Timestamp(ts, tz))
             }
-            DataType::TimestampTz => Ok(Self::TimestampTz(v)),
+            DataType::TimestampTz => Ok(Self::TimestampTzString(v)),
             DataType::Date => Ok(Self::Date(
                 NaiveDate::parse_from_str(v.as_str(), "%Y-%m-%d")?.num_days_from_ce()
                     - DAYS_FROM_CE,
@@ -282,6 +287,20 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                             Ok(Value::Variant(RawJsonb::new(array.value(seq)).to_string()))
                         }
                         None => Err(ConvertError::new("variant", format!("{array:?}")).into()),
+                    }
+                }
+                ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE => {
+                    if field.is_nullable() && array.is_null(seq) {
+                        return Ok(Value::Null);
+                    }
+                    match array.as_any().downcast_ref::<Decimal128Array>() {
+                        Some(array) => {
+                            let v = array.value(seq);
+                            let ts = v as u64 as i64;
+                            let offset = (v >> 64) as i32;
+                            Ok(Value::TimestampTz(ts, offset))
+                        }
+                        None => Err(ConvertError::new("Interval", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_INTERVAL => {
@@ -914,7 +933,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
         | Value::Bitmap(s)
         | Value::Variant(s)
         | Value::Interval(s)
-        | Value::TimestampTz(s)
+        | Value::TimestampTzString(s)
         | Value::Geometry(s)
         | Value::Geography(s) => {
             if raw {
@@ -991,6 +1010,14 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
             }
             write!(f, "]")?;
             Ok(())
+        }
+        Value::TimestampTz(ts, offset) => {
+            let s = timestamp_tz_to_string(*ts, *offset).map_err(|_| std::fmt::Error)?;
+            if raw {
+                write!(f, "{s}")
+            } else {
+                write!(f, "'{s}'")
+            }
         }
     }
 }
@@ -1852,7 +1879,7 @@ impl ValueDecoder {
     fn read_timestamp_tz<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
-        Ok(Value::TimestampTz(unsafe {
+        Ok(Value::TimestampTzString(unsafe {
             String::from_utf8_unchecked(buf)
         }))
     }
@@ -2033,6 +2060,11 @@ impl months_days_micros {
         (self.0 & MICROS_MASK) as i64
     }
 }
+
+#[derive(Debug, Copy, Clone, Default, PartialEq, PartialOrd, Ord, Eq, Hash)]
+#[allow(non_camel_case_types)]
+#[repr(C)]
+pub struct timestamp_tz(pub i128);
 
 // From implementations for basic types to Value
 impl From<&String> for Value {
@@ -2233,7 +2265,7 @@ impl Value {
                 let dt = dt.with_timezone(tz);
                 format!("'{}'", dt.format(TIMESTAMP_FORMAT))
             }
-            Value::TimestampTz(t) => format!("'{t}'"),
+            Value::TimestampTzString(t) => format!("'{t}'"),
             Value::Date(d) => {
                 let date = NaiveDate::from_num_days_from_ce_opt(*d + DAYS_FROM_CE).unwrap();
                 format!("'{}'", date.format("%Y-%m-%d"))
@@ -2265,8 +2297,19 @@ impl Value {
             }
             Value::EmptyArray => "[]".to_string(),
             Value::EmptyMap => "{}".to_string(),
+            Value::TimestampTz(ts, offset) => timestamp_tz_to_string(*ts, *offset).unwrap(),
         }
     }
+}
+
+fn timestamp_tz_to_string(ts: i64, offset: i32) -> std::result::Result<String, jiff::Error> {
+    let timestamp = Timestamp::from_microsecond(ts)?;
+
+    let offset = tz::Offset::from_seconds(offset)?;
+    strtime::format(
+        TIMESTAMP_TIMEZONE_FORMAT,
+        &timestamp.to_zoned(offset.to_time_zone()),
+    )
 }
 
 #[cfg(test)]

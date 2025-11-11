@@ -359,7 +359,9 @@ impl ToNapiValue for Value<'_> {
                     String::to_napi_value(env, s.to_string())
                 }
             }
-            databend_driver::Value::TimestampTz(s) => String::to_napi_value(env, s.to_string()),
+            databend_driver::Value::TimestampTzString(s) => {
+                String::to_napi_value(env, s.to_string())
+            }
             databend_driver::Value::Geometry(s) => String::to_napi_value(env, s.to_string()),
             databend_driver::Value::Interval(s) => String::to_napi_value(env, s.to_string()),
             databend_driver::Value::Geography(s) => String::to_napi_value(env, s.to_string()),
