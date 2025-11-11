@@ -69,7 +69,6 @@ const HEADER_QUERY_CONTEXT: &str = "X-DATABEND-QUERY-CONTEXT";
 const HEADER_SESSION_ID: &str = "X-DATABEND-SESSION-ID";
 const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 const CONTENT_TYPE_ARROW_OR_JSON: &str = "application/vnd.apache.arrow.stream";
-//const CONTENT_TYPE_ARROW_OR_JSON: &str = "application/vnd.apache.arrow.stream,application/json";
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
