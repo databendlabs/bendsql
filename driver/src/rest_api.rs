@@ -308,9 +308,8 @@ pub struct RestAPIRows<T> {
 
 impl<T> RestAPIRows<T> {
     async fn from_pages(pages: Pages) -> Result<(Schema, Self)> {
-        let (pages, schema) = pages.wait_for_schema(true).await?;
+        let (pages, schema, timezone) = pages.wait_for_schema(true).await?;
         let schema: Schema = schema.try_into()?;
-        let timezone = pages.timezone();
         let rows = Self {
             pages,
             schema: Arc::new(schema.clone()),

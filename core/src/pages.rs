@@ -20,6 +20,7 @@ use arrow_array::RecordBatch;
 use chrono_tz::Tz;
 use log::debug;
 use parking_lot::Mutex;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
@@ -35,6 +36,7 @@ pub struct Page {
     pub data: Vec<Vec<Option<String>>>,
     pub batches: Vec<RecordBatch>,
     pub stats: QueryStats,
+    pub settings: Option<BTreeMap<String, String>>,
 }
 
 impl Page {
@@ -44,6 +46,7 @@ impl Page {
             data: response.data,
             stats: response.stats,
             batches,
+            settings: response.settings,
         }
     }
 
@@ -65,7 +68,6 @@ pub struct Pages {
     client: Arc<APIClient>,
     first_page: Option<Page>,
     need_progress: bool,
-    timezone: Tz,
 
     next_page_future: Option<PageFut>,
     node_id: Option<String>,
@@ -82,14 +84,6 @@ impl Pages {
         record_batches: Vec<RecordBatch>,
         need_progress: bool,
     ) -> Result<Self> {
-        let utc = "UTC".to_owned();
-        let timezone = first_response
-            .settings
-            .as_ref()
-            .and_then(|m| m.get("timezone"))
-            .unwrap_or(&utc);
-        let timezone = Tz::from_str(timezone).map_err(|e| Error::Decode(e.to_string()))?;
-
         let mut s = Self {
             query_id: first_response.id.clone(),
             need_progress,
@@ -100,15 +94,10 @@ impl Pages {
             next_uri: first_response.next_uri.clone(),
             result_timeout_secs: first_response.result_timeout_secs,
             last_access_time: Arc::new(Mutex::new(Instant::now())),
-            timezone,
         };
         let first_page = Page::from_response(first_response, record_batches);
         s.first_page = Some(first_page);
         Ok(s)
-    }
-
-    pub fn timezone(&self) -> Tz {
-        self.timezone
     }
 
     pub fn add_back(&mut self, page: Page) {
@@ -118,7 +107,7 @@ impl Pages {
     pub async fn wait_for_schema(
         mut self,
         need_progress: bool,
-    ) -> Result<(Self, Vec<SchemaField>)> {
+    ) -> Result<(Self, Vec<SchemaField>, Tz)> {
         while let Some(page) = self.next().await {
             let page = page?;
             if !page.raw_schema.is_empty()
@@ -127,6 +116,13 @@ impl Pages {
                 || (need_progress && page.stats.progresses.has_progress())
             {
                 let schema = page.raw_schema.clone();
+                let utc = "UTC".to_owned();
+                let timezone = page
+                    .settings
+                    .as_ref()
+                    .and_then(|m| m.get("timezone"))
+                    .unwrap_or(&utc);
+                let timezone = Tz::from_str(timezone).map_err(|e| Error::Decode(e.to_string()))?;
                 self.add_back(page);
                 let last_access_time = self.last_access_time.clone();
                 if let Some(node_id) = &self.node_id {
@@ -138,10 +134,10 @@ impl Pages {
                     self.client
                         .register_query_for_heartbeat(&self.query_id, state)
                 }
-                return Ok((self, schema));
+                return Ok((self, schema, timezone));
             }
         }
-        Ok((self, vec![]))
+        Ok((self, vec![], Tz::UTC))
     }
 }
 
