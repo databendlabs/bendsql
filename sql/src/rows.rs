@@ -22,7 +22,6 @@ use tokio_stream::{Stream, StreamExt};
 use crate::error::{Error, Result};
 use crate::schema::SchemaRef;
 use crate::value::Value;
-#[cfg(feature = "flight-sql")]
 use arrow::record_batch::RecordBatch;
 use chrono_tz::Tz;
 
@@ -183,7 +182,6 @@ impl Rows {
     }
 }
 
-#[cfg(feature = "flight-sql")]
 impl TryFrom<(RecordBatch, Tz)> for Rows {
     type Error = Error;
     fn try_from((batch, ltz): (RecordBatch, Tz)) -> Result<Self> {

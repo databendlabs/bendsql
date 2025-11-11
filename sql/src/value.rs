@@ -32,7 +32,6 @@ use crate::cursor_ext::{
 use crate::error::{ConvertError, Error, Result};
 use crate::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 
-#[cfg(feature = "flight-sql")]
 use {
     crate::schema::{
         ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
@@ -265,7 +264,6 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
     }
 }
 
-#[cfg(feature = "flight-sql")]
 impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
     type Error = Error;
     fn try_from(
