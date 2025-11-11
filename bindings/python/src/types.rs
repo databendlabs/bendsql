@@ -14,8 +14,11 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "cp38")]
 use chrono::offset::Offset;
-use chrono::{DateTime, Duration, FixedOffset, NaiveDate};
+#[cfg(feature = "cp38")]
+use chrono::FixedOffset;
+use chrono::{DateTime, Duration, NaiveDate};
 use chrono_tz::Tz;
 use once_cell::sync::Lazy;
 use pyo3::exceptions::{PyAttributeError, PyException, PyStopAsyncIteration, PyStopIteration};
@@ -79,13 +82,16 @@ impl<'py> IntoPyObject<'py> for Value {
                 let t = DateTime::<Tz>::try_from(self.0).map_err(|e| {
                     PyException::new_err(format!("failed to convert timestamp: {e}"))
                 })?;
-                // impl of IntoPyObject for chrono_tz::Tz is gated by #![cfg(all(Py_3_9, feature = "chrono-tz"))]
-                // Convert to a fixed-offset datetime so it works on Python < 3.9 (no zoneinfo).
-                // other options:
-                //  1. abi3-py37 -> abi3-py39: abandon py3.8
-                //  2. rm abi3-py37: a wheel for each version of python
-                let t: DateTime<FixedOffset> = t.with_timezone(&t.offset().fix());
-                t.into_bound_py_any(py)?
+                #[cfg(feature = "cp38")]
+                {
+                    // chrono_tz -> PyDateTime isn't implemented for Python < 3.9 (no zoneinfo).
+                    let t: DateTime<FixedOffset> = t.with_timezone(&t.offset().fix());
+                    t.into_bound_py_any(py)?
+                }
+                #[cfg(not(feature = "cp38"))]
+                {
+                    t.into_bound_py_any(py)?
+                }
             }
             databend_driver::Value::Date(_) => {
                 let d = NaiveDate::try_from(self.0)

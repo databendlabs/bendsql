@@ -142,15 +142,17 @@ def _(context):
     if (
         DRIVER_VERSION > (0, 30, 3)
         and DB_VERSION > (1, 2, 836)
-        and sys.version_info.minor >= 9
+        and sys.version_info.minor >= 8
     ):
-        from zoneinfo import ZoneInfo
+        if sys.version_info.minor >= 9:
+            from zoneinfo import ZoneInfo
 
-        tz_dynamic = ZoneInfo("Asia/Shanghai")
-        tz_fixed = timezone(datetime.now(tz_dynamic).utcoffset())
+            tz_expected = ZoneInfo("Asia/Shanghai")
+        else:
+            tz_expected = timezone(timedelta(hours=8))
         context.conn.exec("set timezone='Asia/Shanghai'")
         row = context.conn.query_row("select to_datetime('2024-04-16 12:34:56.789')")
-        exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_fixed)
+        exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_expected)
         assert row.values()[0] == exp, f"Tuple: {row.values()}"
 
 

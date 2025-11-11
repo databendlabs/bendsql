@@ -53,8 +53,11 @@ jobs:
         run: make -C tests test-bendsql DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
 
   build-python:
-    name: build-python
+    name: build-python-${{ matrix.wheel }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        wheel: [py39-abi, cp38]
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust toolchain
@@ -62,6 +65,17 @@ jobs:
         with:
           cache-key: bindings-python-linux-x64
           target: x86_64-unknown-linux-gnu
+      - name: Get opts
+        id: opts
+        shell: bash
+        run: |
+          base_args="--release --strip --out dist"
+          if [[ "${{ matrix.wheel }}" == "py39-abi" ]]; then
+            wheel_args="--features py39-abi"
+          else
+            wheel_args="--no-default-features --features cp38 --interpreter python3.8"
+          fi
+          echo "BUILD_ARGS=${base_args} ${wheel_args}" >> $GITHUB_OUTPUT
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -69,11 +83,11 @@ jobs:
           target: x86_64-unknown-linux-gnu
           manylinux: auto
           sccache: "true"
-          args: --release --strip --out dist
+          args: ${{ steps.opts.outputs.BUILD_ARGS }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bindings-python
+          name: bindings-python-${{ matrix.wheel }}
           path: bindings/python/dist/*.whl
 
   build-nodejs:
@@ -127,13 +141,18 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: bindings-python
+          pattern: bindings-python-*
           path: bindings/python/artifacts
+          merge-multiple: true
       - name: Install dependencies
         working-directory: bindings/python
         run: |
           pip install behave
-          pip install artifacts/*.whl
+          if [[ "${{ matrix.pyver }}" == "3.8" ]]; then
+            pip install artifacts/*cp38*.whl
+          else
+            pip install artifacts/*abi3*.whl
+          fi
       - name: Test AsyncIO
         working-directory: bindings/python
         run: behave tests/asyncio

@@ -41,7 +41,7 @@ jobs:
         run: ruff format --check .
 
   build:
-    name: build-${{ matrix.os }}-${{ matrix.arch }}
+    name: build-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.wheel }}
     needs: check
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -51,10 +51,22 @@ jobs:
             arch: x86_64
             target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
+            wheel: py39-abi
+          - os: linux
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            wheel: cp38
           - os: linux
             arch: aarch64
             target: aarch64-unknown-linux-gnu
             runner: ubuntu-latest
+            wheel: py39-abi
+          - os: linux
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            wheel: cp38
           # FIXME: Windows build is broken
           # - os: windows
           #   arch: x86_64
@@ -64,10 +76,22 @@ jobs:
             arch: x86_64
             target: x86_64-apple-darwin
             runner: macos-latest
+            wheel: py39-abi
+          - os: macos
+            arch: x86_64
+            target: x86_64-apple-darwin
+            runner: macos-latest
+            wheel: cp38
           - os: macos
             arch: aarch64
             target: aarch64-apple-darwin
             runner: macos-latest
+            wheel: py39-abi
+          - os: macos
+            arch: aarch64
+            target: aarch64-apple-darwin
+            runner: macos-latest
+            wheel: cp38
     steps:
       - uses: actions/checkout@v4
       - name: Get opts
@@ -75,10 +99,16 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "BUILD_ARGS=--strip --out dist" >> $GITHUB_OUTPUT
+            base_args="--strip --out dist"
           else
-            echo "BUILD_ARGS=--release --strip --out dist" >> $GITHUB_OUTPUT
+            base_args="--release --strip --out dist"
           fi
+          if [[ "${{ matrix.wheel }}" == "py39-abi" ]]; then
+            wheel_args="--features py39-abi"
+          else
+            wheel_args="--no-default-features --features cp38 --interpreter python3.8"
+          fi
+          echo "BUILD_ARGS=${base_args} ${wheel_args}" >> $GITHUB_OUTPUT
           if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
             echo "MANYLINUX=2_28" >> $GITHUB_OUTPUT
           else
@@ -89,6 +119,11 @@ jobs:
         with:
           cache-key: bindings-python-${{ matrix.os }}-${{ matrix.arch }}
           target: ${{ matrix.target }}
+      - name: Setup Python 3.8 (cp38 wheels)
+        if: matrix.wheel == 'cp38' && matrix.os != 'linux'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -100,7 +135,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bindings-python-${{ matrix.os }}-${{ matrix.arch }}
+          name: bindings-python-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.wheel }}
           path: bindings/python/dist/*.whl
 
   integration:
@@ -123,13 +158,18 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: bindings-python-linux-x86_64
+          pattern: bindings-python-linux-x86_64-*
           path: bindings/python/artifacts
+          merge-multiple: true
       - name: Install dependencies
         working-directory: bindings/python
         run: |
           pip install behave
-          pip install artifacts/*.whl
+          if [[ "${{ matrix.pyver }}" == "3.8" ]]; then
+            pip install artifacts/*cp38*.whl
+          else
+            pip install artifacts/*abi3*.whl
+          fi
       - name: Test AsyncIO
         working-directory: bindings/python
         run: behave tests/asyncio
@@ -161,7 +201,7 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: bindings-python-linux-x86_64
+          name: bindings-python-linux-x86_64-py39-abi
           path: bindings/python/dist
       - name: Run Nox
         run: nox -f tests/nox/noxfile.py
