@@ -11,16 +11,17 @@ authors = { workspace = true }
 repository = { workspace = true }
 
 [features]
-flight-sql = ["dep:arrow", "dep:arrow-array", "dep:arrow-schema", "dep:tonic", "dep:jsonb"]
+flight-sql = ["dep:tonic"]
 
 [dependencies]
-arrow = { workspace = true, optional = true }
-arrow-array = { workspace = true, optional = true }
+arrow = { workspace = true }
+arrow-array = { workspace = true }
 arrow-buffer = { workspace = true }
-arrow-schema = { workspace = true, optional = true }
+arrow-schema = { workspace = true }
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 databend-client = { workspace = true }
-jsonb = { workspace = true, optional = true }
+jsonb = { workspace = true }
 tokio-stream = { workspace = true }
 tonic = { workspace = true, optional = true }
 

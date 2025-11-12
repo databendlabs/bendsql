@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use chrono_tz::Tz;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
-
 use tokio_stream::{Stream, StreamExt};
 
 use crate::error::Error;
@@ -59,17 +59,27 @@ impl RawRow {
     }
 }
 
-impl TryFrom<(SchemaRef, Vec<Option<String>>)> for RawRow {
+impl TryFrom<(SchemaRef, Vec<Option<String>>, Tz)> for RawRow {
     type Error = Error;
 
-    fn try_from((schema, data): (SchemaRef, Vec<Option<String>>)) -> Result<Self> {
+    fn try_from((schema, data, tz): (SchemaRef, Vec<Option<String>>, Tz)) -> Result<Self> {
         let mut values: Vec<Value> = Vec::with_capacity(data.len());
         for (field, val) in schema.fields().iter().zip(data.clone().into_iter()) {
-            values.push(Value::try_from((&field.data_type, val))?);
+            values.push(Value::try_from((&field.data_type, val, tz))?);
         }
 
         let row = Row::new(schema, values);
         Ok(RawRow::new(row, data))
+    }
+}
+
+impl From<Row> for RawRow {
+    fn from(row: Row) -> Self {
+        let mut raw_row: Vec<Option<String>> = Vec::with_capacity(row.values().len());
+        for val in row.values() {
+            raw_row.push(Some(val.to_string()));
+        }
+        RawRow::new(row, raw_row)
     }
 }
 

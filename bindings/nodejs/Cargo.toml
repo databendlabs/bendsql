@@ -14,6 +14,7 @@ doc = false
 
 [dependencies]
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 databend-driver = { workspace = true, features = ["rustls", "flight-sql"] }
 env_logger = "0.11.8"
 tokio-stream = { workspace = true }

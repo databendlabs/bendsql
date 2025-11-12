@@ -30,11 +30,13 @@ databend-driver-macros = { path = "macros", version = "0.30.3" }
 jsonb = { version = "0.5.3" }
 tokio-stream = "0.1"
 chrono = { version = "0.4.40", default-features = false, features = ["clock"] }
+chrono-tz = { version = "0.10.4" }
 arrow = { version = "55.0" }
 arrow-array = { version = "55.0" }
 arrow-buffer = { version = "55.0" }
 arrow-schema = { version = "55.0" }
 arrow-flight = { version = "55.0", features = ["flight-sql-experimental"] }
+arrow-ipc = { version = "55.0", features = ["lz4", "zstd"]}
 tonic = { version = "0.12", default-features = false, features = [
     "transport",
     "codegen",

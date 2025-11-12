@@ -45,7 +45,6 @@ pub enum Error {
     BadArgument(String),
     InvalidResponse(String),
     Api(databend_client::Error),
-    #[cfg(feature = "flight-sql")]
     Arrow(arrow_schema::ArrowError),
     Convert(ConvertError),
 }
@@ -60,7 +59,6 @@ impl std::fmt::Display for Error {
 
             Error::BadArgument(msg) => write!(f, "BadArgument: {msg}"),
             Error::InvalidResponse(msg) => write!(f, "ResponseError: {msg}"),
-            #[cfg(feature = "flight-sql")]
             Error::Arrow(e) => {
                 let msg = match e {
                     arrow_schema::ArrowError::IoError(msg, _) => {
@@ -152,7 +150,6 @@ impl From<tonic::transport::Error> for Error {
     }
 }
 
-#[cfg(feature = "flight-sql")]
 impl From<arrow_schema::ArrowError> for Error {
     fn from(e: arrow_schema::ArrowError) -> Self {
         Error::Arrow(e)

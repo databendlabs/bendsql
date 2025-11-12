@@ -18,27 +18,17 @@ use databend_client::SchemaField as APISchemaField;
 
 use crate::error::{Error, Result};
 
-#[cfg(feature = "flight-sql")]
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, SchemaRef as ArrowSchemaRef};
 
 // Extension types defined by Databend
-#[cfg(feature = "flight-sql")]
 pub(crate) const EXTENSION_KEY: &str = "Extension";
-#[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_EMPTY_ARRAY: &str = "EmptyArray";
-#[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_EMPTY_MAP: &str = "EmptyMap";
-#[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_VARIANT: &str = "Variant";
-#[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_BITMAP: &str = "Bitmap";
-#[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_GEOMETRY: &str = "Geometry";
-#[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_GEOGRAPHY: &str = "Geography";
-#[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_INTERVAL: &str = "Interval";
-#[cfg(feature = "flight-sql")]
 pub(crate) const ARROW_EXT_TYPE_VECTOR: &str = "Vector";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -318,7 +308,6 @@ impl TryFrom<Vec<APISchemaField>> for Schema {
     }
 }
 
-#[cfg(feature = "flight-sql")]
 impl TryFrom<&Arc<ArrowField>> for Field {
     type Error = Error;
 
@@ -427,7 +416,6 @@ impl TryFrom<&Arc<ArrowField>> for Field {
     }
 }
 
-#[cfg(feature = "flight-sql")]
 impl TryFrom<ArrowSchemaRef> for Schema {
     type Error = Error;
 

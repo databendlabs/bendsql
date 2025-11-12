@@ -16,7 +16,7 @@ use tokio_stream::StreamExt;
 
 use databend_driver::{Client, Connection};
 
-use crate::common::DEFAULT_DSN;
+use crate::common::{DEFAULT_DSN, INIT_LOG};
 
 async fn prepare(name: &str) -> (Connection, String) {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
@@ -202,6 +202,7 @@ async fn select_numbers() {
 
 #[tokio::test]
 async fn select_multi_page() {
+    *INIT_LOG;
     let (conn, _) = prepare("select_multi_page").await;
     // default page size is 10000
     let n = 46000;

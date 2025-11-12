@@ -25,6 +25,7 @@ use arrow_flight::sql::client::FlightSqlServiceClient;
 use arrow_flight::utils::flight_data_to_arrow_batch;
 use arrow_schema::SchemaRef as ArrowSchemaRef;
 use async_trait::async_trait;
+use chrono_tz::Tz;
 use percent_encoding::percent_decode_str;
 use tokio::sync::Mutex;
 use tokio_stream::{Stream, StreamExt};
@@ -372,7 +373,7 @@ impl Stream for FlightSQLRows {
                         self.schema.clone(),
                         &dicitionaries_by_id,
                     )?;
-                    let rows = Rows::try_from(batch)?;
+                    let rows = Rows::try_from((batch, Tz::UTC))?;
                     self.rows.extend(rows);
                     self.poll_next(cx)
                 }

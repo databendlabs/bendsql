@@ -14,6 +14,7 @@ doc = false
 
 [dependencies]
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 databend-client = { workspace = true }
 databend-driver = { workspace = true, features = ["rustls", "flight-sql"] }
 databend-driver-core = { workspace = true }
@@ -23,6 +24,11 @@ ctor = "0.2"
 env_logger = "0.11.8"
 http = "1.0"
 once_cell = "1.21"
-pyo3 = { version = "0.24.2", features = ["abi3-py37", "chrono"] }
+pyo3 = { version = "0.24.2", features = ["extension-module", "chrono", "chrono-tz"] }
 pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
 tokio = "1.44"
+
+[features]
+default = ["py39-abi"]
+py39-abi = ["pyo3/abi3-py39"]
+cp38 = []

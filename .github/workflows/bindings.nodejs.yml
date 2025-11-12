@@ -86,6 +86,7 @@ jobs:
         shell: bash
         env:
           NAPI_TARGET: ${{ matrix.target }}
+          MACOSX_DEPLOYMENT_TARGET: 10.12
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             pnpm napi build --platform --target=$NAPI_TARGET --js generated.js
