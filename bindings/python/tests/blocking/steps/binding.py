@@ -155,13 +155,15 @@ def _(context):
         row = context.conn.query_row("select to_datetime('2024-04-16 12:34:56.789')")
         exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_expected)
         assert row.values()[0] == exp, f"Tuple: {row.values()}"
-
         context.conn.exec("set timezone='UTC'")
-        row = context.conn.query_row(
-            f"settings(timezone='{tz}') select to_datetime('2024-04-16 12:34:56.789')"
-        )
-        exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_expected)
-        assert row.values()[0] == exp, f"Tuple: {row.values()}"
+
+        # wait for release 1.2.839
+        # if DB_VERSION >= (1, 2, 839):
+        #     row = context.conn.query_row(
+        #         f"settings(timezone='{tz}') select to_datetime('2024-04-16 12:34:56.789')"
+        #     )
+        #     exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_expected)
+        #     assert row.values()[0] == exp, f"Tuple: {row.values()}"
 
         tz_expected = timezone(timedelta(hours=6))
         row = context.conn.query_row(
