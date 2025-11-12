@@ -32,19 +32,13 @@ jobs:
 
   integration:
     needs: version
-    runs-on: [self-hosted, Linux, X64, 2c8g, aws]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
         with:
           runner: aws
           cache-key: integration
-      - name: Get License from S3
-        run: |
-          aws s3 cp s3://databend-ci/misc/license-trial.key license.key
-          aws s3 cp s3://databend-ci/misc/license-trial.json license.json
-          cat license.json
-          echo "QUERY_DATABEND_ENTERPRISE_LICENSE=$(cat license.key)" >> $GITHUB_ENV
       - name: Run Core Integration Tests
         run: make -C tests test-core DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
       - name: Run Driver Integration Tests
