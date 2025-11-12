@@ -25,6 +25,8 @@ use std::sync::Arc;
 use std::{collections::HashMap, path::Path};
 use tokio_stream::StreamExt;
 
+const TIMESTAMP_TIMEZONE_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.6f %z";
+
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     version.to_string()
@@ -320,6 +322,13 @@ impl ToNapiValue for Value<'_> {
                 let v = DateTime::<Tz>::try_from(inner).map_err(format_napi_error)?;
                 DateTime::to_napi_value(env, v)
             }
+            databend_driver::Value::TimestampTz(dt) => {
+                let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
+                String::to_napi_value(env, formatted.to_string())
+            }
+            databend_driver::Value::TimestampTzString(s) => {
+                String::to_napi_value(env, s.to_string())
+            }
             databend_driver::Value::Date(_) => {
                 let inner = val.inner.clone();
                 let v = NaiveDate::try_from(inner).map_err(format_napi_error)?;
@@ -358,9 +367,6 @@ impl ToNapiValue for Value<'_> {
                 } else {
                     String::to_napi_value(env, s.to_string())
                 }
-            }
-            databend_driver::Value::TimestampTzString(s) => {
-                String::to_napi_value(env, s.to_string())
             }
             databend_driver::Value::Geometry(s) => String::to_napi_value(env, s.to_string()),
             databend_driver::Value::Interval(s) => String::to_napi_value(env, s.to_string()),

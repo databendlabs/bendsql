@@ -19,14 +19,12 @@ use crate::cursor_ext::{
 use crate::error::{ConvertError, Error, Result};
 use crate::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use arrow_buffer::i256;
-use chrono::{DateTime, Datelike, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
+use chrono::{DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
 use chrono_tz::Tz;
 use geozero::wkb::FromWkb;
 use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
 use hex;
-use jiff::fmt::strtime;
-use jiff::{tz, Timestamp};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter, Write};
 use std::hash::Hash;
@@ -87,7 +85,9 @@ pub enum Value {
     Number(NumberValue),
     /// Microseconds from 1970-01-01 00:00:00 UTC
     Timestamp(i64, Tz),
-    TimestampTz(i64, i32),
+    // for decode results
+    TimestampTz(DateTime<FixedOffset>),
+    // for encode parameters
     TimestampTzString(String),
     Date(i32),
     Array(Vec<Value>),
@@ -125,7 +125,7 @@ impl Value {
                 NumberValue::Decimal256(_, s) => DataType::Decimal(DecimalDataType::Decimal256(*s)),
             },
             Self::Timestamp(_, _) => DataType::Timestamp,
-            Self::TimestampTz(_, _) => DataType::TimestampTz,
+            Self::TimestampTz(_) => DataType::TimestampTz,
             Self::TimestampTzString(_) => DataType::TimestampTz,
 
             Self::Date(_) => DataType::Date,
@@ -238,7 +238,11 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
                 let ts = dt_with_tz.timestamp_micros();
                 Ok(Self::Timestamp(ts, tz))
             }
-            DataType::TimestampTz => Ok(Self::TimestampTzString(v)),
+            DataType::TimestampTz => {
+                let t =
+                    DateTime::<FixedOffset>::parse_from_str(v.as_str(), TIMESTAMP_TIMEZONE_FORMAT)?;
+                Ok(Self::TimestampTz(t))
+            }
             DataType::Date => Ok(Self::Date(
                 NaiveDate::parse_from_str(v.as_str(), "%Y-%m-%d")?.num_days_from_ce()
                     - DAYS_FROM_CE,
@@ -298,7 +302,21 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                             let v = array.value(seq);
                             let ts = v as u64 as i64;
                             let offset = (v >> 64) as i32;
-                            Ok(Value::TimestampTz(ts, offset))
+
+                            let secs = ts / 1_000_000;
+                            let nanos = ((ts % 1_000_000) * 1000) as u32;
+                            let dt = match DateTime::from_timestamp(secs, nanos) {
+                                Some(t) => {
+                                    let off = FixedOffset::east_opt(offset).ok_or_else(|| {
+                                        Error::Parsing("invalid offset".to_string())
+                                    })?;
+                                    t.with_timezone(&off)
+                                }
+                                None => {
+                                    return Err(ConvertError::new("Datetime", format!("{v}")).into())
+                                }
+                            };
+                            Ok(Value::TimestampTz(dt))
                         }
                         None => Err(ConvertError::new("Interval", format!("{array:?}")).into()),
                     }
@@ -1011,12 +1029,12 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
             write!(f, "]")?;
             Ok(())
         }
-        Value::TimestampTz(ts, offset) => {
-            let s = timestamp_tz_to_string(*ts, *offset).map_err(|_| std::fmt::Error)?;
+        Value::TimestampTz(dt) => {
+            let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
             if raw {
-                write!(f, "{s}")
+                write!(f, "{formatted}")
             } else {
-                write!(f, "'{s}'")
+                write!(f, "'{formatted}'")
             }
         }
     }
@@ -2266,6 +2284,10 @@ impl Value {
                 format!("'{}'", dt.format(TIMESTAMP_FORMAT))
             }
             Value::TimestampTzString(t) => format!("'{t}'"),
+            Value::TimestampTz(dt) => {
+                let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
+                format!("'{formatted}'")
+            }
             Value::Date(d) => {
                 let date = NaiveDate::from_num_days_from_ce_opt(*d + DAYS_FROM_CE).unwrap();
                 format!("'{}'", date.format("%Y-%m-%d"))
@@ -2297,19 +2319,8 @@ impl Value {
             }
             Value::EmptyArray => "[]".to_string(),
             Value::EmptyMap => "{}".to_string(),
-            Value::TimestampTz(ts, offset) => timestamp_tz_to_string(*ts, *offset).unwrap(),
         }
     }
-}
-
-fn timestamp_tz_to_string(ts: i64, offset: i32) -> std::result::Result<String, jiff::Error> {
-    let timestamp = Timestamp::from_microsecond(ts)?;
-
-    let offset = tz::Offset::from_seconds(offset)?;
-    strtime::format(
-        TIMESTAMP_TIMEZONE_FORMAT,
-        &timestamp.to_zoned(offset.to_time_zone()),
-    )
 }
 
 #[cfg(test)]
