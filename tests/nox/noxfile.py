@@ -15,6 +15,7 @@
 import nox
 import os
 
+
 def generate_params1():
     for db_version in ["1.2.803", "1.2.791"]:
         for body_format in ["arrow", "json"]:
@@ -22,6 +23,7 @@ def generate_params1():
             if body_format == "arrow" and v < (1, 2, 836):
                 continue
             yield nox.param(db_version, body_format)
+
 
 @nox.session
 @nox.parametrize(["db_version", "body_format"], generate_params1())
@@ -40,7 +42,7 @@ def new_driver_with_old_servers(session, db_version, body_format):
             "DATABEND_QUERY_VERSION": query_version,
             "DATABEND_META_VERSION": query_version,
             "DB_VERSION": db_version,
-            "BODY_FORMAT": body_format
+            "BODY_FORMAT": body_format,
         }
         session.run("make", "test-bindings-python", env=env)
         session.run("make", "down")
@@ -61,9 +63,6 @@ def new_test_with_old_drivers(session, driver_version, body_format):
     session.install("behave")
     session.install(f"databend-driver=={driver_version}")
     with session.chdir(".."):
-        env = {
-            "DRIVER_VERSION": driver_version,
-            "BODY_FORMAT": body_format
-        }
+        env = {"DRIVER_VERSION": driver_version, "BODY_FORMAT": body_format}
         session.run("make", "test-bindings-python", env=env)
         session.run("make", "down")

@@ -22,7 +22,6 @@ chrono = { workspace = true }
 chrono-tz = { workspace = true }
 databend-client = { workspace = true }
 jsonb = { workspace = true }
-jiff = "0.2.10"
 tokio-stream = { workspace = true }
 tonic = { workspace = true, optional = true }
 
