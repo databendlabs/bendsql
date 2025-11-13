@@ -23,6 +23,7 @@ tokio-stream = { workspace = true }
 
 arrow-array = { workspace = true }
 arrow-ipc = { workspace = true }
+arrow-schema = { workspace = true }
 bytes = "1.10.1"
 base64 = "0.22.1"
 chrono-tz = { workspace = true }

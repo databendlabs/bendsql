@@ -25,6 +25,7 @@ test-driver: up
 test-bendsql: up
 	cd .. && ./cli/test.sh http
 	cd .. && ./cli/test.sh flight
+	cd .. && ./cli/test.sh http-arrow
 
 test-bindings-python: up
 	cd ../bindings/python && behave tests/asyncio

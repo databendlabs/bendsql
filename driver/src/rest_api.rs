@@ -28,6 +28,7 @@ use tokio_stream::Stream;
 
 use crate::client::LoadMethod;
 use crate::conn::{ConnectionInfo, IConnection, Reader};
+use databend_client::schema::{Schema, SchemaRef};
 use databend_client::APIClient;
 use databend_client::Pages;
 use databend_driver_core::error::{Error, Result};
@@ -35,7 +36,6 @@ use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
 use databend_driver_core::rows::{
     Row, RowIterator, RowStatsIterator, RowWithStats, Rows, ServerStats,
 };
-use databend_driver_core::schema::{Schema, SchemaRef};
 
 const LOAD_PLACEHOLDER: &str = "@_databend_load";
 
@@ -309,7 +309,6 @@ pub struct RestAPIRows<T> {
 impl<T> RestAPIRows<T> {
     async fn from_pages(pages: Pages) -> Result<(Schema, Self)> {
         let (pages, schema, timezone) = pages.wait_for_schema(true).await?;
-        let schema: Schema = schema.try_into()?;
         let rows = Self {
             pages,
             schema: Arc::new(schema.clone()),

@@ -17,10 +17,10 @@ use crate::cursor_ext::{
     ReadNumberExt,
 };
 use crate::error::{ConvertError, Error, Result};
-use crate::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use arrow_buffer::i256;
 use chrono::{DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
 use chrono_tz::Tz;
+use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use geozero::wkb::FromWkb;
 use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
@@ -32,12 +32,6 @@ use std::io::BufRead;
 use std::io::Cursor;
 
 use {
-    crate::schema::{
-        ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
-        ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
-        ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE, ARROW_EXT_TYPE_VARIANT, ARROW_EXT_TYPE_VECTOR,
-        EXTENSION_KEY,
-    },
     arrow_array::{
         Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array,
         Decimal256Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
@@ -46,6 +40,12 @@ use {
         UInt64Array, UInt8Array,
     },
     arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
+    databend_client::schema::{
+        ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
+        ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
+        ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE, ARROW_EXT_TYPE_VARIANT, ARROW_EXT_TYPE_VECTOR,
+        EXTENSION_KEY,
+    },
     jsonb::RawJsonb,
     std::sync::Arc,
 };
@@ -2316,6 +2316,80 @@ impl Value {
         }
     }
 }
+
+// 30% faster lexical_core::write to tmp buf and extend_from_slice
+#[inline]
+pub fn extend_lexical<N: lexical_core::ToLexical>(n: N, out_buf: &mut Vec<u8>) {
+    out_buf.reserve(N::FORMATTED_SIZE_DECIMAL);
+    let len0 = out_buf.len();
+    unsafe {
+        let slice = std::slice::from_raw_parts_mut(
+            out_buf.as_mut_ptr().add(len0),
+            out_buf.capacity() - len0,
+        );
+        let len = lexical_core::write(n, slice).len();
+        out_buf.set_len(len0 + len);
+    }
+}
+
+#[derive(Clone)]
+pub struct OutputCommonSettings {
+    pub true_bytes: Vec<u8>,
+    pub false_bytes: Vec<u8>,
+    pub null_bytes: Vec<u8>,
+    pub nan_bytes: Vec<u8>,
+    pub inf_bytes: Vec<u8>,
+    // pub binary_format: BinaryFormat,
+    // pub geometry_format: GeometryDataType,
+}
+
+pub trait PrimitiveWithFormat {
+    fn write_field(self, buf: &mut Vec<u8>, settings: &OutputCommonSettings);
+}
+
+macro_rules! impl_float {
+    ($ty:ident) => {
+        impl PrimitiveWithFormat for $ty {
+            fn write_field(self: $ty, buf: &mut Vec<u8>, settings: &OutputCommonSettings) {
+                match self {
+                    $ty::INFINITY => buf.extend_from_slice(&settings.inf_bytes),
+                    $ty::NEG_INFINITY => {
+                        buf.push(b'-');
+                        buf.extend_from_slice(&settings.inf_bytes);
+                    }
+                    _ => {
+                        if self.is_nan() {
+                            buf.extend_from_slice(&settings.nan_bytes);
+                        } else {
+                            extend_lexical(self, buf);
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
+macro_rules! impl_int {
+    ($ty:ident) => {
+        impl PrimitiveWithFormat for $ty {
+            fn write_field(self: $ty, out_buf: &mut Vec<u8>, _settings: &OutputCommonSettings) {
+                extend_lexical(self, out_buf);
+            }
+        }
+    };
+}
+
+impl_int!(i8);
+impl_int!(i16);
+impl_int!(i32);
+impl_int!(i64);
+impl_int!(u8);
+impl_int!(u16);
+impl_int!(u32);
+impl_int!(u64);
+impl_float!(f32);
+impl_float!(f64);
 
 #[cfg(test)]
 mod tests {

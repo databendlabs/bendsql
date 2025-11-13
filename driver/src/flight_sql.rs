@@ -35,12 +35,12 @@ use url::Url;
 use crate::client::LoadMethod;
 use crate::conn::{ConnectionInfo, IConnection, Reader};
 use databend_client::presign_upload_to_stage;
+use databend_client::schema::Schema;
 use databend_client::SensitiveString;
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::rows::{
     Row, RowIterator, RowStatsIterator, RowWithStats, Rows, ServerStats,
 };
-use databend_driver_core::schema::Schema;
 
 #[derive(Clone)]
 pub struct FlightSQLConnection {
