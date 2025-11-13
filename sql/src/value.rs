@@ -85,10 +85,7 @@ pub enum Value {
     Number(NumberValue),
     /// Microseconds from 1970-01-01 00:00:00 UTC
     Timestamp(i64, Tz),
-    // for decode results
     TimestampTz(DateTime<FixedOffset>),
-    // for encode parameters
-    TimestampTzString(String),
     Date(i32),
     Array(Vec<Value>),
     Map(Vec<(Value, Value)>),
@@ -126,7 +123,6 @@ impl Value {
             },
             Self::Timestamp(_, _) => DataType::Timestamp,
             Self::TimestampTz(_) => DataType::TimestampTz,
-            Self::TimestampTzString(_) => DataType::TimestampTz,
 
             Self::Date(_) => DataType::Date,
             Self::Interval(_) => DataType::Interval,
@@ -951,7 +947,6 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
         | Value::Bitmap(s)
         | Value::Variant(s)
         | Value::Interval(s)
-        | Value::TimestampTzString(s)
         | Value::Geometry(s)
         | Value::Geography(s) => {
             if raw {
@@ -1897,9 +1892,9 @@ impl ValueDecoder {
     fn read_timestamp_tz<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
-        Ok(Value::TimestampTzString(unsafe {
-            String::from_utf8_unchecked(buf)
-        }))
+        let v = unsafe { std::str::from_utf8_unchecked(&buf) };
+        let t = DateTime::<FixedOffset>::parse_from_str(v, TIMESTAMP_TIMEZONE_FORMAT)?;
+        Ok(Value::TimestampTz(t))
     }
 
     fn read_bitmap<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -2283,7 +2278,6 @@ impl Value {
                 let dt = dt.with_timezone(tz);
                 format!("'{}'", dt.format(TIMESTAMP_FORMAT))
             }
-            Value::TimestampTzString(t) => format!("'{t}'"),
             Value::TimestampTz(dt) => {
                 let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
                 format!("'{formatted}'")

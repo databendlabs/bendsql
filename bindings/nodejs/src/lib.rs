@@ -326,9 +326,6 @@ impl ToNapiValue for Value<'_> {
                 let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
                 String::to_napi_value(env, formatted.to_string())
             }
-            databend_driver::Value::TimestampTzString(s) => {
-                String::to_napi_value(env, s.to_string())
-            }
             databend_driver::Value::Date(_) => {
                 let inner = val.inner.clone();
                 let v = NaiveDate::try_from(inner).map_err(format_napi_error)?;
