@@ -30,6 +30,7 @@ pub(crate) const ARROW_EXT_TYPE_GEOMETRY: &str = "Geometry";
 pub(crate) const ARROW_EXT_TYPE_GEOGRAPHY: &str = "Geography";
 pub(crate) const ARROW_EXT_TYPE_INTERVAL: &str = "Interval";
 pub(crate) const ARROW_EXT_TYPE_VECTOR: &str = "Vector";
+pub(crate) const ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE: &str = "TimestampTz";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumberDataType {
@@ -321,6 +322,7 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                 ARROW_EXT_TYPE_GEOMETRY => DataType::Geometry,
                 ARROW_EXT_TYPE_GEOGRAPHY => DataType::Geography,
                 ARROW_EXT_TYPE_INTERVAL => DataType::Interval,
+                ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE => DataType::TimestampTz,
                 ARROW_EXT_TYPE_VECTOR => match f.data_type() {
                     ArrowDataType::FixedSizeList(field, dimension) => {
                         let dimension = match field.data_type() {

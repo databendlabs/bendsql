@@ -216,6 +216,11 @@ Then("Select types should be expected native types", async function () {
       },
     ]);
   }
+  // TimestampTz
+  if (!(DRIVER_VERSION > [0, 30, 3] && DB_VERSION >= [1, 2, 836])) {
+    const row = await this.conn.queryRow(`SELECT to_datetime_tz('2024-04-16 12:34:56.789 +0800'))`);
+    assert.deepEqual(row.values(), ["2024-04-16T12:34:56.789 +0800"]);
+  }
 });
 
 Then("Select numbers should iterate all rows", async function () {

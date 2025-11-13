@@ -56,7 +56,7 @@ export declare class Connection {
    * Load data with stage attachment.
    * The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
    */
-  streamLoad(sql: string, data: Array<Array<string>>): Promise<ServerStats>
+  streamLoad(sql: string, data: Array<Array<string>>, method?: string | undefined | null): Promise<ServerStats>
   /**
    * Load file with stage attachment.
    * The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
