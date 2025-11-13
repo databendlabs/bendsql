@@ -774,7 +774,6 @@ fn compute_column_widths(
     // Collect the maximum width of each column value
     for row in results.iter() {
         let values = row.values();
-        println!("results {:?}", values);
         for (i, value) in values.iter().enumerate() {
             let width = value_display_width(value, quote_string);
             if width > column_widths[i] {

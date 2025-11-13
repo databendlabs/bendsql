@@ -58,6 +58,11 @@ impl Page {
         } else {
             self.data.extend_from_slice(&p.data);
         }
+        if self.batches.is_empty() {
+            self.batches = p.batches;
+        } else {
+            self.batches.extend_from_slice(&p.batches);
+        }
         self.stats = p.stats;
     }
 }
