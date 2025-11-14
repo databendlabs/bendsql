@@ -22,7 +22,7 @@ use arrow_array::{
     StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit};
-use chrono::{DateTime, FixedOffset};
+use chrono::{FixedOffset, TimeZone};
 use chrono_tz::Tz;
 use databend_client::schema::{
     DecimalSize, ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
@@ -92,22 +92,16 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                     match array.as_any().downcast_ref::<Decimal128Array>() {
                         Some(array) => {
                             let v = array.value(seq);
-                            let ts = v as u64 as i64;
+                            let unix_ts = v as u64 as i64;
                             let offset = (v >> 64) as i32;
-
-                            let secs = ts / 1_000_000;
-                            let nanos = ((ts % 1_000_000) * 1000) as u32;
-                            let dt = match DateTime::from_timestamp(secs, nanos) {
-                                Some(t) => {
-                                    let off = FixedOffset::east_opt(offset).ok_or_else(|| {
-                                        Error::Parsing("invalid offset".to_string())
-                                    })?;
-                                    t.with_timezone(&off)
-                                }
-                                None => {
-                                    return Err(ConvertError::new("Datetime", format!("{v}")).into())
-                                }
-                            };
+                            let offset = FixedOffset::east_opt(offset)
+                                .ok_or_else(|| Error::Parsing("invalid offset".to_string()))?;
+                            let dt =
+                                offset.timestamp_micros(unix_ts).single().ok_or_else(|| {
+                                    Error::Parsing(format!(
+                                        "Invalid timestamp_micros {unix_ts} for offset {offset}"
+                                    ))
+                                })?;
                             Ok(Value::TimestampTz(dt))
                         }
                         None => Err(ConvertError::new("Interval", format!("{array:?}")).into()),
