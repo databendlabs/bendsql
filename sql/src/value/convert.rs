@@ -109,14 +109,10 @@ impl TryFrom<Value> for NaiveDateTime {
     type Error = Error;
     fn try_from(val: Value) -> Result<Self> {
         match val {
-            Value::Timestamp(i, _tz) => {
-                let secs = i / 1_000_000;
-                let nanos = ((i % 1_000_000) * 1000) as u32;
-                match DateTime::from_timestamp(secs, nanos) {
-                    Some(t) => Ok(t.naive_utc()),
-                    None => Err(ConvertError::new("NaiveDateTime", format!("{val}")).into()),
-                }
-            }
+            Value::Timestamp(i, _tz) => match DateTime::from_timestamp_micros(i) {
+                Some(t) => Ok(t.naive_utc()),
+                None => Err(ConvertError::new("NaiveDateTime", format!("{val}")).into()),
+            },
             _ => Err(ConvertError::new("NaiveDateTime", format!("{val}")).into()),
         }
     }
@@ -126,14 +122,10 @@ impl TryFrom<Value> for DateTime<Tz> {
     type Error = Error;
     fn try_from(val: Value) -> Result<Self> {
         match val {
-            Value::Timestamp(i, tz) => {
-                let secs = i / 1_000_000;
-                let nanos = ((i % 1_000_000) * 1000) as u32;
-                match DateTime::from_timestamp(secs, nanos) {
-                    Some(t) => Ok(tz.from_utc_datetime(&t.naive_utc())),
-                    None => Err(ConvertError::new("Datetime", format!("{val}")).into()),
-                }
-            }
+            Value::Timestamp(i, tz) => match DateTime::from_timestamp_micros(i) {
+                Some(t) => Ok(tz.from_utc_datetime(&t.naive_utc())),
+                None => Err(ConvertError::new("Datetime", format!("{val}")).into()),
+            },
             _ => Err(ConvertError::new("DateTime", format!("{val}")).into()),
         }
     }

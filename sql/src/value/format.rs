@@ -74,12 +74,7 @@ fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std:
             }
         }
         Value::Timestamp(micros, _tz) => {
-            let (mut secs, mut nanos) = (*micros / 1_000_000, (*micros % 1_000_000) * 1_000);
-            if nanos < 0 {
-                secs -= 1;
-                nanos += 1_000_000_000;
-            }
-            let t = DateTime::from_timestamp(secs, nanos as _).unwrap_or_default();
+            let t = DateTime::from_timestamp_micros(*micros).unwrap_or_default();
             let t = t.naive_utc();
             if raw {
                 write!(f, "{}", t.format(TIMESTAMP_FORMAT))
