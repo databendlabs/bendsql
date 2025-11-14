@@ -27,9 +27,9 @@ use std::io::{BufRead, Cursor};
 
 use super::{NumberValue, Value, DAYS_FROM_CE, TIMESTAMP_TIMEZONE_FORMAT};
 
-pub(crate) const NULL_VALUE: &str = "NULL";
-pub(crate) const TRUE_VALUE: &str = "1";
-pub(crate) const FALSE_VALUE: &str = "0";
+const NULL_VALUE: &str = "NULL";
+const TRUE_VALUE: &str = "1";
+const FALSE_VALUE: &str = "0";
 
 impl TryFrom<(&DataType, Option<String>, Tz)> for Value {
     type Error = Error;
