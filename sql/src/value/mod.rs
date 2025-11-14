@@ -20,7 +20,7 @@ mod interval;
 mod string_decoder;
 
 pub use base::{NumberValue, Value};
-pub use format::{display_decimal_128, display_decimal_256};
+use format::{display_decimal_128, display_decimal_256};
 pub use interval::Interval;
 
-pub(crate) use base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
+use base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
