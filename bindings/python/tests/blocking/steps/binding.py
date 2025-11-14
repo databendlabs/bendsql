@@ -157,21 +157,28 @@ def _(context):
         assert row.values()[0] == exp, f"Tuple: {row.values()}"
         context.conn.exec("set timezone='UTC'")
 
-        # wait for release 1.2.839
-        # if DB_VERSION >= (1, 2, 839):
-        #     row = context.conn.query_row(
-        #         f"settings(timezone='{tz}') select to_datetime('2024-04-16 12:34:56.789')"
-        #     )
-        #     exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_expected)
-        #     assert row.values()[0] == exp, f"Tuple: {row.values()}"
+        if DB_VERSION >= (1, 2, 839):
+            exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_expected)
+            row = context.conn.query_row(
+                f"settings(timezone='{tz}') select to_datetime('2024-04-16 12:34:56.789')"
+            )
+            assert row.values()[0] == exp, f"Tuple: {row.values()}"
+
+            row = context.conn.query_row(
+                f"settings(timezone='{tz}') select (to_datetime('2024-04-16 12:34:56.789'), 10)"
+            )
+            assert row.values()[0] == exp, f"Tuple: {row.values()}"
 
         tz_expected = timezone(timedelta(hours=6))
         row = context.conn.query_row(
             f"settings(timezone='{tz}') select to_timestamp_tz('2024-04-16 12:34:56.789 +0600')"
         )
-        exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_expected)
-        exp_bug = datetime(2024, 4, 16, 18, 34, 56, 789000, tzinfo=tz_expected)
-        assert row.values()[0] in (exp, exp_bug), f"Tuple: {row.values()[0]} {exp}"
+        if DB_VERSION >= (1, 2, 840):
+            exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_expected)
+        else:
+            # bug
+            exp = datetime(2024, 4, 16, 18, 34, 56, 789000, tzinfo=tz_expected)
+        assert row.values()[0] == exp, f"Tuple: {row.values()[0]} {exp}"
 
 
 @then("Select numbers should iterate all rows")

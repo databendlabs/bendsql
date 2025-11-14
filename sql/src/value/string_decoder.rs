@@ -97,20 +97,7 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
                 let d = parse_decimal(v.as_str(), *size)?;
                 Ok(Self::Number(d))
             }
-            DataType::Timestamp => {
-                let naive_dt = NaiveDateTime::parse_from_str(v.as_str(), "%Y-%m-%d %H:%M:%S%.6f")?;
-                let dt_with_tz = match tz.from_local_datetime(&naive_dt) {
-                    LocalResult::Single(dt) => dt,
-                    LocalResult::None => {
-                        return Err(Error::Parsing(format!(
-                            "time {v} not exists in timezone {tz}"
-                        )))
-                    }
-                    LocalResult::Ambiguous(dt1, _dt2) => dt1,
-                };
-                let ts = dt_with_tz.timestamp_micros();
-                Ok(Self::Timestamp(ts, tz))
-            }
+            DataType::Timestamp => parse_timestamp(v.as_str(), tz),
             DataType::TimestampTz => {
                 let t =
                     DateTime::<FixedOffset>::parse_from_str(v.as_str(), TIMESTAMP_TIMEZONE_FORMAT)?;
@@ -127,7 +114,7 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
             DataType::Interval => Ok(Self::Interval(v)),
             DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) | DataType::Vector(_) => {
                 let mut reader = Cursor::new(v.as_str());
-                let decoder = ValueDecoder {};
+                let decoder = ValueDecoder { timezone: tz };
                 decoder.read_field(t, &mut reader)
             }
             DataType::Nullable(inner) => match inner.as_ref() {
@@ -146,7 +133,9 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
     }
 }
 
-pub(super) struct ValueDecoder {}
+struct ValueDecoder {
+    pub timezone: Tz,
+}
 
 impl ValueDecoder {
     pub(super) fn read_field<R: AsRef<[u8]>>(
@@ -310,16 +299,7 @@ impl ValueDecoder {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
-        let ts = NaiveDateTime::parse_from_str(v, "%Y-%m-%d %H:%M:%S%.6f")?
-            .and_utc()
-            .timestamp_micros();
-        Ok(Value::Timestamp(ts, Tz::UTC))
-    }
-
-    fn read_interval<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
-        let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
-        Ok(Value::Interval(unsafe { String::from_utf8_unchecked(buf) }))
+        parse_timestamp(v, self.timezone)
     }
 
     fn read_timestamp_tz<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -328,6 +308,12 @@ impl ValueDecoder {
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
         let t = DateTime::<FixedOffset>::parse_from_str(v, TIMESTAMP_TIMEZONE_FORMAT)?;
         Ok(Value::TimestampTz(t))
+    }
+
+    fn read_interval<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut buf = Vec::new();
+        reader.read_quoted_text(&mut buf, b'\'')?;
+        Ok(Value::Interval(unsafe { String::from_utf8_unchecked(buf) }))
     }
 
     fn read_bitmap<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -465,6 +451,21 @@ impl ValueDecoder {
         reader.must_ignore_byte(b')')?;
         Ok(Value::Tuple(vals))
     }
+}
+
+fn parse_timestamp(ts_string: &str, tz: Tz) -> Result<Value> {
+    let naive_dt = NaiveDateTime::parse_from_str(ts_string, "%Y-%m-%d %H:%M:%S%.6f")?;
+    let dt_with_tz = match tz.from_local_datetime(&naive_dt) {
+        LocalResult::Single(dt) => dt,
+        LocalResult::None => {
+            return Err(Error::Parsing(format!(
+                "time {v} not exists in timezone {tz}"
+            )))
+        }
+        LocalResult::Ambiguous(dt1, _dt2) => dt1,
+    };
+    let ts = dt_with_tz.timestamp_micros();
+    Ok(Value::Timestamp(ts, tz))
 }
 
 fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
