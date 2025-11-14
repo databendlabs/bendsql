@@ -45,7 +45,8 @@ impl std::fmt::Display for Value {
     }
 }
 
-// Compatible with Databend, inner values of nested types are quoted.
+// Used as output of cli
+// Compatible with Databend, strings inside nested types are quoted.
 fn encode_value(f: &mut std::fmt::Formatter<'_>, val: &Value, raw: bool) -> std::fmt::Result {
     match val {
         Value::Null => write!(f, "NULL"),
@@ -222,6 +223,8 @@ pub fn display_decimal_256(num: i256, scale: u8) -> String {
 }
 
 impl Value {
+    // for now only used in ORM to fmt values to insert,
+    // for Params, rust use Param::as_sql_string, and py/js bindings are handled in binding code
     pub fn to_sql_string(&self) -> String {
         match self {
             Value::Null => "NULL".to_string(),

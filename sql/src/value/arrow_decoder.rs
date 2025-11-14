@@ -38,6 +38,33 @@ use crate::error::{ConvertError, Error, Result};
 
 use super::{Interval, NumberValue, Value};
 
+/// The in-memory representation of the MonthDayMicros variant of the "Interval" logical type.
+#[allow(non_camel_case_types)]
+#[repr(C)]
+struct months_days_micros(pub i128);
+
+/// Mask for extracting the lower 64 bits (microseconds).
+const MICROS_MASK: i128 = 0xFFFFFFFFFFFFFFFF;
+/// Mask for extracting the middle 32 bits (days or months).
+const DAYS_MONTHS_MASK: i128 = 0xFFFFFFFF;
+
+impl months_days_micros {
+    #[inline]
+    pub fn months(&self) -> i32 {
+        ((self.0 >> 96) & DAYS_MONTHS_MASK) as i32
+    }
+
+    #[inline]
+    pub fn days(&self) -> i32 {
+        ((self.0 >> 64) & DAYS_MONTHS_MASK) as i32
+    }
+
+    #[inline]
+    pub fn microseconds(&self) -> i64 {
+        (self.0 & MICROS_MASK) as i64
+    }
+}
+
 impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
     type Error = Error;
     fn try_from(
@@ -385,32 +412,4 @@ fn parse_geometry(raw_data: &[u8]) -> Result<String> {
     let mut data = Cursor::new(raw_data);
     let wkt = Ewkt::from_wkb(&mut data, WkbDialect::Ewkb)?;
     Ok(wkt.0)
-}
-
-/// The in-memory representation of the MonthDayMicros variant of the "Interval" logical type.
-#[derive(Debug, Copy, Clone, Default, PartialEq, PartialOrd, Ord, Eq, Hash)]
-#[allow(non_camel_case_types)]
-#[repr(C)]
-pub struct months_days_micros(pub i128);
-
-/// Mask for extracting the lower 64 bits (microseconds).
-pub const MICROS_MASK: i128 = 0xFFFFFFFFFFFFFFFF;
-/// Mask for extracting the middle 32 bits (days or months).
-pub const DAYS_MONTHS_MASK: i128 = 0xFFFFFFFF;
-
-impl months_days_micros {
-    #[inline]
-    pub fn months(&self) -> i32 {
-        ((self.0 >> 96) & DAYS_MONTHS_MASK) as i32
-    }
-
-    #[inline]
-    pub fn days(&self) -> i32 {
-        ((self.0 >> 64) & DAYS_MONTHS_MASK) as i32
-    }
-
-    #[inline]
-    pub fn microseconds(&self) -> i64 {
-        (self.0 & MICROS_MASK) as i64
-    }
 }
