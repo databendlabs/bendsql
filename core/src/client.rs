@@ -441,7 +441,7 @@ impl APIClient {
 
     pub async fn start_query(self: &Arc<Self>, sql: &str, need_progress: bool) -> Result<Pages> {
         info!("start query: {sql}");
-        let (resp, batches) = self.start_query_inner(sql, None).await?;
+        let (resp, batches) = self.start_query_inner(sql, None, false).await?;
         Pages::new(self.clone(), resp, batches, need_progress)
     }
 
@@ -474,6 +474,7 @@ impl APIClient {
         &self,
         sql: &str,
         stage_attachment_config: Option<StageAttachmentConfig<'_>>,
+        force_json_body: bool,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
         if !self.in_active_transaction() {
             self.route_hint.next();
@@ -491,7 +492,7 @@ impl APIClient {
         // headers
         let query_id = self.gen_query_id();
         let mut headers = self.make_headers(Some(&query_id))?;
-        if self.capability.arrow_data && self.body_format == "arrow" {
+        if self.capability.arrow_data && self.body_format == "arrow" && !force_json_body {
             debug!("accept arrow data");
             headers.insert(ACCEPT, HeaderValue::from_static(CONTENT_TYPE_ARROW_OR_JSON));
         }
@@ -638,7 +639,16 @@ impl APIClient {
     }
 
     pub async fn query_all(self: &Arc<Self>, sql: &str) -> Result<Page> {
-        let mut pages = self.start_query(sql, false).await?;
+        self.query_all_inner(sql, false).await
+    }
+
+    pub async fn query_all_inner(
+        self: &Arc<Self>,
+        sql: &str,
+        force_json_body: bool,
+    ) -> Result<Page> {
+        let (resp, batches) = self.start_query_inner(sql, None, force_json_body).await?;
+        let mut pages = Pages::new(self.clone(), resp, batches, false)?;
         let mut all = Page::default();
         while let Some(page) = pages.next().await {
             all.update(page?);
@@ -704,7 +714,7 @@ impl APIClient {
             file_format_options: Some(file_format_options),
             copy_options: Some(copy_options),
         });
-        let (resp, batches) = self.start_query_inner(sql, stage_attachment).await?;
+        let (resp, batches) = self.start_query_inner(sql, stage_attachment, true).await?;
         let mut pages = Pages::new(self.clone(), resp, batches, false)?;
         let mut all = Page::default();
         while let Some(page) = pages.next().await {
@@ -716,7 +726,7 @@ impl APIClient {
     async fn get_presigned_upload_url(self: &Arc<Self>, stage: &str) -> Result<PresignedResponse> {
         info!("get presigned upload url: {stage}");
         let sql = format!("PRESIGN UPLOAD {stage}");
-        let resp = self.query_all(&sql).await?;
+        let resp = self.query_all_inner(&sql, true).await?;
         if resp.data.len() != 1 {
             return Err(Error::Decode(
                 "Empty response from server for presigned request".to_string(),

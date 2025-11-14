@@ -25,16 +25,12 @@ test-driver: up
 test-bendsql: up
 	cd .. && ./cli/test.sh http
 	cd .. && ./cli/test.sh flight
+	BODY_FORMAT=arrow cd .. && ./cli/test.sh http
 
 test-bindings-python: up
 	cd ../bindings/python && behave tests/asyncio
 	cd ../bindings/python && behave tests/blocking
 	cd ../bindings/python && behave tests/cursor
-
-test-bindings-python-arrow: up
-	TEST_ARROW_BODY=1 cd ../bindings/python && behave tests/asyncio
-	TEST_ARROW_BODY=1 cd ../bindings/python && behave tests/blocking
-	TEST_ARROW_BODY=1 cd ../bindings/python && behave tests/cursor
 
 test-bindings-nodejs: up
 	cd ../bindings/nodejs && pnpm run test

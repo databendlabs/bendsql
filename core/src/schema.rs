@@ -14,23 +14,23 @@
 
 use std::sync::Arc;
 
-use databend_client::SchemaField as APISchemaField;
+use crate::SchemaField as APISchemaField;
 
 use crate::error::{Error, Result};
 
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, SchemaRef as ArrowSchemaRef};
 
 // Extension types defined by Databend
-pub(crate) const EXTENSION_KEY: &str = "Extension";
-pub(crate) const ARROW_EXT_TYPE_EMPTY_ARRAY: &str = "EmptyArray";
-pub(crate) const ARROW_EXT_TYPE_EMPTY_MAP: &str = "EmptyMap";
-pub(crate) const ARROW_EXT_TYPE_VARIANT: &str = "Variant";
-pub(crate) const ARROW_EXT_TYPE_BITMAP: &str = "Bitmap";
-pub(crate) const ARROW_EXT_TYPE_GEOMETRY: &str = "Geometry";
-pub(crate) const ARROW_EXT_TYPE_GEOGRAPHY: &str = "Geography";
-pub(crate) const ARROW_EXT_TYPE_INTERVAL: &str = "Interval";
-pub(crate) const ARROW_EXT_TYPE_VECTOR: &str = "Vector";
-pub(crate) const ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE: &str = "TimestampTz";
+pub const EXTENSION_KEY: &str = "Extension";
+pub const ARROW_EXT_TYPE_EMPTY_ARRAY: &str = "EmptyArray";
+pub const ARROW_EXT_TYPE_EMPTY_MAP: &str = "EmptyMap";
+pub const ARROW_EXT_TYPE_VARIANT: &str = "Variant";
+pub const ARROW_EXT_TYPE_BITMAP: &str = "Bitmap";
+pub const ARROW_EXT_TYPE_GEOMETRY: &str = "Geometry";
+pub const ARROW_EXT_TYPE_GEOGRAPHY: &str = "Geography";
+pub const ARROW_EXT_TYPE_INTERVAL: &str = "Interval";
+pub const ARROW_EXT_TYPE_VECTOR: &str = "Vector";
+pub const ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE: &str = "TimestampTz";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumberDataType {
@@ -223,7 +223,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
             "Date" => DataType::Date,
             "Nullable" => {
                 if desc.args.len() != 1 {
-                    return Err(Error::Parsing(
+                    return Err(Error::Decode(
                         "Nullable type must have one argument".to_string(),
                     ));
                 }
@@ -235,7 +235,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
             }
             "Array" => {
                 if desc.args.len() != 1 {
-                    return Err(Error::Parsing(
+                    return Err(Error::Decode(
                         "Array type must have one argument".to_string(),
                     ));
                 }
@@ -251,7 +251,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
                     DataType::EmptyMap
                 } else {
                     if desc.args.len() != 2 {
-                        return Err(Error::Parsing(
+                        return Err(Error::Decode(
                             "Map type must have two arguments".to_string(),
                         ));
                     }
@@ -277,7 +277,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
                 DataType::Vector(dimension)
             }
             "Timestamp_Tz" => DataType::TimestampTz,
-            _ => return Err(Error::Parsing(format!("Unknown type: {desc:?}"))),
+            _ => return Err(Error::Decode(format!("Unknown type: {desc:?}"))),
         };
         Ok(dt)
     }
@@ -328,7 +328,7 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                         let dimension = match field.data_type() {
                             ArrowDataType::Float32 => *dimension as u64,
                             _ => {
-                                return Err(Error::Parsing(format!(
+                                return Err(Error::Decode(format!(
                                     "Unsupported FixedSizeList Arrow type: {:?}",
                                     field.data_type()
                                 )));
@@ -337,13 +337,13 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                         DataType::Vector(dimension)
                     }
                     arrow_type => {
-                        return Err(Error::Parsing(format!(
+                        return Err(Error::Decode(format!(
                             "Unsupported Arrow type: {arrow_type:?}",
                         )));
                     }
                 },
                 _ => {
-                    return Err(Error::Parsing(format!(
+                    return Err(Error::Decode(format!(
                         "Unsupported extension datatype for arrow field: {f:?}"
                     )))
                 }
@@ -402,7 +402,7 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                     DataType::Tuple(inner_tys)
                 }
                 _ => {
-                    return Err(Error::Parsing(format!(
+                    return Err(Error::Decode(format!(
                         "Unsupported datatype for arrow field: {f:?}"
                     )))
                 }
@@ -483,7 +483,7 @@ fn parse_type_desc(s: &str) -> Result<TypeDesc<'_>> {
         }
     }
     if depth != 0 {
-        return Err(Error::Parsing(format!("Invalid type desc: {s}")));
+        return Err(Error::Decode(format!("Invalid type desc: {s}")));
     }
     if start < s.len() {
         let s = &s[start..];
@@ -493,7 +493,7 @@ fn parse_type_desc(s: &str) -> Result<TypeDesc<'_>> {
             } else if s == "NULL" {
                 nullable = true;
             } else {
-                return Err(Error::Parsing(format!("Invalid type arg for {name}: {s}")));
+                return Err(Error::Decode(format!("Invalid type arg for {name}: {s}")));
             }
         }
     }

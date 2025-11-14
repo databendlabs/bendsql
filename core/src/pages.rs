@@ -15,6 +15,7 @@
 use crate::client::QueryState;
 use crate::error::Result;
 use crate::response::QueryResponse;
+use crate::schema::Schema;
 use crate::{APIClient, Error, QueryStats, SchemaField};
 use arrow_array::RecordBatch;
 use chrono_tz::Tz;
@@ -56,6 +57,11 @@ impl Page {
             self.data = p.data
         } else {
             self.data.extend_from_slice(&p.data);
+        }
+        if self.batches.is_empty() {
+            self.batches = p.batches;
+        } else {
+            self.batches.extend_from_slice(&p.batches);
         }
         self.stats = p.stats;
     }
@@ -104,10 +110,7 @@ impl Pages {
         self.first_page = Some(page);
     }
 
-    pub async fn wait_for_schema(
-        mut self,
-        need_progress: bool,
-    ) -> Result<(Self, Vec<SchemaField>, Tz)> {
+    pub async fn wait_for_schema(mut self, need_progress: bool) -> Result<(Self, Schema, Tz)> {
         while let Some(page) = self.next().await {
             let page = page?;
             if !page.raw_schema.is_empty()
@@ -115,7 +118,16 @@ impl Pages {
                 || !page.batches.is_empty()
                 || (need_progress && page.stats.progresses.has_progress())
             {
-                let schema = page.raw_schema.clone();
+                let schema: Schema = if !page.batches.is_empty() {
+                    let arrow_schema = page.batches[0].schema().clone();
+                    arrow_schema
+                        .try_into()
+                        .map_err(|e| Error::Decode(format!("fail to decode arrow schema: {e}")))?
+                } else {
+                    let s = page.raw_schema.clone();
+                    s.try_into()
+                        .map_err(|e| Error::Decode(format!("fail to decode string schema: {e}")))?
+                };
                 let utc = "UTC".to_owned();
                 let timezone = page
                     .settings
@@ -137,7 +149,7 @@ impl Pages {
                 return Ok((self, schema, timezone));
             }
         }
-        Ok((self, vec![], Tz::UTC))
+        Ok((self, Schema::default(), Tz::UTC))
     }
 }
 

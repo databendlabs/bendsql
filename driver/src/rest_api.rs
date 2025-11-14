@@ -28,6 +28,7 @@ use tokio_stream::Stream;
 
 use crate::client::LoadMethod;
 use crate::conn::{ConnectionInfo, IConnection, Reader};
+use databend_client::schema::{Schema, SchemaRef};
 use databend_client::APIClient;
 use databend_client::Pages;
 use databend_driver_core::error::{Error, Result};
@@ -35,7 +36,6 @@ use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
 use databend_driver_core::rows::{
     Row, RowIterator, RowStatsIterator, RowWithStats, Rows, ServerStats,
 };
-use databend_driver_core::schema::{Schema, SchemaRef};
 
 const LOAD_PLACEHOLDER: &str = "@_databend_load";
 
@@ -309,7 +309,6 @@ pub struct RestAPIRows<T> {
 impl<T> RestAPIRows<T> {
     async fn from_pages(pages: Pages) -> Result<(Schema, Self)> {
         let (pages, schema, timezone) = pages.wait_for_schema(true).await?;
-        let schema: Schema = schema.try_into()?;
         let rows = Self {
             pages,
             schema: Arc::new(schema.clone()),
@@ -347,7 +346,11 @@ impl<T: FromRowStats + std::marker::Unpin> Stream for RestAPIRows<T> {
         match Pin::new(&mut self.pages).poll_next(cx) {
             Poll::Ready(Some(Ok(page))) => {
                 if self.schema.fields().is_empty() {
-                    self.schema = Arc::new(page.raw_schema.try_into()?);
+                    if !page.raw_schema.is_empty() {
+                        self.schema = Arc::new(page.raw_schema.try_into()?);
+                    } else if !page.batches.is_empty() {
+                        self.schema = Arc::new(page.batches[0].schema().clone().try_into()?);
+                    }
                 }
                 if page.batches.is_empty() {
                     let mut new_data = page.data.into();

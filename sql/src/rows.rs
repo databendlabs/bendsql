@@ -20,10 +20,10 @@ use serde::Deserialize;
 use tokio_stream::{Stream, StreamExt};
 
 use crate::error::{Error, Result};
-use crate::schema::SchemaRef;
 use crate::value::Value;
 use arrow::record_batch::RecordBatch;
 use chrono_tz::Tz;
+use databend_client::schema::SchemaRef;
 
 #[derive(Clone, Debug)]
 pub enum RowWithStats {

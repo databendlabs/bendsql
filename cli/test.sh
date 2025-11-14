@@ -21,6 +21,7 @@ DATABEND_USER=${DATABEND_USER:-root}
 DATABEND_PASSWORD=${DATABEND_PASSWORD:-}
 DATABEND_HOST=${DATABEND_HOST:-localhost}
 DATABEND_PORT=${DATABEND_PORT:-8000}
+BODY_FORMAT=${BODY_FORMAT:-json}
 
 TEST_HANDLER=$1
 FILTER=$2
@@ -34,13 +35,15 @@ case $TEST_HANDLER in
 	;;
 "http")
 	echo "==> Testing REST API handler"
-	export BENDSQL_DSN="databend://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:${DATABEND_PORT}/?sslmode=disable&presign=on"
+	export BENDSQL_DSN="databend://${DATABEND_USER}:${DATABEND_PASSWORD}@${DATABEND_HOST}:${DATABEND_PORT}/?sslmode=disable&presign=on&body_format=${BODY_FORMAT}"
 	;;
 *)
 	echo "Usage: $0 [flight|http]"
 	exit 1
 	;;
 esac
+
+echo $BENDSQL_DSN
 
 export BENDSQL="${CARGO_TARGET_DIR}/debug/bendsql"
 

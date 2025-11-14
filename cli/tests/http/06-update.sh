@@ -35,3 +35,7 @@ echo "$[a+b]"
 cat <<SQL | ${BENDSQL}
 DROP TABLE IF EXISTS t3;
 SQL
+
+cat <<SQL | ${BENDSQL}
+DROP TABLE IF EXISTS r;
+SQL

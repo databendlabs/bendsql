@@ -17,10 +17,10 @@ use crate::cursor_ext::{
     ReadNumberExt,
 };
 use crate::error::{ConvertError, Error, Result};
-use crate::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use arrow_buffer::i256;
 use chrono::{DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
 use chrono_tz::Tz;
+use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use geozero::wkb::FromWkb;
 use geozero::wkb::WkbDialect;
 use geozero::wkt::Ewkt;
@@ -32,12 +32,6 @@ use std::io::BufRead;
 use std::io::Cursor;
 
 use {
-    crate::schema::{
-        ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
-        ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
-        ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE, ARROW_EXT_TYPE_VARIANT, ARROW_EXT_TYPE_VECTOR,
-        EXTENSION_KEY,
-    },
     arrow_array::{
         Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array,
         Decimal256Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
@@ -46,6 +40,12 @@ use {
         UInt64Array, UInt8Array,
     },
     arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit},
+    databend_client::schema::{
+        ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
+        ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
+        ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE, ARROW_EXT_TYPE_VARIANT, ARROW_EXT_TYPE_VECTOR,
+        EXTENSION_KEY,
+    },
     jsonb::RawJsonb,
     std::sync::Arc,
 };

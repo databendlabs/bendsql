@@ -12,18 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use chrono_tz::Tz;
-use std::pin::Pin;
-use std::task::Context;
-use std::task::Poll;
-use tokio_stream::{Stream, StreamExt};
-
 use crate::error::Error;
 use crate::error::Result;
 use crate::rows::Row;
 use crate::rows::ServerStats;
-use crate::schema::SchemaRef;
 use crate::value::Value;
+use chrono_tz::Tz;
+use databend_client::schema::SchemaRef;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
+use tokio_stream::{Stream, StreamExt};
 
 #[derive(Clone, Debug)]
 pub enum RawRowWithStats {

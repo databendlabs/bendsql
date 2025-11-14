@@ -16,13 +16,11 @@ mod cursor_ext;
 pub mod error;
 pub mod raw_rows;
 pub mod rows;
-pub mod schema;
 pub mod value;
 
 #[doc(hidden)]
 pub mod _macro_internal {
     pub use crate::error::{Error, Result};
     pub use crate::rows::{Row, RowIterator};
-    pub use crate::schema::Schema;
     pub use crate::value::Value;
 }

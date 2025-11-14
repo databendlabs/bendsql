@@ -24,12 +24,12 @@ use tokio::io::BufReader;
 use tokio_stream::StreamExt;
 
 use crate::client::LoadMethod;
+use databend_client::schema::{DataType, Field, NumberDataType, Schema};
 use databend_client::StageLocation;
 use databend_client::{presign_download_from_stage, PresignedResponse};
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::raw_rows::{RawRow, RawRowIterator};
 use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats};
-use databend_driver_core::schema::{DataType, Field, NumberDataType, Schema};
 use databend_driver_core::value::{NumberValue, Value};
 
 pub struct ConnectionInfo {

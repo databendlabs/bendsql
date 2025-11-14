@@ -29,6 +29,8 @@ mod client_mgr;
 mod session;
 mod stage;
 
+pub mod schema;
+
 pub use auth::SensitiveString;
 pub use client::APIClient;
 pub use error::Error;
