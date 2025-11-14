@@ -459,7 +459,7 @@ fn parse_timestamp(ts_string: &str, tz: Tz) -> Result<Value> {
         LocalResult::Single(dt) => dt,
         LocalResult::None => {
             return Err(Error::Parsing(format!(
-                "time {v} not exists in timezone {tz}"
+                "time {ts_string} not exists in timezone {tz}"
             )))
         }
         LocalResult::Ambiguous(dt1, _dt2) => dt1,
