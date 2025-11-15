@@ -176,7 +176,7 @@ def _(context):
         )
         exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_expected)
         exp_bug = datetime(2024, 4, 16, 18, 34, 56, 789000, tzinfo=tz_expected)
-        if DB_VERSION >= (1, 2, 840) and os.getenv("BODY_FORMAT") == "json":
+        if DB_VERSION >= (1, 2, 840) and not os.getenv("BODY_FORMAT") == "arrow":
             assert row.values()[0] == exp, f"timestamp_tz: {row.values()[0]} {exp}"
         else:
             assert row.values()[0] == exp_bug, (
