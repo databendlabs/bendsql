@@ -81,8 +81,7 @@ impl<'py> IntoPyObject<'py> for Value {
                 #[cfg(feature = "cp38")]
                 {
                     // chrono_tz -> PyDateTime isn't implemented for Python < 3.9 (no zoneinfo).
-                    let t: DateTime<FixedOffset> = dt.with_timezone(&dt.offset().fix());
-                    t.into_bound_py_any(py)?
+                    dt.with_timezone(&dt.offset().fix()).into_bound_py_any(py)?
                 }
                 #[cfg(not(feature = "cp38"))]
                 {

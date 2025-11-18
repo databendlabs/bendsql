@@ -16,6 +16,7 @@ use std::assert_eq;
 use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
+use chrono_tz::Tz;
 use databend_driver::{params, Client, Connection, DecimalSize, NumberValue, Value};
 
 use crate::common::DEFAULT_DSN;
@@ -195,8 +196,8 @@ async fn select_datetime() {
     assert!(row.is_some());
     let row = row.unwrap();
     {
-        let (val,): (i64,) = row.clone().try_into().unwrap();
-        assert_eq!(val, 1680006896789000);
+        let (val,): (DateTime<Tz>,) = row.clone().try_into().unwrap();
+        assert_eq!(val.timestamp_micros(), 1680006896789000);
     }
     {
         let (val,): (NaiveDateTime,) = row.try_into().unwrap();
