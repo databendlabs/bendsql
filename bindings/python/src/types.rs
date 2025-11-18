@@ -78,19 +78,16 @@ impl<'py> IntoPyObject<'py> for Value {
                 let v = NumberValue(n);
                 v.into_bound_py_any(py)?
             }
-            databend_driver::Value::Timestamp(_, _) => {
-                let t = DateTime::<Tz>::try_from(self.0).map_err(|e| {
-                    PyException::new_err(format!("failed to convert timestamp: {e}"))
-                })?;
+            databend_driver::Value::Timestamp(dt) => {
                 #[cfg(feature = "cp38")]
                 {
                     // chrono_tz -> PyDateTime isn't implemented for Python < 3.9 (no zoneinfo).
-                    let t: DateTime<FixedOffset> = t.with_timezone(&t.offset().fix());
+                    let t: DateTime<FixedOffset> = dt.with_timezone(&dt.offset().fix());
                     t.into_bound_py_any(py)?
                 }
                 #[cfg(not(feature = "cp38"))]
                 {
-                    t.into_bound_py_any(py)?
+                    dt.into_bound_py_any(py)?
                 }
             }
             databend_driver::Value::TimestampTz(t) => t.into_bound_py_any(py)?,

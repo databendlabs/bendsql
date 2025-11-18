@@ -839,7 +839,7 @@ fn value_display_width(value: &Value, quote_string: bool) -> usize {
         Value::EmptyArray => EMPTY_WIDTH,
         Value::EmptyMap => EMPTY_WIDTH,
         Value::Date(_) => DATE_WIDTH,
-        Value::Timestamp(_, _) => TIMESTAMP_WIDTH,
+        Value::Timestamp(_) => TIMESTAMP_WIDTH,
         Value::String(_) => {
             let value_str = value.to_string();
             if quote_string {

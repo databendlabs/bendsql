@@ -31,7 +31,7 @@ pub static HTTP_HANDLER_OPTIONS: FormatOptions = FormatOptions {
     false_string: b"0",
     float_options: WriteFloatOptionsBuilder::new()
         .nan_string(Some(b"NaN"))
-        .nan_string(Some(b"Infinity"))
+        .inf_string(Some(b"Infinity"))
         .build_unchecked(),
 };
 

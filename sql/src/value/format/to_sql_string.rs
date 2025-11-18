@@ -14,7 +14,7 @@
 
 use crate::_macro_internal::Value;
 use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
-use chrono::{DateTime, NaiveDate};
+use chrono::NaiveDate;
 
 impl Value {
     // for now only used in ORM to fmt values to insert,
@@ -31,10 +31,7 @@ impl Value {
             }
             Value::String(s) => format!("'{}'", s),
             Value::Number(n) => n.to_string(),
-            Value::Timestamp(ts, tz) => {
-                // TODO: use ts directly?
-                let dt = DateTime::from_timestamp_micros(*ts).unwrap();
-                let dt = dt.with_timezone(tz);
+            Value::Timestamp(dt) => {
                 format!("'{}'", dt.format(TIMESTAMP_FORMAT))
             }
             Value::TimestampTz(dt) => {

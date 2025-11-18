@@ -17,7 +17,7 @@ use crate::error::ConvertError;
 use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT};
 use crate::value::format::display::{display_decimal_128, display_decimal_256};
 use crate::value::NumberValue;
-use chrono::{DateTime, NaiveDate};
+use chrono::NaiveDate;
 
 impl TryFrom<Value> for String {
     type Error = Error;
@@ -38,13 +38,7 @@ impl TryFrom<Value> for String {
                     })?;
                 Ok(date.format("%Y-%m-%d").to_string())
             }
-            Value::Timestamp(ts, tz) => {
-                let dt = DateTime::from_timestamp_micros(ts).ok_or_else(|| {
-                    ConvertError::new("timestamp", format!("invalid timestamp: {}", ts))
-                })?;
-                let dt = dt.with_timezone(&tz);
-                Ok(dt.format(TIMESTAMP_FORMAT).to_string())
-            }
+            Value::Timestamp(dt) => Ok(dt.format(TIMESTAMP_FORMAT).to_string()),
             _ => Err(ConvertError::new("string", format!("{val:?}")).into()),
         }
     }

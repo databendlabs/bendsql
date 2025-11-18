@@ -317,11 +317,7 @@ impl ToNapiValue for Value<'_> {
             databend_driver::Value::Number(n) => {
                 NumberValue::to_napi_value(env, NumberValue(n.clone()))
             }
-            databend_driver::Value::Timestamp(_, _tz) => {
-                let inner = val.inner.clone();
-                let v = DateTime::<Tz>::try_from(inner).map_err(format_napi_error)?;
-                DateTime::to_napi_value(env, v)
-            }
+            databend_driver::Value::Timestamp(dt) => DateTime::to_napi_value(env, *dt),
             databend_driver::Value::TimestampTz(dt) => {
                 let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
                 String::to_napi_value(env, formatted.to_string())

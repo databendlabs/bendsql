@@ -16,11 +16,10 @@ use crate::_macro_internal::Value;
 use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
 use crate::value::format::display::{display_decimal_128, display_decimal_256};
 use crate::value::NumberValue;
-use chrono::{DateTime, NaiveDate};
+use chrono::NaiveDate;
 use hex;
 use lexical_core::{ToLexical, ToLexicalWithOptions, WriteFloatOptions};
 
-#[derive(Clone)]
 pub struct FormatOptions {
     pub true_string: &'static [u8],
     pub false_string: &'static [u8],
@@ -70,11 +69,11 @@ impl Value {
                 NumberValue::Float64(v) => Self::write_float(bytes, *v, format_options),
                 NumberValue::Decimal128(v, size) => {
                     let s = display_decimal_128(*v, size.scale);
-                    Self::write_string(bytes, &s, raw);
+                    Self::write_string(bytes, &s, true);
                 }
                 NumberValue::Decimal256(v, size) => {
                     let s = display_decimal_256(*v, size.scale);
-                    Self::write_string(bytes, &s, raw);
+                    Self::write_string(bytes, &s, true);
                 }
             },
             Value::Binary(s) => bytes.extend_from_slice(hex::encode_upper(s).as_bytes()),
@@ -86,10 +85,8 @@ impl Value {
             | Value::Geography(s) => {
                 Self::write_string(bytes, s, raw);
             }
-            Value::Timestamp(micros, _tz) => {
-                let t = DateTime::from_timestamp_micros(*micros).unwrap_or_default();
-                let t = t.naive_utc();
-                let s = format!("{}", t.format(TIMESTAMP_FORMAT));
+            Value::Timestamp(dt) => {
+                let s = format!("{}", dt.format(TIMESTAMP_FORMAT));
                 Self::write_string(bytes, &s, raw);
             }
             Value::TimestampTz(dt) => {
@@ -133,7 +130,7 @@ impl Value {
                     }
                     val.write_with_option(bytes, false, format_options);
                 }
-                bytes.push(b']');
+                bytes.push(b')');
             }
             Value::Vector(vals) => {
                 bytes.push(b'[');

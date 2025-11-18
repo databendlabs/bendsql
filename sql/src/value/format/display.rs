@@ -16,7 +16,7 @@ use crate::_macro_internal::Value;
 use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
 use crate::value::NumberValue;
 use arrow_buffer::i256;
-use chrono::{DateTime, NaiveDate};
+use chrono::NaiveDate;
 use std::fmt::Write;
 
 impl std::fmt::Display for Value {
@@ -73,13 +73,12 @@ impl Value {
                     write!(f, "'{s}'")
                 }
             }
-            Value::Timestamp(micros, _tz) => {
-                let t = DateTime::from_timestamp_micros(*micros).unwrap_or_default();
-                let t = t.naive_utc();
+            Value::Timestamp(dt) => {
+                let formatted = dt.format(TIMESTAMP_FORMAT);
                 if raw {
-                    write!(f, "{}", t.format(TIMESTAMP_FORMAT))
+                    write!(f, "{formatted}")
                 } else {
-                    write!(f, "'{}'", t.format(TIMESTAMP_FORMAT))
+                    write!(f, "'{formatted}'")
                 }
             }
             Value::TimestampTz(dt) => {
