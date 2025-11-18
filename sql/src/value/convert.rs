@@ -20,40 +20,7 @@ use chrono_tz::Tz;
 
 use crate::error::{ConvertError, Error, Result};
 
-use super::{
-    display_decimal_128, display_decimal_256, NumberValue, Value, DAYS_FROM_CE, TIMESTAMP_FORMAT,
-};
-
-impl TryFrom<Value> for String {
-    type Error = Error;
-    fn try_from(val: Value) -> Result<Self> {
-        match val {
-            Value::String(s) => Ok(s),
-            Value::Bitmap(s) => Ok(s),
-            Value::Number(NumberValue::Decimal128(v, s)) => Ok(display_decimal_128(v, s.scale)),
-            Value::Number(NumberValue::Decimal256(v, s)) => Ok(display_decimal_256(v, s.scale)),
-            Value::Geometry(s) => Ok(s),
-            Value::Geography(s) => Ok(s),
-            Value::Interval(s) => Ok(s),
-            Value::Variant(s) => Ok(s),
-            Value::Date(d) => {
-                let date =
-                    NaiveDate::from_num_days_from_ce_opt(d + DAYS_FROM_CE).ok_or_else(|| {
-                        ConvertError::new("date", format!("invalid date value: {}", d))
-                    })?;
-                Ok(date.format("%Y-%m-%d").to_string())
-            }
-            Value::Timestamp(ts, tz) => {
-                let dt = DateTime::from_timestamp_micros(ts).ok_or_else(|| {
-                    ConvertError::new("timestamp", format!("invalid timestamp: {}", ts))
-                })?;
-                let dt = dt.with_timezone(&tz);
-                Ok(dt.format(TIMESTAMP_FORMAT).to_string())
-            }
-            _ => Err(ConvertError::new("string", format!("{val:?}")).into()),
-        }
-    }
-}
+use super::{NumberValue, Value, DAYS_FROM_CE};
 
 impl TryFrom<Value> for bool {
     type Error = Error;
