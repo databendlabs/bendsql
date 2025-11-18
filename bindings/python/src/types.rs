@@ -18,8 +18,7 @@ use std::sync::Arc;
 use chrono::offset::Offset;
 #[cfg(feature = "cp38")]
 use chrono::FixedOffset;
-use chrono::{DateTime, Duration, NaiveDate};
-use chrono_tz::Tz;
+use chrono::{Duration, NaiveDate};
 use once_cell::sync::Lazy;
 use pyo3::exceptions::{PyAttributeError, PyException, PyStopAsyncIteration, PyStopIteration};
 use pyo3::sync::GILOnceCell;

@@ -16,7 +16,6 @@
 extern crate napi_derive;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
-use chrono_tz::Tz;
 use databend_driver::LoadMethod;
 use napi::{bindgen_prelude::*, Env};
 use once_cell::sync::Lazy;
