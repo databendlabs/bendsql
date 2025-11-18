@@ -464,8 +464,7 @@ fn parse_timestamp(ts_string: &str, tz: Tz) -> Result<Value> {
         }
         LocalResult::Ambiguous(dt1, _dt2) => dt1,
     };
-    let ts = dt_with_tz.timestamp_micros();
-    Ok(Value::Timestamp(ts, tz))
+    Ok(Value::Timestamp(dt_with_tz))
 }
 
 fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {

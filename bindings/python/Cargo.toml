@@ -14,7 +14,6 @@ doc = false
 
 [dependencies]
 chrono = { workspace = true }
-chrono-tz = { workspace = true }
 databend-client = { workspace = true }
 databend-driver = { workspace = true, features = ["rustls", "flight-sql"] }
 databend-driver-core = { workspace = true }

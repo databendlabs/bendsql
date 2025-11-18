@@ -22,7 +22,7 @@ use arrow_array::{
     StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit};
-use chrono::{FixedOffset, TimeZone};
+use chrono::{FixedOffset, LocalResult, TimeZone};
 use chrono_tz::Tz;
 use databend_client::schema::{
     DecimalSize, ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
@@ -327,7 +327,18 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                         }
                         let ts = array.value(seq);
                         match tz {
-                            None => Ok(Value::Timestamp(ts, ltz)),
+                            None => {
+                                let dt = match ltz.timestamp_micros(ts) {
+                                    LocalResult::Single(dt) => dt,
+                                    LocalResult::None => {
+                                        return Err(Error::Parsing(format!(
+                                            "time {ts} not exists in timezone {ltz}"
+                                        )))
+                                    }
+                                    LocalResult::Ambiguous(dt1, _dt2) => dt1,
+                                };
+                                Ok(Value::Timestamp(dt))
+                            }
                             Some(tz) => Err(ConvertError::new("timestamp", format!("{array:?}"))
                                 .with_message(format!("non-UTC timezone not supported: {tz:?}"))
                                 .into()),

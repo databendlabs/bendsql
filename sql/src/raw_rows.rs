@@ -16,13 +16,24 @@ use crate::error::Error;
 use crate::error::Result;
 use crate::rows::Row;
 use crate::rows::ServerStats;
+use crate::value::FormatOptions;
 use crate::value::Value;
 use chrono_tz::Tz;
 use databend_client::schema::SchemaRef;
+use lexical_core::WriteFloatOptionsBuilder;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
 use tokio_stream::{Stream, StreamExt};
+
+pub static HTTP_HANDLER_OPTIONS: FormatOptions = FormatOptions {
+    true_string: b"1",
+    false_string: b"0",
+    float_options: WriteFloatOptionsBuilder::new()
+        .nan_string(Some(b"NaN"))
+        .inf_string(Some(b"Infinity"))
+        .build_unchecked(),
+};
 
 #[derive(Clone, Debug)]
 pub enum RawRowWithStats {
@@ -76,7 +87,7 @@ impl From<Row> for RawRow {
     fn from(row: Row) -> Self {
         let mut raw_row: Vec<Option<String>> = Vec::with_capacity(row.values().len());
         for val in row.values() {
-            raw_row.push(Some(val.to_string()));
+            raw_row.push(Some(val.to_string_with_options(&HTTP_HANDLER_OPTIONS)));
         }
         RawRow::new(row, raw_row)
     }

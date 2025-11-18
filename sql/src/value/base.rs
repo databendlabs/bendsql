@@ -48,7 +48,7 @@ pub enum Value {
     String(String),
     Number(NumberValue),
     /// Microseconds from 1970-01-01 00:00:00 UTC
-    Timestamp(i64, Tz),
+    Timestamp(DateTime<Tz>),
     TimestampTz(DateTime<FixedOffset>),
     Date(i32),
     Array(Vec<Value>),
@@ -85,7 +85,7 @@ impl Value {
                 NumberValue::Decimal128(_, s) => DataType::Decimal(DecimalDataType::Decimal128(*s)),
                 NumberValue::Decimal256(_, s) => DataType::Decimal(DecimalDataType::Decimal256(*s)),
             },
-            Self::Timestamp(_, _) => DataType::Timestamp,
+            Self::Timestamp(_) => DataType::Timestamp,
             Self::TimestampTz(_) => DataType::TimestampTz,
             Self::Date(_) => DataType::Date,
             Self::Interval(_) => DataType::Interval,
