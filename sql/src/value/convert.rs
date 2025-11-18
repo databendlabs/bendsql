@@ -433,7 +433,7 @@ impl From<NaiveDateTime> for Value {
 
 impl From<&NaiveDateTime> for Value {
     fn from(naive_dt: &NaiveDateTime) -> Self {
-        let dt = Tz::UTC.from_local_datetime(&naive_dt).unwrap();
+        let dt = Tz::UTC.from_local_datetime(naive_dt).unwrap();
         Value::Timestamp(dt)
     }
 }
