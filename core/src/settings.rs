@@ -56,8 +56,8 @@ pub enum GeometryDataType {
     WKB,
     WKT,
     EWKB,
-    #[default]
     EWKT,
+    #[default]
     GEOJSON,
 }
 
