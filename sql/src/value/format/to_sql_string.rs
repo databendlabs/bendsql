@@ -32,10 +32,10 @@ impl Value {
             Value::String(s) => format!("'{}'", s),
             Value::Number(n) => n.to_string(),
             Value::Timestamp(dt) => {
-                format!("'{}'", dt.format(TIMESTAMP_FORMAT))
+                format!("'{}'", dt.strftime(TIMESTAMP_FORMAT))
             }
             Value::TimestampTz(dt) => {
-                let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
+                let formatted = dt.strftime(TIMESTAMP_TIMEZONE_FORMAT);
                 format!("'{formatted}'")
             }
             Value::Date(d) => {

@@ -38,7 +38,7 @@ impl TryFrom<Value> for String {
                     })?;
                 Ok(date.format("%Y-%m-%d").to_string())
             }
-            Value::Timestamp(dt) => Ok(dt.format(TIMESTAMP_FORMAT).to_string()),
+            Value::Timestamp(dt) => Ok(dt.strftime(TIMESTAMP_FORMAT).to_string()),
             _ => Err(ConvertError::new("string", format!("{val:?}")).into()),
         }
     }

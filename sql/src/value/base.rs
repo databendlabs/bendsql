@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use chrono::{DateTime, FixedOffset};
-use chrono_tz::Tz;
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use ethnum::i256;
+use jiff::Zoned;
 
 // Thu 1970-01-01 is R.D. 719163
 pub(crate) const DAYS_FROM_CE: i32 = 719_163;
@@ -48,8 +47,8 @@ pub enum Value {
     String(String),
     Number(NumberValue),
     /// Microseconds from 1970-01-01 00:00:00 UTC
-    Timestamp(DateTime<Tz>),
-    TimestampTz(DateTime<FixedOffset>),
+    Timestamp(Zoned),
+    TimestampTz(Zoned),
     Date(i32),
     Array(Vec<Value>),
     Map(Vec<(Value, Value)>),

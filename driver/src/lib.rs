@@ -39,7 +39,9 @@ pub use databend_driver_core::rows::{
     Row, RowIterator, RowStatsIterator, RowWithStats, ServerStats,
 };
 pub use databend_driver_core::value::Interval;
-pub use databend_driver_core::value::{NumberValue, Value};
+pub use databend_driver_core::value::{
+    zoned_to_chrono_datetime, zoned_to_chrono_fixed_offset, NumberValue, Value,
+};
 
 pub use databend_driver_macros::serde_bend;
 pub use databend_driver_macros::TryFromRow;
