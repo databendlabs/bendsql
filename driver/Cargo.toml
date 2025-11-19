@@ -38,6 +38,7 @@ tokio-stream = { workspace = true }
 tonic = { workspace = true, optional = true }
 
 async-trait = "0.1"
+jiff = { version = "0.2.10", features = ["tzdb-bundle-always"] }
 csv = "1.3"
 databend-common-ast = "0.2.3"
 derive-visitor = { version = "0.4.0", features = ["std-types-drive"] }

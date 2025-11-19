@@ -22,9 +22,9 @@ use tokio_stream::{Stream, StreamExt};
 use crate::error::{Error, Result};
 use crate::value::Value;
 use arrow::record_batch::RecordBatch;
-use chrono_tz::Tz;
 use databend_client::schema::SchemaRef;
 use databend_client::ResultFormatSettings;
+use jiff::tz::TimeZone;
 
 #[derive(Clone, Debug)]
 pub enum RowWithStats {
@@ -135,10 +135,10 @@ impl Row {
     }
 }
 
-impl TryFrom<(SchemaRef, Vec<Option<String>>, Tz)> for Row {
+impl TryFrom<(SchemaRef, Vec<Option<String>>, &TimeZone)> for Row {
     type Error = Error;
 
-    fn try_from((schema, data, tz): (SchemaRef, Vec<Option<String>>, Tz)) -> Result<Self> {
+    fn try_from((schema, data, tz): (SchemaRef, Vec<Option<String>>, &TimeZone)) -> Result<Self> {
         let mut values: Vec<Value> = Vec::with_capacity(data.len());
         for (field, val) in schema.fields().iter().zip(data.into_iter()) {
             values.push(Value::try_from((&field.data_type, val, tz))?);
@@ -194,7 +194,7 @@ impl TryFrom<(RecordBatch, ResultFormatSettings)> for Rows {
             for j in 0..batch_schema.fields().len() {
                 let v = batch.column(j);
                 let field = batch_schema.field(j);
-                let value = Value::try_from((field, v, i, settings))?;
+                let value = Value::try_from((field, v, i, &settings))?;
                 values.push(value);
             }
             rows.push(Row::new(schema.clone(), values));

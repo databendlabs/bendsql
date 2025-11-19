@@ -20,11 +20,10 @@ use crate::cursor_ext::{
 };
 use crate::error::{ConvertError, Result};
 use chrono::{Datelike, NaiveDate};
-use chrono_tz::Tz;
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use ethnum::i256;
 use hex;
-use jiff::{civil::DateTime as JiffDateTime, Zoned};
+use jiff::{civil::DateTime as JiffDateTime, tz::TimeZone, Zoned};
 use std::io::{BufRead, Cursor};
 use std::str::FromStr;
 
@@ -32,10 +31,10 @@ const NULL_VALUE: &str = "NULL";
 const TRUE_VALUE: &str = "1";
 const FALSE_VALUE: &str = "0";
 
-impl TryFrom<(&DataType, Option<String>, Tz)> for Value {
+impl TryFrom<(&DataType, Option<String>, &TimeZone)> for Value {
     type Error = Error;
 
-    fn try_from((t, v, tz): (&DataType, Option<String>, Tz)) -> Result<Self> {
+    fn try_from((t, v, tz): (&DataType, Option<String>, &TimeZone)) -> Result<Self> {
         match v {
             Some(v) => Self::try_from((t, v, tz)),
             None => match t {
@@ -49,10 +48,10 @@ impl TryFrom<(&DataType, Option<String>, Tz)> for Value {
     }
 }
 
-impl TryFrom<(&DataType, String, Tz)> for Value {
+impl TryFrom<(&DataType, String, &TimeZone)> for Value {
     type Error = Error;
 
-    fn try_from((t, v, tz): (&DataType, String, Tz)) -> Result<Self> {
+    fn try_from((t, v, tz): (&DataType, String, &TimeZone)) -> Result<Self> {
         match t {
             DataType::Null => Ok(Self::Null),
             DataType::EmptyArray => Ok(Self::EmptyArray),
@@ -114,7 +113,9 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
             DataType::Interval => Ok(Self::Interval(v)),
             DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) | DataType::Vector(_) => {
                 let mut reader = Cursor::new(v.as_str());
-                let decoder = ValueDecoder { timezone: tz };
+                let decoder = ValueDecoder {
+                    timezone: tz.clone(),
+                };
                 decoder.read_field(t, &mut reader)
             }
             DataType::Nullable(inner) => match inner.as_ref() {
@@ -134,7 +135,7 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
 }
 
 struct ValueDecoder {
-    pub timezone: Tz,
+    pub timezone: TimeZone,
 }
 
 impl ValueDecoder {
@@ -299,7 +300,7 @@ impl ValueDecoder {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
-        parse_timestamp(v, self.timezone)
+        parse_timestamp(v, &self.timezone)
     }
 
     fn read_timestamp_tz<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -453,10 +454,12 @@ impl ValueDecoder {
     }
 }
 
-fn parse_timestamp(ts_string: &str, tz: Tz) -> Result<Value> {
+fn parse_timestamp(ts_string: &str, tz: &TimeZone) -> Result<Value> {
     let local = JiffDateTime::strptime(TIMESTAMP_FORMAT, ts_string)?;
-    let dt_with_tz = local.in_tz(tz.name()).map_err(|e| {
-        Error::Parsing(format!("time {ts_string} not exists in timezone {tz}: {e}"))
+    let dt_with_tz = local.to_zoned(tz.clone()).map_err(|e| {
+        Error::Parsing(format!(
+            "time {ts_string} not exists in timezone {tz:?}: {e}"
+        ))
     })?;
     Ok(Value::Timestamp(dt_with_tz))
 }

@@ -67,7 +67,7 @@ impl
         &ArrowField,
         &Arc<dyn ArrowArray>,
         usize,
-        ResultFormatSettings,
+        &ResultFormatSettings,
     )> for Value
 {
     type Error = Error;
@@ -76,7 +76,7 @@ impl
             &ArrowField,
             &Arc<dyn ArrowArray>,
             usize,
-            ResultFormatSettings,
+            &ResultFormatSettings,
         ),
     ) -> std::result::Result<Self, Self::Error> {
         if let Some(extend_type) = field.metadata().get(EXTENSION_KEY) {
@@ -349,12 +349,7 @@ impl
                                 let timestamp = Timestamp::from_microsecond(ts).map_err(|e| {
                                     Error::Parsing(format!("Invalid timestamp_micros {ts}: {e}"))
                                 })?;
-                                let tz_name = settings.timezone.name();
-                                let dt = timestamp.in_tz(tz_name).map_err(|e| {
-                                    Error::Parsing(format!(
-                                        "Invalid timezone {tz_name} for timestamp {ts}: {e}"
-                                    ))
-                                })?;
+                                let dt = timestamp.to_zoned(settings.timezone.clone());
                                 Ok(Value::Timestamp(dt))
                             }
                             Some(tz) => Err(ConvertError::new("timestamp", format!("{array:?}"))

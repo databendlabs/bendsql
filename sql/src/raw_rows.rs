@@ -18,8 +18,8 @@ use crate::rows::Row;
 use crate::rows::ServerStats;
 use crate::value::FormatOptions;
 use crate::value::Value;
-use chrono_tz::Tz;
 use databend_client::schema::SchemaRef;
+use jiff::tz::TimeZone;
 use lexical_core::WriteFloatOptionsBuilder;
 use std::pin::Pin;
 use std::task::Context;
@@ -69,10 +69,10 @@ impl RawRow {
     }
 }
 
-impl TryFrom<(SchemaRef, Vec<Option<String>>, Tz)> for RawRow {
+impl TryFrom<(SchemaRef, Vec<Option<String>>, &TimeZone)> for RawRow {
     type Error = Error;
 
-    fn try_from((schema, data, tz): (SchemaRef, Vec<Option<String>>, Tz)) -> Result<Self> {
+    fn try_from((schema, data, tz): (SchemaRef, Vec<Option<String>>, &TimeZone)) -> Result<Self> {
         let mut values: Vec<Value> = Vec::with_capacity(data.len());
         for (field, val) in schema.fields().iter().zip(data.clone().into_iter()) {
             values.push(Value::try_from((&field.data_type, val, tz))?);
