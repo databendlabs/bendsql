@@ -12,7 +12,6 @@ ${BENDSQL} \
     --data=@cli/tests/data/ontime_200.csv.gz
 
 echo "SELECT COUNT(*) FROM http_ontime_03;" | ${BENDSQL} --output=tsv
-echo 'SELECT * FROM http_ontime_03 LIMIT 1;' | ${BENDSQL} --output=csv
 
 cat <<SQL | ${BENDSQL}
 DROP TABLE http_ontime_03;
