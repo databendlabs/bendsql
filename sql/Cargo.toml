@@ -16,7 +16,6 @@ flight-sql = ["dep:tonic"]
 [dependencies]
 arrow = { workspace = true }
 arrow-array = { workspace = true }
-arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
