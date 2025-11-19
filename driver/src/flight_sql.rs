@@ -25,7 +25,6 @@ use arrow_flight::sql::client::FlightSqlServiceClient;
 use arrow_flight::utils::flight_data_to_arrow_batch;
 use arrow_schema::SchemaRef as ArrowSchemaRef;
 use async_trait::async_trait;
-use chrono_tz::Tz;
 use percent_encoding::percent_decode_str;
 use tokio::sync::Mutex;
 use tokio_stream::{Stream, StreamExt};
@@ -34,9 +33,9 @@ use url::Url;
 
 use crate::client::LoadMethod;
 use crate::conn::{ConnectionInfo, IConnection, Reader};
-use databend_client::presign_upload_to_stage;
 use databend_client::schema::Schema;
 use databend_client::SensitiveString;
+use databend_client::{presign_upload_to_stage, ResultFormatSettings};
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::rows::{
     Row, RowIterator, RowStatsIterator, RowWithStats, Rows, ServerStats,
@@ -373,7 +372,7 @@ impl Stream for FlightSQLRows {
                         self.schema.clone(),
                         &dicitionaries_by_id,
                     )?;
-                    let rows = Rows::try_from((batch, Tz::UTC))?;
+                    let rows = Rows::try_from((batch, ResultFormatSettings::default()))?;
                     self.rows.extend(rows);
                     self.poll_next(cx)
                 }

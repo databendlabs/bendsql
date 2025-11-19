@@ -16,16 +16,17 @@ flight-sql = ["dep:tonic"]
 [dependencies]
 arrow = { workspace = true }
 arrow-array = { workspace = true }
-arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
+ethnum = "1.5.1"
 databend-client = { workspace = true }
 jsonb = { workspace = true }
 tokio-stream = { workspace = true }
 tonic = { workspace = true, optional = true }
 
-geozero = { version = "0.14.0", features = ["with-wkb"] }
+geo = { version = "0.28.0", features = ["use-serde"] }
+geozero = { version = "0.14.0", features = ["with-geo", "with-geojson", "with-wkb", "with-wkt"] }
 glob = "0.3"
 hex = "0.4.3"
 itertools = "0.14"
