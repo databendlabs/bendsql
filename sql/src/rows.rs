@@ -24,6 +24,7 @@ use crate::value::Value;
 use arrow::record_batch::RecordBatch;
 use chrono_tz::Tz;
 use databend_client::schema::SchemaRef;
+use databend_client::ResultFormatSettings;
 
 #[derive(Clone, Debug)]
 pub enum RowWithStats {
@@ -182,9 +183,9 @@ impl Rows {
     }
 }
 
-impl TryFrom<(RecordBatch, Tz)> for Rows {
+impl TryFrom<(RecordBatch, ResultFormatSettings)> for Rows {
     type Error = Error;
-    fn try_from((batch, ltz): (RecordBatch, Tz)) -> Result<Self> {
+    fn try_from((batch, settings): (RecordBatch, ResultFormatSettings)) -> Result<Self> {
         let batch_schema = batch.schema();
         let schema = SchemaRef::new(batch_schema.clone().try_into()?);
         let mut rows: Vec<Row> = Vec::new();
@@ -193,7 +194,7 @@ impl TryFrom<(RecordBatch, Tz)> for Rows {
             for j in 0..batch_schema.fields().len() {
                 let v = batch.column(j);
                 let field = batch_schema.field(j);
-                let value = Value::try_from((field, v, i, ltz))?;
+                let value = Value::try_from((field, v, i, settings))?;
                 values.push(value);
             }
             rows.push(Row::new(schema.clone(), values));

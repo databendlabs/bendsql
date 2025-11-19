@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::Cursor;
 use std::sync::Arc;
 
+use super::{Interval, NumberValue, Value};
+use crate::error::{ConvertError, Error};
+use crate::value::geo::convert_geometry;
 use arrow_array::{
     Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
     Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray,
@@ -23,20 +25,15 @@ use arrow_array::{
 };
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit};
 use chrono::{FixedOffset, LocalResult, TimeZone};
-use chrono_tz::Tz;
 use databend_client::schema::{
     DecimalSize, ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
     ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
     ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE, ARROW_EXT_TYPE_VARIANT, ARROW_EXT_TYPE_VECTOR,
     EXTENSION_KEY,
 };
-use geozero::wkb::{FromWkb, WkbDialect};
-use geozero::wkt::Ewkt;
+use databend_client::ResultFormatSettings;
+use ethnum::i256;
 use jsonb::RawJsonb;
-
-use crate::error::{ConvertError, Error, Result};
-
-use super::{Interval, NumberValue, Value};
 
 /// The in-memory representation of the MonthDayMicros variant of the "Interval" logical type.
 #[allow(non_camel_case_types)]
@@ -65,10 +62,22 @@ impl months_days_micros {
     }
 }
 
-impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
+impl
+    TryFrom<(
+        &ArrowField,
+        &Arc<dyn ArrowArray>,
+        usize,
+        ResultFormatSettings,
+    )> for Value
+{
     type Error = Error;
     fn try_from(
-        (field, array, seq, ltz): (&ArrowField, &Arc<dyn ArrowArray>, usize, Tz),
+        (field, array, seq, settings): (
+            &ArrowField,
+            &Arc<dyn ArrowArray>,
+            usize,
+            ResultFormatSettings,
+        ),
     ) -> std::result::Result<Self, Self::Error> {
         if let Some(extend_type) = field.metadata().get(EXTENSION_KEY) {
             return match extend_type.as_str() {
@@ -147,8 +156,11 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                     }
                     match array.as_any().downcast_ref::<LargeBinaryArray>() {
                         Some(array) => {
-                            let wkt = parse_geometry(array.value(seq))?;
-                            Ok(Value::Geometry(wkt))
+                            let value = convert_geometry(
+                                array.value(seq),
+                                settings.geometry_output_format,
+                            )?;
+                            Ok(Value::Geometry(value))
                         }
                         None => Err(ConvertError::new("geometry", format!("{array:?}")).into()),
                     }
@@ -159,8 +171,11 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                     }
                     match array.as_any().downcast_ref::<LargeBinaryArray>() {
                         Some(array) => {
-                            let wkt = parse_geometry(array.value(seq))?;
-                            Ok(Value::Geography(wkt))
+                            let value = convert_geometry(
+                                array.value(seq),
+                                settings.geometry_output_format,
+                            )?;
+                            Ok(Value::Geography(value))
                         }
                         None => Err(ConvertError::new("geography", format!("{array:?}")).into()),
                     }
@@ -332,6 +347,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                         let ts = array.value(seq);
                         match tz {
                             None => {
+                                let ltz = settings.timezone;
                                 let dt = match ltz.timestamp_micros(ts) {
                                     LocalResult::Single(dt) => dt,
                                     LocalResult::None => {
@@ -360,7 +376,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                     let inner_array = unsafe { array.value_unchecked(seq) };
                     let mut values = Vec::with_capacity(inner_array.len());
                     for i in 0..inner_array.len() {
-                        let value = Value::try_from((f.as_ref(), &inner_array, i, ltz))?;
+                        let value = Value::try_from((f.as_ref(), &inner_array, i, settings))?;
                         values.push(value);
                     }
                     Ok(Value::Array(values))
@@ -372,7 +388,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                     let inner_array = unsafe { array.value_unchecked(seq) };
                     let mut values = Vec::with_capacity(inner_array.len());
                     for i in 0..inner_array.len() {
-                        let value = Value::try_from((f.as_ref(), &inner_array, i, ltz))?;
+                        let value = Value::try_from((f.as_ref(), &inner_array, i, settings))?;
                         values.push(value);
                     }
                     Ok(Value::Array(values))
@@ -385,10 +401,18 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                         let inner_array = unsafe { array.value_unchecked(seq) };
                         let mut values = Vec::with_capacity(inner_array.len());
                         for i in 0..inner_array.len() {
-                            let key =
-                                Value::try_from((fs[0].as_ref(), inner_array.column(0), i, ltz))?;
-                            let val =
-                                Value::try_from((fs[1].as_ref(), inner_array.column(1), i, ltz))?;
+                            let key = Value::try_from((
+                                fs[0].as_ref(),
+                                inner_array.column(0),
+                                i,
+                                settings,
+                            ))?;
+                            let val = Value::try_from((
+                                fs[1].as_ref(),
+                                inner_array.column(1),
+                                i,
+                                settings,
+                            ))?;
                             values.push((key, val));
                         }
                         Ok(Value::Map(values))
@@ -405,7 +429,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                 Some(array) => {
                     let mut values = Vec::with_capacity(array.len());
                     for (f, inner_array) in fs.iter().zip(array.columns().iter()) {
-                        let value = Value::try_from((f.as_ref(), inner_array, seq, ltz))?;
+                        let value = Value::try_from((f.as_ref(), inner_array, seq, settings))?;
                         values.push(value);
                     }
                     Ok(Value::Tuple(values))
@@ -415,10 +439,4 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
             _ => Err(ConvertError::new("unsupported data type", format!("{array:?}")).into()),
         }
     }
-}
-
-fn parse_geometry(raw_data: &[u8]) -> Result<String> {
-    let mut data = Cursor::new(raw_data);
-    let wkt = Ewkt::from_wkb(&mut data, WkbDialect::Ewkb)?;
-    Ok(wkt.0)
 }

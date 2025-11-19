@@ -29,8 +29,8 @@ use tokio_stream::Stream;
 use crate::client::LoadMethod;
 use crate::conn::{ConnectionInfo, IConnection, Reader};
 use databend_client::schema::{Schema, SchemaRef};
-use databend_client::APIClient;
 use databend_client::Pages;
+use databend_client::{APIClient, ResultFormatSettings};
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
 use databend_driver_core::rows::{
@@ -296,7 +296,7 @@ pub struct RestAPIRows<T> {
     pages: Pages,
 
     schema: SchemaRef,
-    timezone: Tz,
+    settings: ResultFormatSettings,
 
     data: VecDeque<Vec<Option<String>>>,
     rows: VecDeque<Row>,
@@ -308,11 +308,11 @@ pub struct RestAPIRows<T> {
 
 impl<T> RestAPIRows<T> {
     async fn from_pages(pages: Pages) -> Result<(Schema, Self)> {
-        let (pages, schema, timezone) = pages.wait_for_schema(true).await?;
+        let (pages, schema, settings) = pages.wait_for_schema(true).await?;
         let rows = Self {
             pages,
             schema: Arc::new(schema.clone()),
-            timezone,
+            settings,
             data: Default::default(),
             rows: Default::default(),
             stats: None,
@@ -333,7 +333,7 @@ impl<T: FromRowStats + std::marker::Unpin> Stream for RestAPIRows<T> {
         // Therefore, we could guarantee the `/final` called before the last row.
         if self.data.len() > 1 {
             if let Some(row) = self.data.pop_front() {
-                let row = T::try_from_raw_row(row, self.schema.clone(), self.timezone)?;
+                let row = T::try_from_raw_row(row, self.schema.clone(), self.settings.timezone)?;
                 return Poll::Ready(Some(Ok(row)));
             }
         } else if self.rows.len() > 1 {
@@ -357,7 +357,7 @@ impl<T: FromRowStats + std::marker::Unpin> Stream for RestAPIRows<T> {
                     self.data.append(&mut new_data);
                 } else {
                     for batch in page.batches.into_iter() {
-                        let rows = Rows::try_from((batch, self.timezone))?;
+                        let rows = Rows::try_from((batch, self.settings))?;
                         self.rows.extend(rows);
                     }
                 }
@@ -369,7 +369,8 @@ impl<T: FromRowStats + std::marker::Unpin> Stream for RestAPIRows<T> {
                     let row = T::from_row(row);
                     Poll::Ready(Some(Ok(row)))
                 } else if let Some(row) = self.data.pop_front() {
-                    let row = T::try_from_raw_row(row, self.schema.clone(), self.timezone)?;
+                    let row =
+                        T::try_from_raw_row(row, self.schema.clone(), self.settings.timezone)?;
                     Poll::Ready(Some(Ok(row)))
                 } else {
                     Poll::Ready(None)

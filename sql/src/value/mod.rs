@@ -16,6 +16,7 @@ mod arrow_decoder;
 mod base;
 mod convert;
 mod format;
+mod geo;
 mod interval;
 mod string_decoder;
 
