@@ -15,8 +15,8 @@
 use crate::_macro_internal::Value;
 use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
 use crate::value::NumberValue;
-use arrow_buffer::i256;
 use chrono::NaiveDate;
+use ethnum::i256;
 use std::fmt::Write;
 
 impl std::fmt::Display for Value {
@@ -180,39 +180,28 @@ pub fn display_decimal_128(num: i128, scale: u8) -> String {
 pub fn display_decimal_256(num: i256, scale: u8) -> String {
     let mut buf = String::new();
     if scale == 0 {
-        write!(buf, "{num}").unwrap();
+        write!(buf, "{}", num).unwrap();
     } else {
-        let pow_scale = i256::from_i128(10i128).wrapping_pow(scale as u32);
-        let width = scale as usize;
+        let pow_scale = i256::from(10).pow(scale as u32);
         // -1/10 = 0
-        let (int_part, neg) = if num >= i256::ZERO {
-            (num / pow_scale, "")
+        if !num.is_negative() {
+            write!(
+                buf,
+                "{}.{:0>width$}",
+                num / pow_scale,
+                (num % pow_scale).wrapping_abs(),
+                width = scale as usize
+            )
         } else {
-            (-num / pow_scale, "-")
-        };
-        let frac_part = (num % pow_scale).wrapping_abs();
-
-        match frac_part.to_i128() {
-            Some(frac_part) => {
-                write!(buf, "{neg}{int_part}.{frac_part:0>width$}").unwrap();
-            }
-            None => {
-                // fractional part is too big for display,
-                // split it into two parts.
-                let pow = i256::from_i128(10i128).wrapping_pow(38);
-                let frac_high_part = frac_part / pow;
-                let frac_low_part = frac_part % pow;
-                let frac_width = (scale - 38) as usize;
-
-                write!(
-                    buf,
-                    "{neg}{int_part}.{:0>frac_width$}{}",
-                    frac_high_part.to_i128().unwrap(),
-                    frac_low_part.to_i128().unwrap(),
-                )
-                .unwrap();
-            }
+            write!(
+                buf,
+                "-{}.{:0>width$}",
+                -num / pow_scale,
+                (num % pow_scale).wrapping_abs(),
+                width = scale as usize
+            )
         }
+        .expect("display_decimal_256 should not fail");
     }
-    buf
+    String::from_utf8_lossy(buf.as_bytes()).to_string()
 }

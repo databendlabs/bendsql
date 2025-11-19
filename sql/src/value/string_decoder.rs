@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::{NumberValue, Value, DAYS_FROM_CE, TIMESTAMP_TIMEZONE_FORMAT};
 use crate::_macro_internal::Error;
 use crate::cursor_ext::{
     collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
     ReadNumberExt,
 };
 use crate::error::{ConvertError, Result};
-use arrow_buffer::i256;
 use chrono::{DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
 use chrono_tz::Tz;
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
+use ethnum::i256;
 use hex;
 use std::io::{BufRead, Cursor};
-
-use super::{NumberValue, Value, DAYS_FROM_CE, TIMESTAMP_TIMEZONE_FORMAT};
+use std::str::FromStr;
 
 const NULL_VALUE: &str = "NULL";
 const TRUE_VALUE: &str = "1";
@@ -515,7 +515,7 @@ fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
         let digits = unsafe { std::str::from_utf8_unchecked(&digits[..precision]) };
 
         let result = if size.precision > 38 {
-            NumberValue::Decimal256(i256::from_string(digits).unwrap(), size)
+            NumberValue::Decimal256(i256::from_str(digits).unwrap(), size)
         } else {
             NumberValue::Decimal128(digits.parse::<i128>()?, size)
         };

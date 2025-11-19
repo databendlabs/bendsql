@@ -281,13 +281,17 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
             }
             ArrowDataType::Decimal256(p, s) => {
                 match array.as_any().downcast_ref::<Decimal256Array>() {
-                    Some(array) => Ok(Value::Number(NumberValue::Decimal256(
-                        array.value(seq),
-                        DecimalSize {
-                            precision: *p,
-                            scale: *s as u8,
-                        },
-                    ))),
+                    Some(array) => {
+                        let v = array.value(seq);
+                        let v: i256 = unsafe { std::mem::transmute(v) };
+                        Ok(Value::Number(NumberValue::Decimal256(
+                            v,
+                            DecimalSize {
+                                precision: *p,
+                                scale: *s as u8,
+                            },
+                        )))
+                    }
                     None => Err(ConvertError::new("Decimal256", format!("{array:?}")).into()),
                 }
             }

@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use arrow_buffer::i256;
 use chrono::{DateTime, FixedOffset};
 use chrono_tz::Tz;
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
+use ethnum::i256;
 
 // Thu 1970-01-01 is R.D. 719163
 pub(crate) const DAYS_FROM_CE: i32 = 719_163;
