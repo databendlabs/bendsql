@@ -14,10 +14,6 @@
 
 use std::sync::Arc;
 
-#[cfg(feature = "cp38")]
-use chrono::offset::Offset;
-#[cfg(feature = "cp38")]
-use chrono::FixedOffset;
 use chrono::{Duration, NaiveDate};
 use once_cell::sync::Lazy;
 use pyo3::exceptions::{PyAttributeError, PyException, PyStopAsyncIteration, PyStopIteration};
@@ -31,7 +27,6 @@ use tokio_stream::StreamExt;
 
 use crate::exceptions::map_error_to_exception;
 use crate::utils::wait_for_future;
-use databend_driver::{self, zoned_to_chrono_datetime, zoned_to_chrono_fixed_offset};
 
 pub static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -78,28 +73,8 @@ impl<'py> IntoPyObject<'py> for Value {
                 let v = NumberValue(n);
                 v.into_bound_py_any(py)?
             }
-            databend_driver::Value::Timestamp(dt) => {
-                let chrono_dt = zoned_to_chrono_datetime(&dt).map_err(|e| {
-                    PyException::new_err(format!("failed to convert timestamp: {e}"))
-                })?;
-                #[cfg(feature = "cp38")]
-                {
-                    // chrono_tz -> PyDateTime isn't implemented for Python < 3.9 (no zoneinfo).
-                    chrono_dt
-                        .with_timezone(&chrono_dt.offset().fix())
-                        .into_bound_py_any(py)?
-                }
-                #[cfg(not(feature = "cp38"))]
-                {
-                    chrono_dt.into_bound_py_any(py)?
-                }
-            }
-            databend_driver::Value::TimestampTz(t) => {
-                let chrono_dt = zoned_to_chrono_fixed_offset(&t).map_err(|e| {
-                    PyException::new_err(format!("failed to convert timestamp_tz: {e}"))
-                })?;
-                chrono_dt.into_bound_py_any(py)?
-            }
+            databend_driver::Value::Timestamp(dt) => dt.into_bound_py_any(py)?,
+            databend_driver::Value::TimestampTz(t) => t.into_bound_py_any(py)?,
             databend_driver::Value::Date(_) => {
                 let d = NaiveDate::try_from(self.0)
                     .map_err(|e| PyException::new_err(format!("failed to convert date: {e}")))?;
