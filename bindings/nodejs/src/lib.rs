@@ -15,7 +15,7 @@
 #[macro_use]
 extern crate napi_derive;
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use databend_driver::LoadMethod;
 use napi::{bindgen_prelude::*, Env};
 use once_cell::sync::Lazy;
@@ -316,9 +316,17 @@ impl ToNapiValue for Value<'_> {
             databend_driver::Value::Number(n) => {
                 NumberValue::to_napi_value(env, NumberValue(n.clone()))
             }
-            databend_driver::Value::Timestamp(dt) => DateTime::to_napi_value(env, *dt),
+            databend_driver::Value::Timestamp(dt) => {
+                let mut js_date = std::ptr::null_mut();
+                let millis = dt.timestamp().as_millisecond() as f64;
+                check_status!(
+                    unsafe { sys::napi_create_date(env, millis, &mut js_date) },
+                    "Failed to convert jiff timestamp into napi value",
+                )?;
+                Ok(js_date)
+            }
             databend_driver::Value::TimestampTz(dt) => {
-                let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
+                let formatted = dt.strftime(TIMESTAMP_TIMEZONE_FORMAT);
                 String::to_napi_value(env, formatted.to_string())
             }
             databend_driver::Value::Date(_) => {

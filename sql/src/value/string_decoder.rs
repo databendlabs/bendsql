@@ -12,18 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{NumberValue, Value, DAYS_FROM_CE, TIMESTAMP_TIMEZONE_FORMAT};
+use super::{NumberValue, Value, DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
 use crate::_macro_internal::Error;
 use crate::cursor_ext::{
     collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
     ReadNumberExt,
 };
 use crate::error::{ConvertError, Result};
-use chrono::{DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
+use chrono::{Datelike, NaiveDate};
 use chrono_tz::Tz;
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use ethnum::i256;
 use hex;
+use jiff::{civil::DateTime as JiffDateTime, Zoned};
 use std::io::{BufRead, Cursor};
 use std::str::FromStr;
 
@@ -99,8 +100,7 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
             }
             DataType::Timestamp => parse_timestamp(v.as_str(), tz),
             DataType::TimestampTz => {
-                let t =
-                    DateTime::<FixedOffset>::parse_from_str(v.as_str(), TIMESTAMP_TIMEZONE_FORMAT)?;
+                let t = Zoned::strptime(TIMESTAMP_TIMEZONE_FORMAT, v.as_str())?;
                 Ok(Self::TimestampTz(t))
             }
             DataType::Date => Ok(Self::Date(
@@ -306,7 +306,7 @@ impl ValueDecoder {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
-        let t = DateTime::<FixedOffset>::parse_from_str(v, TIMESTAMP_TIMEZONE_FORMAT)?;
+        let t = Zoned::strptime(TIMESTAMP_TIMEZONE_FORMAT, v)?;
         Ok(Value::TimestampTz(t))
     }
 
@@ -454,16 +454,10 @@ impl ValueDecoder {
 }
 
 fn parse_timestamp(ts_string: &str, tz: Tz) -> Result<Value> {
-    let naive_dt = NaiveDateTime::parse_from_str(ts_string, "%Y-%m-%d %H:%M:%S%.6f")?;
-    let dt_with_tz = match tz.from_local_datetime(&naive_dt) {
-        LocalResult::Single(dt) => dt,
-        LocalResult::None => {
-            return Err(Error::Parsing(format!(
-                "time {ts_string} not exists in timezone {tz}"
-            )))
-        }
-        LocalResult::Ambiguous(dt1, _dt2) => dt1,
-    };
+    let local = JiffDateTime::strptime(TIMESTAMP_FORMAT, ts_string)?;
+    let dt_with_tz = local.in_tz(tz.name()).map_err(|e| {
+        Error::Parsing(format!("time {ts_string} not exists in timezone {tz}: {e}"))
+    })?;
     Ok(Value::Timestamp(dt_with_tz))
 }
 

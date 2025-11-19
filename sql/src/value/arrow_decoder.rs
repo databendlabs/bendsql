@@ -24,7 +24,6 @@ use arrow_array::{
     StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
 };
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit};
-use chrono::{FixedOffset, LocalResult, TimeZone};
 use databend_client::schema::{
     DecimalSize, ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
     ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
@@ -33,6 +32,7 @@ use databend_client::schema::{
 };
 use databend_client::ResultFormatSettings;
 use ethnum::i256;
+use jiff::{tz, Timestamp};
 use jsonb::RawJsonb;
 
 /// The in-memory representation of the MonthDayMicros variant of the "Interval" logical type.
@@ -103,15 +103,14 @@ impl
                             let v = array.value(seq);
                             let unix_ts = v as u64 as i64;
                             let offset = (v >> 64) as i32;
-                            let offset = FixedOffset::east_opt(offset)
-                                .ok_or_else(|| Error::Parsing("invalid offset".to_string()))?;
-                            let dt =
-                                offset.timestamp_micros(unix_ts).single().ok_or_else(|| {
-                                    Error::Parsing(format!(
-                                        "Invalid timestamp_micros {unix_ts} for offset {offset}"
-                                    ))
-                                })?;
-                            Ok(Value::TimestampTz(dt))
+                            let offset = tz::Offset::from_seconds(offset).map_err(|e| {
+                                Error::Parsing(format!("invalid offset: {offset}, {e}"))
+                            })?;
+                            let time_zone = tz::TimeZone::fixed(offset);
+                            let timestamp = Timestamp::from_microsecond(unix_ts).map_err(|e| {
+                                Error::Parsing(format!("Invalid timestamp_micros {unix_ts}: {e}"))
+                            })?;
+                            Ok(Value::TimestampTz(timestamp.to_zoned(time_zone)))
                         }
                         None => Err(ConvertError::new("Interval", format!("{array:?}")).into()),
                     }
@@ -347,16 +346,15 @@ impl
                         let ts = array.value(seq);
                         match tz {
                             None => {
-                                let ltz = settings.timezone;
-                                let dt = match ltz.timestamp_micros(ts) {
-                                    LocalResult::Single(dt) => dt,
-                                    LocalResult::None => {
-                                        return Err(Error::Parsing(format!(
-                                            "time {ts} not exists in timezone {ltz}"
-                                        )))
-                                    }
-                                    LocalResult::Ambiguous(dt1, _dt2) => dt1,
-                                };
+                                let timestamp = Timestamp::from_microsecond(ts).map_err(|e| {
+                                    Error::Parsing(format!("Invalid timestamp_micros {ts}: {e}"))
+                                })?;
+                                let tz_name = settings.timezone.name();
+                                let dt = timestamp.in_tz(tz_name).map_err(|e| {
+                                    Error::Parsing(format!(
+                                        "Invalid timezone {tz_name} for timestamp {ts}: {e}"
+                                    ))
+                                })?;
                                 Ok(Value::Timestamp(dt))
                             }
                             Some(tz) => Err(ConvertError::new("timestamp", format!("{array:?}"))
