@@ -298,7 +298,7 @@ impl
                 match array.as_any().downcast_ref::<Decimal256Array>() {
                     Some(array) => {
                         let v = array.value(seq);
-                        let v: i256 = unsafe { std::mem::transmute(v) };
+                        let v = i256::from_le_bytes(v.to_le_bytes());
                         Ok(Value::Number(NumberValue::Decimal256(
                             v,
                             DecimalSize {
