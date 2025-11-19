@@ -26,7 +26,6 @@ arrow-ipc = { workspace = true }
 arrow-schema = { workspace = true }
 bytes = "1.10.1"
 base64 = "0.22.1"
-chrono-tz = { workspace = true }
 cookie = "0.18.1"
 jiff = { version = "0.2.10", features = ["tzdb-bundle-always"] }
 log = { version = "0.4", features = ["kv"] }
