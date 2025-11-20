@@ -45,6 +45,16 @@ const MICROS_MASK: i128 = 0xFFFFFFFFFFFFFFFF;
 /// Mask for extracting the middle 32 bits (days or months).
 const DAYS_MONTHS_MASK: i128 = 0xFFFFFFFF;
 
+// 9999-12-30T22:00:00.999999Z
+const TIMESTAMP_MAX: i64 = 253402207200999999;
+// -009999-01-02T01:59:59Z
+const TIMESTAMP_MIN: i64 = -377705023201000000;
+
+// required by jiff
+fn clamp_ts(ts: i64) -> i64 {
+    ts.clamp(TIMESTAMP_MIN, TIMESTAMP_MAX)
+}
+
 impl months_days_micros {
     #[inline]
     pub fn months(&self) -> i32 {
@@ -101,7 +111,7 @@ impl
                     match array.as_any().downcast_ref::<Decimal128Array>() {
                         Some(array) => {
                             let v = array.value(seq);
-                            let unix_ts = v as u64 as i64;
+                            let unix_ts = clamp_ts(v as u64 as i64);
                             let offset = (v >> 64) as i32;
                             let offset = tz::Offset::from_seconds(offset).map_err(|e| {
                                 Error::Parsing(format!("invalid offset: {offset}, {e}"))
@@ -343,7 +353,7 @@ impl
                                 ))
                                 .into());
                         }
-                        let ts = array.value(seq);
+                        let ts = clamp_ts(array.value(seq));
                         match tz {
                             None => {
                                 let timestamp = Timestamp::from_microsecond(ts).map_err(|e| {
