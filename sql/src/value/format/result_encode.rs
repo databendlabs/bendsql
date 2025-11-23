@@ -147,10 +147,10 @@ impl Value {
     fn write_string(bytes: &mut Vec<u8>, string: &String, raw: bool) {
         if !raw {
             bytes.push(b'\'');
-        }
-        bytes.extend_from_slice(string.as_bytes());
-        if !raw {
+            write_quoted_string_min_escape(string.as_bytes(), bytes, b'\'');
             bytes.push(b'\'');
+        } else {
+            bytes.extend_from_slice(string.as_bytes());
         }
     }
 
@@ -187,5 +187,24 @@ impl Value {
             let len = v.to_lexical(slice).len();
             out_buf.set_len(len0 + len);
         }
+    }
+}
+
+fn write_quoted_string_min_escape(bytes: &[u8], buf: &mut Vec<u8>, quote: u8) {
+    let mut start = 0;
+
+    for (i, &byte) in bytes.iter().enumerate() {
+        if byte == quote {
+            if start < i {
+                buf.extend_from_slice(&bytes[start..i]);
+            }
+            buf.push(quote);
+            buf.push(quote);
+            start = i + 1;
+        }
+    }
+
+    if start != bytes.len() {
+        buf.extend_from_slice(&bytes[start..]);
     }
 }
