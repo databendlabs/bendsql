@@ -33,6 +33,7 @@ pub enum NumberValue {
     UInt64(u64),
     Float32(f32),
     Float64(f64),
+    Decimal64(i64, DecimalSize),
     Decimal128(i128, DecimalSize),
     Decimal256(i256, DecimalSize),
 }
@@ -81,6 +82,7 @@ impl Value {
                 NumberValue::UInt64(_) => DataType::Number(NumberDataType::UInt64),
                 NumberValue::Float32(_) => DataType::Number(NumberDataType::Float32),
                 NumberValue::Float64(_) => DataType::Number(NumberDataType::Float64),
+                NumberValue::Decimal64(_, s) => DataType::Decimal(DecimalDataType::Decimal64(*s)),
                 NumberValue::Decimal128(_, s) => DataType::Decimal(DecimalDataType::Decimal128(*s)),
                 NumberValue::Decimal256(_, s) => DataType::Decimal(DecimalDataType::Decimal256(*s)),
             },

@@ -54,6 +54,7 @@ pub struct DecimalSize {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecimalDataType {
+    Decimal64(DecimalSize),
     Decimal128(DecimalSize),
     Decimal256(DecimalSize),
 }
@@ -61,6 +62,7 @@ pub enum DecimalDataType {
 impl DecimalDataType {
     pub fn decimal_size(&self) -> &DecimalSize {
         match self {
+            DecimalDataType::Decimal64(size) => size,
             DecimalDataType::Decimal128(size) => size,
             DecimalDataType::Decimal256(size) => size,
         }
@@ -370,6 +372,12 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                 }
                 ArrowDataType::Timestamp(_, _) => DataType::Timestamp,
                 ArrowDataType::Date32 => DataType::Date,
+                ArrowDataType::Decimal64(p, s) => {
+                    DataType::Decimal(DecimalDataType::Decimal64(DecimalSize {
+                        precision: *p,
+                        scale: *s as u8,
+                    }))
+                }
                 ArrowDataType::Decimal128(p, s) => {
                     DataType::Decimal(DecimalDataType::Decimal128(DecimalSize {
                         precision: *p,

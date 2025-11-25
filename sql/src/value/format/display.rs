@@ -38,6 +38,9 @@ impl std::fmt::Display for NumberValue {
             NumberValue::UInt64(i) => write!(f, "{i}"),
             NumberValue::Float32(i) => write!(f, "{i}"),
             NumberValue::Float64(i) => write!(f, "{i}"),
+            NumberValue::Decimal64(v, s) => {
+                write!(f, "{}", display_decimal_128(*v as i128, s.scale))
+            }
             NumberValue::Decimal128(v, s) => write!(f, "{}", display_decimal_128(*v, s.scale)),
             NumberValue::Decimal256(v, s) => write!(f, "{}", display_decimal_256(*v, s.scale)),
         }

@@ -405,6 +405,9 @@ impl ToNapiValue for NumberValue {
             databend_driver::NumberValue::UInt64(i) => u64::to_napi_value(env, i),
             databend_driver::NumberValue::Float32(i) => f32::to_napi_value(env, i),
             databend_driver::NumberValue::Float64(i) => f64::to_napi_value(env, i),
+            databend_driver::NumberValue::Decimal64(_, _) => {
+                String::to_napi_value(env, val.0.to_string())
+            }
             databend_driver::NumberValue::Decimal128(_, _) => {
                 String::to_napi_value(env, val.0.to_string())
             }
