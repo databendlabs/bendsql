@@ -25,6 +25,9 @@ impl TryFrom<Value> for String {
         match val {
             Value::String(s) => Ok(s),
             Value::Bitmap(s) => Ok(s),
+            Value::Number(NumberValue::Decimal64(v, s)) => {
+                Ok(display_decimal_128(v as i128, s.scale))
+            }
             Value::Number(NumberValue::Decimal128(v, s)) => Ok(display_decimal_128(v, s.scale)),
             Value::Number(NumberValue::Decimal256(v, s)) => Ok(display_decimal_256(v, s.scale)),
             Value::Geometry(s) => Ok(s),
