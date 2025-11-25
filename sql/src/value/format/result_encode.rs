@@ -67,6 +67,10 @@ impl Value {
                 NumberValue::UInt64(v) => Self::write_int(bytes, *v),
                 NumberValue::Float32(v) => Self::write_float(bytes, *v, format_options),
                 NumberValue::Float64(v) => Self::write_float(bytes, *v, format_options),
+                NumberValue::Decimal64(v, size) => {
+                    let s = display_decimal_128(*v as i128, size.scale);
+                    Self::write_string(bytes, &s, true);
+                }
                 NumberValue::Decimal128(v, size) => {
                     let s = display_decimal_128(*v, size.scale);
                     Self::write_string(bytes, &s, true);

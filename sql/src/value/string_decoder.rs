@@ -89,6 +89,10 @@ impl TryFrom<(&DataType, String, &TimeZone)> for Value {
             DataType::Number(NumberDataType::Float64) => {
                 Ok(Self::Number(NumberValue::Float64(v.parse()?)))
             }
+            DataType::Decimal(DecimalDataType::Decimal64(size)) => {
+                let d = parse_decimal(v.as_str(), *size)?;
+                Ok(Self::Number(d))
+            }
             DataType::Decimal(DecimalDataType::Decimal128(size)) => {
                 let d = parse_decimal(v.as_str(), *size)?;
                 Ok(Self::Number(d))
@@ -159,6 +163,7 @@ impl ValueDecoder {
             DataType::Number(NumberDataType::UInt64) => self.read_uint64(reader),
             DataType::Number(NumberDataType::Float32) => self.read_float32(reader),
             DataType::Number(NumberDataType::Float64) => self.read_float64(reader),
+            DataType::Decimal(DecimalDataType::Decimal64(size)) => self.read_decimal(size, reader),
             DataType::Decimal(DecimalDataType::Decimal128(size)) => self.read_decimal(size, reader),
             DataType::Decimal(DecimalDataType::Decimal256(size)) => self.read_decimal(size, reader),
             DataType::String => self.read_string(reader),
@@ -513,8 +518,10 @@ fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
 
         let result = if size.precision > 38 {
             NumberValue::Decimal256(i256::from_str(digits).unwrap(), size)
-        } else {
+        } else if size.precision > 19 {
             NumberValue::Decimal128(digits.parse::<i128>()?, size)
+        } else {
+            NumberValue::Decimal64(digits.parse::<i64>()?, size)
         };
 
         // If the number was negative, negate the result
@@ -522,6 +529,7 @@ fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
             match result {
                 NumberValue::Decimal256(val, size) => Ok(NumberValue::Decimal256(-val, size)),
                 NumberValue::Decimal128(val, size) => Ok(NumberValue::Decimal128(-val, size)),
+                NumberValue::Decimal64(val, size) => Ok(NumberValue::Decimal64(-val, size)),
                 _ => Ok(result),
             }
         } else {

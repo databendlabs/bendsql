@@ -222,15 +222,15 @@ async fn select_decimal() {
     assert_eq!(
         row.values().to_owned(),
         vec![
-            Value::Number(NumberValue::Decimal128(
-                100i128,
+            Value::Number(NumberValue::Decimal64(
+                100i64,
                 DecimalSize {
                     precision: 15,
                     scale: 2
                 },
             )),
-            Value::Number(NumberValue::Decimal128(
-                50i128,
+            Value::Number(NumberValue::Decimal64(
+                50i64,
                 DecimalSize {
                     precision: 2,
                     scale: 1

@@ -37,10 +37,9 @@ arrow-array = { version = "56" }
 arrow-schema = { version = "56" }
 arrow-flight = { version = "56", features = ["flight-sql-experimental"] }
 arrow-ipc = { version = "56", features = ["lz4", "zstd"]}
-tonic = { version = "0.12", default-features = false, features = [
+tonic = { version = "0.13", default-features = false, features = [
     "transport",
     "codegen",
-    "tls",
     "tls-webpki-roots",
     "prost",
 ] }

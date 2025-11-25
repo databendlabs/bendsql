@@ -174,6 +174,13 @@ impl<'py> IntoPyObject<'py> for NumberValue {
             databend_driver::NumberValue::UInt64(i) => i.into_bound_py_any(py)?,
             databend_driver::NumberValue::Float32(i) => i.into_bound_py_any(py)?,
             databend_driver::NumberValue::Float64(i) => i.into_bound_py_any(py)?,
+            databend_driver::NumberValue::Decimal64(_, _) => {
+                let dec_cls = get_decimal_cls(py).expect("failed to load decimal.Decimal");
+                let ret = dec_cls
+                    .call1((self.0.to_string(),))
+                    .expect("failed to call decimal.Decimal(value)");
+                ret.into_bound()
+            }
             databend_driver::NumberValue::Decimal128(_, _) => {
                 let dec_cls = get_decimal_cls(py).expect("failed to load decimal.Decimal");
                 let ret = dec_cls

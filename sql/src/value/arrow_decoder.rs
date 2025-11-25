@@ -19,9 +19,10 @@ use crate::error::{ConvertError, Error};
 use crate::value::geo::convert_geometry;
 use arrow_array::{
     Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
-    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray,
-    LargeListArray, LargeStringArray, ListArray, MapArray, StringArray, StringViewArray,
-    StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    Decimal64Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
+    LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, MapArray, StringArray,
+    StringViewArray, StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array, UInt64Array,
+    UInt8Array,
 };
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit};
 use databend_client::schema::{
@@ -291,7 +292,18 @@ impl
                 Some(array) => Ok(Value::Number(NumberValue::Float64(array.value(seq)))),
                 None => Err(ConvertError::new("float64", format!("{array:?}")).into()),
             },
-
+            ArrowDataType::Decimal64(p, s) => {
+                match array.as_any().downcast_ref::<Decimal64Array>() {
+                    Some(array) => Ok(Value::Number(NumberValue::Decimal64(
+                        array.value(seq),
+                        DecimalSize {
+                            precision: *p,
+                            scale: *s as u8,
+                        },
+                    ))),
+                    None => Err(ConvertError::new("Decimal64", format!("{array:?}")).into()),
+                }
+            }
             ArrowDataType::Decimal128(p, s) => {
                 match array.as_any().downcast_ref::<Decimal128Array>() {
                     Some(array) => Ok(Value::Number(NumberValue::Decimal128(
