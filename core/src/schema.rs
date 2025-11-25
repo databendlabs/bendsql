@@ -372,6 +372,12 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                 }
                 ArrowDataType::Timestamp(_, _) => DataType::Timestamp,
                 ArrowDataType::Date32 => DataType::Date,
+                ArrowDataType::Decimal64(p, s) => {
+                    DataType::Decimal(DecimalDataType::Decimal64(DecimalSize {
+                        precision: *p,
+                        scale: *s as u8,
+                    }))
+                }
                 ArrowDataType::Decimal128(p, s) => {
                     DataType::Decimal(DecimalDataType::Decimal128(DecimalSize {
                         precision: *p,
