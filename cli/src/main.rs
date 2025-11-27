@@ -27,7 +27,7 @@ mod web;
 
 use std::io::{stdin, IsTerminal};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{ArgAction, CommandFactory, Parser};
 use databend_client::SensitiveString;
 use log::info;
@@ -333,6 +333,9 @@ pub async fn main() -> Result<()> {
         "{}/.bendsql",
         std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
     );
+
+    std::fs::create_dir_all(&log_dir)
+        .with_context(|| format!("failed to create log directory {log_dir}"))?;
 
     let _guards = trace::init_logging(&log_dir, &args.log_level).await?;
     info!("-> bendsql version: {}", VERSION.as_str());
