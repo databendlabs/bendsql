@@ -120,7 +120,6 @@ impl FormatDisplay<'_> {
         }
     }
 
-    #[allow(clippy::manual_is_multiple_of)]
     async fn display_table(&mut self, expand: Option<ExpandMode>) -> Result<()> {
         if self.settings.display_pretty_sql {
             let format_sql = format_query(self.query);
@@ -136,8 +135,7 @@ impl FormatDisplay<'_> {
                 self.kind,
                 QueryKind::Explain | QueryKind::Graphical | QueryKind::ShowCreate
             );
-        let has_middle_row = (self.settings.max_display_rows % 2) != 0;
-        let max_display_top_rows = self.settings.max_display_rows / 2 + has_middle_row as usize;
+        let max_display_top_rows = (self.settings.max_display_rows + 1) / 2;
         let max_display_bottom_rows = self.settings.max_display_rows / 2;
         let mut rows = Vec::new();
         let mut bottom_rows = VecDeque::new();
@@ -493,7 +491,6 @@ fn display_progress(pb: Option<ProgressBar>, current: &ServerStats, kind: &str) 
 }
 
 /// Convert a series of rows into a table
-#[allow(clippy::manual_is_multiple_of)]
 fn create_table(
     schema: SchemaRef,
     results: &[Row],
@@ -537,8 +534,7 @@ fn create_table(
     let (top_rows, bottom_rows) = if value_rows_count == rows_count {
         (value_rows_count, 0usize)
     } else {
-        let has_middle_row = (value_rows_count % 2) != 0;
-        let top_rows = value_rows_count / 2 + has_middle_row as usize;
+        let top_rows = (value_rows_count + 1) / 2;
         (top_rows, value_rows_count - top_rows)
     };
 
