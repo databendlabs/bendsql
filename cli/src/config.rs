@@ -40,6 +40,7 @@ pub struct SettingsConfig {
     pub no_auto_complete: Option<bool>,
     pub show_progress: Option<bool>,
     pub show_stats: Option<bool>,
+    pub show_query_id: Option<bool>,
     pub expand: Option<String>,
     pub quote_string: Option<bool>,
     pub sql_delimiter: Option<char>,
@@ -80,6 +81,8 @@ pub struct Settings {
     /// Show stats after executing queries.
     /// Only works with non-interactive mode.
     pub show_stats: bool,
+    /// Show the last query ID after each execution.
+    pub show_query_id: bool,
     /// Output max rows (only works in table output format)
     pub max_display_rows: usize,
     /// limit display render each column max width, smaller than 3 means disable the limit
@@ -171,6 +174,7 @@ impl Settings {
         self.no_auto_complete = cfg.no_auto_complete.unwrap_or(self.no_auto_complete);
         self.show_progress = cfg.show_progress.unwrap_or(self.show_progress);
         self.show_stats = cfg.show_stats.unwrap_or(self.show_stats);
+        self.show_query_id = cfg.show_query_id.unwrap_or(self.show_query_id);
         self.expand = cfg
             .expand
             .map(|expand| expand.as_str().into())
@@ -194,6 +198,7 @@ impl Settings {
             "progress_color" => self.progress_color = cmd_value.to_string(),
             "show_progress" => self.show_progress = cmd_value.parse()?,
             "show_stats" => self.show_stats = cmd_value.parse()?,
+            "show_query_id" => self.show_query_id = cmd_value.parse()?,
             "output_format" => {
                 self.output_format = match cmd_value.to_ascii_lowercase().as_str() {
                     "table" => OutputFormat::Table,
@@ -297,6 +302,7 @@ impl Default for Settings {
             // Default width is terminal size
             max_width: 0,
             show_stats: false,
+            show_query_id: false,
             time: None,
             multi_line: true,
             quote_string: false,

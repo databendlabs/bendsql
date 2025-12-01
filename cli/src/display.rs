@@ -135,8 +135,8 @@ impl FormatDisplay<'_> {
                 self.kind,
                 QueryKind::Explain | QueryKind::Graphical | QueryKind::ShowCreate
             );
-        let max_display_top_rows = self.settings.max_display_rows / 2
-            + (!self.settings.max_display_rows.is_multiple_of(2)) as usize;
+        let has_middle_row = (self.settings.max_display_rows % 2) != 0;
+        let max_display_top_rows = self.settings.max_display_rows / 2 + has_middle_row as usize;
         let max_display_bottom_rows = self.settings.max_display_rows / 2;
         let mut rows = Vec::new();
         let mut bottom_rows = VecDeque::new();
@@ -535,7 +535,8 @@ fn create_table(
     let (top_rows, bottom_rows) = if value_rows_count == rows_count {
         (value_rows_count, 0usize)
     } else {
-        let top_rows = value_rows_count / 2 + (!value_rows_count.is_multiple_of(2)) as usize;
+        let has_middle_row = (value_rows_count % 2) != 0;
+        let top_rows = value_rows_count / 2 + has_middle_row as usize;
         (top_rows, value_rows_count - top_rows)
     };
 

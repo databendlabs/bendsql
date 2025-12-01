@@ -475,6 +475,15 @@ impl Session {
         queries
     }
 
+    fn show_query_id_if_needed(&self) {
+        if !self.settings.show_query_id {
+            return;
+        }
+        if let Some(query_id) = self.conn.last_query_id() {
+            println!("Query ID: {query_id}");
+        }
+    }
+
     #[async_recursion]
     pub async fn handle_query(
         &mut self,
@@ -507,6 +516,7 @@ impl Session {
                 // When changing the current user's password,
                 // exit the client and login again with the new password.
                 let _ = self.conn.exec(query).await?;
+                self.show_query_id_if_needed();
                 Ok(None)
             }
             other => {
@@ -532,6 +542,7 @@ impl Session {
                     self.interrupted.clone(),
                 );
                 let stats = displayer.display(expand).await?;
+                self.show_query_id_if_needed();
                 Ok(Some(stats))
             }
         }
