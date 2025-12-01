@@ -43,6 +43,7 @@ Options:
       --quote-style <QUOTE_STYLE>  Output quote style, applies to `csv` and `tsv` output formats [possible values: always, necessary, non-numeric, never]
       --progress                   Show progress for query execution in stderr, only works with output format `table` and `null`.
       --stats                      Show stats after query execution in stderr, only works with non-interactive mode.
+  -q, --qid                        Show the last query ID after each statement.
       --time[=<TIME>]              Only show execution time without results, will implicitly set output format to `null`. [possible values: local, server]
   -l, --log-level <LOG_LEVEL>      [default: info]
   -V, --version                    Print version
@@ -108,6 +109,16 @@ Also we can share the results with others by copying the url.
 0
 1
 2
+```
+
+### Show Query ID
+
+Use `--qid` (or `!set show_query_id true` in REPL) to print the server query ID after every statement, which matches the `Query ID:` that SnowSQL exposes. This is useful for tracking or killing runaway queries.
+
+```bash
+❯ bendsql --qid --query "select 1"
+Query ID: 01c0c277-0004-011f-0000-000a83ee9129
+1
 ```
 
 ### Put local files into stage
