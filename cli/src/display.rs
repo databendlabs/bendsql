@@ -120,6 +120,7 @@ impl FormatDisplay<'_> {
         }
     }
 
+    #[allow(clippy::manual_is_multiple_of)]
     async fn display_table(&mut self, expand: Option<ExpandMode>) -> Result<()> {
         if self.settings.display_pretty_sql {
             let format_sql = format_query(self.query);
@@ -492,6 +493,7 @@ fn display_progress(pb: Option<ProgressBar>, current: &ServerStats, kind: &str) 
 }
 
 /// Convert a series of rows into a table
+#[allow(clippy::manual_is_multiple_of)]
 fn create_table(
     schema: SchemaRef,
     results: &[Row],
