@@ -162,6 +162,13 @@ struct Args {
     stats: bool,
 
     #[clap(
+        short = 'q',
+        long = "query-id",
+        help = "Show the last query ID after each statement."
+    )]
+    qid: bool,
+
+    #[clap(
         long,
         action = ArgAction::Set,
         num_args = 0..=1, require_equals = true, default_missing_value = "server",
@@ -323,6 +330,9 @@ pub async fn main() -> Result<()> {
     }
     if args.stats {
         settings.show_stats = true;
+    }
+    if args.qid {
+        settings.show_query_id = true;
     }
     if args.time.is_some() {
         settings.output_format = OutputFormat::Null;
