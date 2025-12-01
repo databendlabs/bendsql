@@ -7,7 +7,7 @@ if [[ "${BENDSQL_DSN:-}" == databend+flight* ]]; then
     exit 0
 fi
 
-out="$(${BENDSQL} --qid --output tsv --query='select 1' 2>&1 || true)"
+out="$(${BENDSQL} --query-id --output tsv --query='select 1' 2>&1 || true)"
 if echo "$out" | grep -q "Query ID:"; then
     echo "has_query_id"
 else

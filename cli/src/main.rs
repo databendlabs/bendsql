@@ -163,7 +163,7 @@ struct Args {
 
     #[clap(
         short = 'q',
-        long = "qid",
+        long = "query-id",
         help = "Show the last query ID after each statement."
     )]
     qid: bool,
