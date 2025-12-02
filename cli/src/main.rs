@@ -27,7 +27,7 @@ mod web;
 
 use std::io::{stdin, IsTerminal};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{ArgAction, CommandFactory, Parser};
 use databend_client::SensitiveString;
 use log::info;
@@ -160,6 +160,13 @@ struct Args {
         help = "Show stats after query execution in stderr, only works with non-interactive mode."
     )]
     stats: bool,
+
+    #[clap(
+        short = 'q',
+        long = "query-id",
+        help = "Show the last query ID after each statement."
+    )]
+    qid: bool,
 
     #[clap(
         long,
@@ -324,6 +331,9 @@ pub async fn main() -> Result<()> {
     if args.stats {
         settings.show_stats = true;
     }
+    if args.qid {
+        settings.show_query_id = true;
+    }
     if args.time.is_some() {
         settings.output_format = OutputFormat::Null;
     }
@@ -333,6 +343,9 @@ pub async fn main() -> Result<()> {
         "{}/.bendsql",
         std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
     );
+
+    std::fs::create_dir_all(&log_dir)
+        .with_context(|| format!("failed to create log directory {log_dir}"))?;
 
     let _guards = trace::init_logging(&log_dir, &args.log_level).await?;
     info!("-> bendsql version: {}", VERSION.as_str());

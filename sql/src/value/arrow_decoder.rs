@@ -12,31 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::io::Cursor;
 use std::sync::Arc;
 
+use super::{Interval, NumberValue, Value};
+use crate::error::{ConvertError, Error};
+use crate::value::geo::convert_geometry;
 use arrow_array::{
     Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
-    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array, LargeBinaryArray,
-    LargeListArray, LargeStringArray, ListArray, MapArray, StringArray, StringViewArray,
-    StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array, UInt64Array, UInt8Array,
+    Decimal64Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
+    LargeBinaryArray, LargeListArray, LargeStringArray, ListArray, MapArray, StringArray,
+    StringViewArray, StructArray, TimestampMicrosecondArray, UInt16Array, UInt32Array, UInt64Array,
+    UInt8Array,
 };
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit};
-use chrono::{FixedOffset, LocalResult, TimeZone};
-use chrono_tz::Tz;
 use databend_client::schema::{
     DecimalSize, ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
     ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
     ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE, ARROW_EXT_TYPE_VARIANT, ARROW_EXT_TYPE_VECTOR,
     EXTENSION_KEY,
 };
-use geozero::wkb::{FromWkb, WkbDialect};
-use geozero::wkt::Ewkt;
+use databend_client::ResultFormatSettings;
+use ethnum::i256;
+use jiff::{tz, Timestamp};
 use jsonb::RawJsonb;
-
-use crate::error::{ConvertError, Error, Result};
-
-use super::{Interval, NumberValue, Value};
 
 /// The in-memory representation of the MonthDayMicros variant of the "Interval" logical type.
 #[allow(non_camel_case_types)]
@@ -47,6 +45,17 @@ struct months_days_micros(pub i128);
 const MICROS_MASK: i128 = 0xFFFFFFFFFFFFFFFF;
 /// Mask for extracting the middle 32 bits (days or months).
 const DAYS_MONTHS_MASK: i128 = 0xFFFFFFFF;
+
+// 9999-12-30T22:00:00Z
+// note: max for jiff is 253402207200999999, 253402207200000000 if for compatible with old databend-query
+const TIMESTAMP_MAX: i64 = 253402207200000000;
+// -009999-01-02T01:59:59Z
+const TIMESTAMP_MIN: i64 = -377705023201000000;
+
+// required by jiff
+fn clamp_ts(ts: i64) -> i64 {
+    ts.clamp(TIMESTAMP_MIN, TIMESTAMP_MAX)
+}
 
 impl months_days_micros {
     #[inline]
@@ -65,10 +74,22 @@ impl months_days_micros {
     }
 }
 
-impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
+impl
+    TryFrom<(
+        &ArrowField,
+        &Arc<dyn ArrowArray>,
+        usize,
+        &ResultFormatSettings,
+    )> for Value
+{
     type Error = Error;
     fn try_from(
-        (field, array, seq, ltz): (&ArrowField, &Arc<dyn ArrowArray>, usize, Tz),
+        (field, array, seq, settings): (
+            &ArrowField,
+            &Arc<dyn ArrowArray>,
+            usize,
+            &ResultFormatSettings,
+        ),
     ) -> std::result::Result<Self, Self::Error> {
         if let Some(extend_type) = field.metadata().get(EXTENSION_KEY) {
             return match extend_type.as_str() {
@@ -92,17 +113,16 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                     match array.as_any().downcast_ref::<Decimal128Array>() {
                         Some(array) => {
                             let v = array.value(seq);
-                            let unix_ts = v as u64 as i64;
+                            let unix_ts = clamp_ts(v as u64 as i64);
                             let offset = (v >> 64) as i32;
-                            let offset = FixedOffset::east_opt(offset)
-                                .ok_or_else(|| Error::Parsing("invalid offset".to_string()))?;
-                            let dt =
-                                offset.timestamp_micros(unix_ts).single().ok_or_else(|| {
-                                    Error::Parsing(format!(
-                                        "Invalid timestamp_micros {unix_ts} for offset {offset}"
-                                    ))
-                                })?;
-                            Ok(Value::TimestampTz(dt))
+                            let offset = tz::Offset::from_seconds(offset).map_err(|e| {
+                                Error::Parsing(format!("invalid offset: {offset}, {e}"))
+                            })?;
+                            let time_zone = tz::TimeZone::fixed(offset);
+                            let timestamp = Timestamp::from_microsecond(unix_ts).map_err(|e| {
+                                Error::Parsing(format!("Invalid timestamp_micros {unix_ts}: {e}"))
+                            })?;
+                            Ok(Value::TimestampTz(timestamp.to_zoned(time_zone)))
                         }
                         None => Err(ConvertError::new("Interval", format!("{array:?}")).into()),
                     }
@@ -147,8 +167,11 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                     }
                     match array.as_any().downcast_ref::<LargeBinaryArray>() {
                         Some(array) => {
-                            let wkt = parse_geometry(array.value(seq))?;
-                            Ok(Value::Geometry(wkt))
+                            let value = convert_geometry(
+                                array.value(seq),
+                                settings.geometry_output_format,
+                            )?;
+                            Ok(Value::Geometry(value))
                         }
                         None => Err(ConvertError::new("geometry", format!("{array:?}")).into()),
                     }
@@ -159,8 +182,11 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                     }
                     match array.as_any().downcast_ref::<LargeBinaryArray>() {
                         Some(array) => {
-                            let wkt = parse_geometry(array.value(seq))?;
-                            Ok(Value::Geography(wkt))
+                            let value = convert_geometry(
+                                array.value(seq),
+                                settings.geometry_output_format,
+                            )?;
+                            Ok(Value::Geography(value))
                         }
                         None => Err(ConvertError::new("geography", format!("{array:?}")).into()),
                     }
@@ -266,7 +292,18 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                 Some(array) => Ok(Value::Number(NumberValue::Float64(array.value(seq)))),
                 None => Err(ConvertError::new("float64", format!("{array:?}")).into()),
             },
-
+            ArrowDataType::Decimal64(p, s) => {
+                match array.as_any().downcast_ref::<Decimal64Array>() {
+                    Some(array) => Ok(Value::Number(NumberValue::Decimal64(
+                        array.value(seq),
+                        DecimalSize {
+                            precision: *p,
+                            scale: *s as u8,
+                        },
+                    ))),
+                    None => Err(ConvertError::new("Decimal64", format!("{array:?}")).into()),
+                }
+            }
             ArrowDataType::Decimal128(p, s) => {
                 match array.as_any().downcast_ref::<Decimal128Array>() {
                     Some(array) => Ok(Value::Number(NumberValue::Decimal128(
@@ -281,13 +318,17 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
             }
             ArrowDataType::Decimal256(p, s) => {
                 match array.as_any().downcast_ref::<Decimal256Array>() {
-                    Some(array) => Ok(Value::Number(NumberValue::Decimal256(
-                        array.value(seq),
-                        DecimalSize {
-                            precision: *p,
-                            scale: *s as u8,
-                        },
-                    ))),
+                    Some(array) => {
+                        let v = array.value(seq);
+                        let v = i256::from_le_bytes(v.to_le_bytes());
+                        Ok(Value::Number(NumberValue::Decimal256(
+                            v,
+                            DecimalSize {
+                                precision: *p,
+                                scale: *s as u8,
+                            },
+                        )))
+                    }
                     None => Err(ConvertError::new("Decimal256", format!("{array:?}")).into()),
                 }
             }
@@ -325,18 +366,13 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                                 ))
                                 .into());
                         }
-                        let ts = array.value(seq);
+                        let ts = clamp_ts(array.value(seq));
                         match tz {
                             None => {
-                                let dt = match ltz.timestamp_micros(ts) {
-                                    LocalResult::Single(dt) => dt,
-                                    LocalResult::None => {
-                                        return Err(Error::Parsing(format!(
-                                            "time {ts} not exists in timezone {ltz}"
-                                        )))
-                                    }
-                                    LocalResult::Ambiguous(dt1, _dt2) => dt1,
-                                };
+                                let timestamp = Timestamp::from_microsecond(ts).map_err(|e| {
+                                    Error::Parsing(format!("Invalid timestamp_micros {ts}: {e}"))
+                                })?;
+                                let dt = timestamp.to_zoned(settings.timezone.clone());
                                 Ok(Value::Timestamp(dt))
                             }
                             Some(tz) => Err(ConvertError::new("timestamp", format!("{array:?}"))
@@ -356,7 +392,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                     let inner_array = unsafe { array.value_unchecked(seq) };
                     let mut values = Vec::with_capacity(inner_array.len());
                     for i in 0..inner_array.len() {
-                        let value = Value::try_from((f.as_ref(), &inner_array, i, ltz))?;
+                        let value = Value::try_from((f.as_ref(), &inner_array, i, settings))?;
                         values.push(value);
                     }
                     Ok(Value::Array(values))
@@ -368,7 +404,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                     let inner_array = unsafe { array.value_unchecked(seq) };
                     let mut values = Vec::with_capacity(inner_array.len());
                     for i in 0..inner_array.len() {
-                        let value = Value::try_from((f.as_ref(), &inner_array, i, ltz))?;
+                        let value = Value::try_from((f.as_ref(), &inner_array, i, settings))?;
                         values.push(value);
                     }
                     Ok(Value::Array(values))
@@ -381,10 +417,18 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                         let inner_array = unsafe { array.value_unchecked(seq) };
                         let mut values = Vec::with_capacity(inner_array.len());
                         for i in 0..inner_array.len() {
-                            let key =
-                                Value::try_from((fs[0].as_ref(), inner_array.column(0), i, ltz))?;
-                            let val =
-                                Value::try_from((fs[1].as_ref(), inner_array.column(1), i, ltz))?;
+                            let key = Value::try_from((
+                                fs[0].as_ref(),
+                                inner_array.column(0),
+                                i,
+                                settings,
+                            ))?;
+                            let val = Value::try_from((
+                                fs[1].as_ref(),
+                                inner_array.column(1),
+                                i,
+                                settings,
+                            ))?;
                             values.push((key, val));
                         }
                         Ok(Value::Map(values))
@@ -401,7 +445,7 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
                 Some(array) => {
                     let mut values = Vec::with_capacity(array.len());
                     for (f, inner_array) in fs.iter().zip(array.columns().iter()) {
-                        let value = Value::try_from((f.as_ref(), inner_array, seq, ltz))?;
+                        let value = Value::try_from((f.as_ref(), inner_array, seq, settings))?;
                         values.push(value);
                     }
                     Ok(Value::Tuple(values))
@@ -411,10 +455,4 @@ impl TryFrom<(&ArrowField, &Arc<dyn ArrowArray>, usize, Tz)> for Value {
             _ => Err(ConvertError::new("unsupported data type", format!("{array:?}")).into()),
         }
     }
-}
-
-fn parse_geometry(raw_data: &[u8]) -> Result<String> {
-    let mut data = Cursor::new(raw_data);
-    let wkt = Ewkt::from_wkb(&mut data, WkbDialect::Ewkb)?;
-    Ok(wkt.0)
 }

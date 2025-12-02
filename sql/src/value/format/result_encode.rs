@@ -67,6 +67,10 @@ impl Value {
                 NumberValue::UInt64(v) => Self::write_int(bytes, *v),
                 NumberValue::Float32(v) => Self::write_float(bytes, *v, format_options),
                 NumberValue::Float64(v) => Self::write_float(bytes, *v, format_options),
+                NumberValue::Decimal64(v, size) => {
+                    let s = display_decimal_128(*v as i128, size.scale);
+                    Self::write_string(bytes, &s, true);
+                }
                 NumberValue::Decimal128(v, size) => {
                     let s = display_decimal_128(*v, size.scale);
                     Self::write_string(bytes, &s, true);
@@ -86,12 +90,11 @@ impl Value {
                 Self::write_string(bytes, s, raw);
             }
             Value::Timestamp(dt) => {
-                let s = format!("{}", dt.format(TIMESTAMP_FORMAT));
+                let s = dt.strftime(TIMESTAMP_FORMAT).to_string();
                 Self::write_string(bytes, &s, raw);
             }
             Value::TimestampTz(dt) => {
-                let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
-                let s = format!("{}", formatted);
+                let s = dt.strftime(TIMESTAMP_TIMEZONE_FORMAT).to_string();
                 Self::write_string(bytes, &s, raw);
             }
             Value::Date(i) => {
@@ -148,10 +151,10 @@ impl Value {
     fn write_string(bytes: &mut Vec<u8>, string: &String, raw: bool) {
         if !raw {
             bytes.push(b'\'');
-        }
-        bytes.extend_from_slice(string.as_bytes());
-        if !raw {
+            write_quoted_string_min_escape(string.as_bytes(), bytes, b'\'');
             bytes.push(b'\'');
+        } else {
+            bytes.extend_from_slice(string.as_bytes());
         }
     }
 
@@ -188,5 +191,24 @@ impl Value {
             let len = v.to_lexical(slice).len();
             out_buf.set_len(len0 + len);
         }
+    }
+}
+
+fn write_quoted_string_min_escape(bytes: &[u8], buf: &mut Vec<u8>, quote: u8) {
+    let mut start = 0;
+
+    for (i, &byte) in bytes.iter().enumerate() {
+        if byte == quote {
+            if start < i {
+                buf.extend_from_slice(&bytes[start..i]);
+            }
+            buf.push(quote);
+            buf.push(quote);
+            start = i + 1;
+        }
+    }
+
+    if start != bytes.len() {
+        buf.extend_from_slice(&bytes[start..]);
     }
 }

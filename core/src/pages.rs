@@ -16,16 +16,15 @@ use crate::client::QueryState;
 use crate::error::Result;
 use crate::response::QueryResponse;
 use crate::schema::Schema;
+use crate::settings::ResultFormatSettings;
 use crate::{APIClient, Error, QueryStats, SchemaField};
 use arrow_array::RecordBatch;
-use chrono_tz::Tz;
 use log::debug;
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Instant;
@@ -110,7 +109,10 @@ impl Pages {
         self.first_page = Some(page);
     }
 
-    pub async fn wait_for_schema(mut self, need_progress: bool) -> Result<(Self, Schema, Tz)> {
+    pub async fn wait_for_schema(
+        mut self,
+        need_progress: bool,
+    ) -> Result<(Self, Schema, ResultFormatSettings)> {
         while let Some(page) = self.next().await {
             let page = page?;
             if !page.raw_schema.is_empty()
@@ -128,13 +130,8 @@ impl Pages {
                     s.try_into()
                         .map_err(|e| Error::Decode(format!("fail to decode string schema: {e}")))?
                 };
-                let utc = "UTC".to_owned();
-                let timezone = page
-                    .settings
-                    .as_ref()
-                    .and_then(|m| m.get("timezone"))
-                    .unwrap_or(&utc);
-                let timezone = Tz::from_str(timezone).map_err(|e| Error::Decode(e.to_string()))?;
+                let settings = ResultFormatSettings::from_map(&page.settings)?;
+
                 self.add_back(page);
                 let last_access_time = self.last_access_time.clone();
                 if let Some(node_id) = &self.node_id {
@@ -146,10 +143,10 @@ impl Pages {
                     self.client
                         .register_query_for_heartbeat(&self.query_id, state)
                 }
-                return Ok((self, schema, timezone));
+                return Ok((self, schema, settings));
             }
         }
-        Ok((self, Schema::default(), Tz::UTC))
+        Ok((self, Schema::default(), ResultFormatSettings::default()))
     }
 }
 

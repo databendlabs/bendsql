@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::assert_eq;
-use std::collections::HashMap;
-
 use chrono::{DateTime, NaiveDate, NaiveDateTime};
 use chrono_tz::Tz;
+use databend_client::schema::{DataType, DecimalDataType};
 use databend_driver::{params, Client, Connection, DecimalSize, NumberValue, Value};
+use std::assert_eq;
+use std::collections::HashMap;
 
 use crate::common::DEFAULT_DSN;
 
@@ -219,25 +219,44 @@ async fn select_decimal() {
         .unwrap();
     assert!(row.is_some());
     let row = row.unwrap();
-    assert_eq!(
-        row.values().to_owned(),
-        vec![
+    let values = row.values().to_owned();
+    let ty = values[0].get_type();
+    let exp = match ty {
+        DataType::Decimal(DecimalDataType::Decimal64(_)) => vec![
+            Value::Number(NumberValue::Decimal64(
+                100i64,
+                DecimalSize {
+                    precision: 15,
+                    scale: 2,
+                },
+            )),
+            Value::Number(NumberValue::Decimal64(
+                50i64,
+                DecimalSize {
+                    precision: 2,
+                    scale: 1,
+                },
+            )),
+        ],
+        DataType::Decimal(DecimalDataType::Decimal128(_)) => vec![
             Value::Number(NumberValue::Decimal128(
                 100i128,
                 DecimalSize {
                     precision: 15,
-                    scale: 2
+                    scale: 2,
                 },
             )),
             Value::Number(NumberValue::Decimal128(
                 50i128,
                 DecimalSize {
                     precision: 2,
-                    scale: 1
+                    scale: 1,
                 },
             )),
-        ]
-    );
+        ],
+        _ => unreachable!(),
+    };
+    assert_eq!(values, exp);
 }
 
 #[tokio::test]

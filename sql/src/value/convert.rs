@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, TimeZone};
+use chrono::{
+    DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc,
+};
 use chrono_tz::Tz;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -20,6 +22,7 @@ use std::hash::Hash;
 use crate::error::{ConvertError, Error, Result};
 
 use super::{NumberValue, Value, DAYS_FROM_CE};
+use jiff::{tz::TimeZone as JiffTimeZone, Timestamp, Zoned};
 
 impl TryFrom<Value> for bool {
     type Error = Error;
@@ -70,11 +73,62 @@ impl_try_from_number_value!(i64);
 impl_try_from_number_value!(f32);
 impl_try_from_number_value!(f64);
 
+fn unix_micros_from_zoned(zdt: &Zoned) -> i64 {
+    zdt.timestamp().as_microsecond()
+}
+
+fn naive_datetime_from_micros(micros: i64) -> Result<NaiveDateTime> {
+    DateTime::<Utc>::from_timestamp_micros(micros)
+        .map(|dt| dt.naive_utc())
+        .ok_or_else(|| Error::Parsing(format!("invalid unix timestamp {micros}")))
+}
+
+pub fn zoned_to_chrono_datetime(zdt: &Zoned) -> Result<DateTime<Tz>> {
+    let tz_name = zdt.time_zone().iana_name().ok_or_else(|| {
+        ConvertError::new(
+            "DateTime",
+            "timestamp does not contain an IANA time zone".to_string(),
+        )
+    })?;
+    let tz: Tz = tz_name.parse().map_err(|_| {
+        ConvertError::new(
+            "DateTime",
+            format!("invalid time zone identifier {tz_name}"),
+        )
+    })?;
+    let micros = unix_micros_from_zoned(zdt);
+    match tz.timestamp_micros(micros) {
+        LocalResult::Single(dt) => Ok(dt),
+        LocalResult::Ambiguous(dt, _) => Ok(dt),
+        LocalResult::None => Err(Error::Parsing(format!(
+            "time {micros} not exists in timezone {tz_name}"
+        ))),
+    }
+}
+
+pub fn zoned_to_chrono_fixed_offset(zdt: &Zoned) -> Result<DateTime<FixedOffset>> {
+    let offset_seconds = zdt.offset().seconds();
+    let offset = FixedOffset::east_opt(offset_seconds)
+        .ok_or_else(|| Error::Parsing(format!("invalid offset {offset_seconds}")))?;
+    let micros = unix_micros_from_zoned(zdt);
+    let naive = naive_datetime_from_micros(micros)?;
+    Ok(DateTime::<FixedOffset>::from_naive_utc_and_offset(
+        naive, offset,
+    ))
+}
+
+fn zoned_from_naive_datetime(naive_dt: &NaiveDateTime) -> Zoned {
+    let micros = naive_dt.and_utc().timestamp_micros();
+    let timestamp = Timestamp::from_microsecond(micros)
+        .expect("NaiveDateTime out of range for Timestamp conversion");
+    timestamp.to_zoned(JiffTimeZone::UTC)
+}
+
 impl TryFrom<Value> for NaiveDateTime {
     type Error = Error;
     fn try_from(val: Value) -> Result<Self> {
         match val {
-            Value::Timestamp(dt) => Ok(dt.naive_utc()),
+            Value::Timestamp(dt) => naive_datetime_from_micros(unix_micros_from_zoned(&dt)),
             _ => Err(ConvertError::new("NaiveDateTime", format!("{val}")).into()),
         }
     }
@@ -84,7 +138,7 @@ impl TryFrom<Value> for DateTime<Tz> {
     type Error = Error;
     fn try_from(val: Value) -> Result<Self> {
         match val {
-            Value::Timestamp(dt) => Ok(dt),
+            Value::Timestamp(dt) => zoned_to_chrono_datetime(&dt),
             _ => Err(ConvertError::new("DateTime", format!("{val}")).into()),
         }
     }
@@ -426,15 +480,13 @@ impl From<&NaiveDate> for Value {
 
 impl From<NaiveDateTime> for Value {
     fn from(naive_dt: NaiveDateTime) -> Self {
-        let dt = Tz::UTC.from_local_datetime(&naive_dt).unwrap();
-        Value::Timestamp(dt)
+        Value::Timestamp(zoned_from_naive_datetime(&naive_dt))
     }
 }
 
 impl From<&NaiveDateTime> for Value {
     fn from(naive_dt: &NaiveDateTime) -> Self {
-        let dt = Tz::UTC.from_local_datetime(naive_dt).unwrap();
-        Value::Timestamp(dt)
+        Value::Timestamp(zoned_from_naive_datetime(naive_dt))
     }
 }
 

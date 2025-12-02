@@ -14,7 +14,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-version = "0.31.0"
+version = "0.32.0"
 license = "Apache-2.0"
 authors = ["Databend Authors <opensource@databend.com>"]
 categories = ["database"]
@@ -22,25 +22,24 @@ keywords = ["databend", "database", "rust"]
 repository = "https://github.com/databendlabs/bendsql"
 
 [workspace.dependencies]
-databend-client = { path = "core", version = "0.31.0" }
-databend-driver = { path = "driver", version = "0.31.0" }
-databend-driver-core = { path = "sql", version = "0.31.0" }
-databend-driver-macros = { path = "macros", version = "0.31.0" }
+databend-client = { path = "core", version = "0.32.0" }
+databend-driver = { path = "driver", version = "0.32.0" }
+databend-driver-core = { path = "sql", version = "0.32.0" }
+databend-driver-macros = { path = "macros", version = "0.32.0" }
 
 jsonb = { version = "0.5.5" }
 tokio-stream = "0.1"
 chrono = { version = "0.4.40", default-features = false, features = ["clock"] }
 chrono-tz = { version = "0.10.4" }
-arrow = { version = "55.0" }
-arrow-array = { version = "55.0" }
-arrow-buffer = { version = "55.0" }
-arrow-schema = { version = "55.0" }
-arrow-flight = { version = "55.0", features = ["flight-sql-experimental"] }
-arrow-ipc = { version = "55.0", features = ["lz4", "zstd"]}
-tonic = { version = "0.12", default-features = false, features = [
+jiff = { version = "0.2.10", features = ["tzdb-bundle-always"] }
+arrow = { version = "56" }
+arrow-array = { version = "56" }
+arrow-schema = { version = "56" }
+arrow-flight = { version = "56", features = ["flight-sql-experimental"] }
+arrow-ipc = { version = "56", features = ["lz4", "zstd"]}
+tonic = { version = "0.13", default-features = false, features = [
     "transport",
     "codegen",
-    "tls",
     "tls-webpki-roots",
     "prost",
 ] }

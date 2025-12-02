@@ -185,6 +185,16 @@ def _(context):
                 f"timestamp_tz: {row.values()[0]} {exp_bug}"
             )
 
+    if DRIVER_VERSION > (0, 31, 0) and DB_VERSION > (1, 2, 841):
+        row = context.conn.query_row("SELECT st_point(60,37)")
+        assert row.values()[0] == '{"type": "Point", "coordinates": [60,37]}', (
+            f"geography: {row.values()}"
+        )
+        row = context.conn.query_row(
+            "settings(geometry_output_format='EWKT') SELECT st_point(60,37)"
+        )
+        assert row.values()[0] == "POINT(60 37)", f"geography: {row.values()}"
+
 
 @then("Select numbers should iterate all rows")
 def _(context):

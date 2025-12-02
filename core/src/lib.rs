@@ -30,6 +30,7 @@ mod session;
 mod stage;
 
 pub mod schema;
+mod settings;
 
 pub use auth::SensitiveString;
 pub use client::APIClient;
@@ -41,4 +42,6 @@ pub use presign::presign_upload_to_stage;
 pub use presign::PresignedResponse;
 pub use response::QueryStats;
 pub use response::SchemaField;
+pub use settings::GeometryDataType;
+pub use settings::ResultFormatSettings;
 pub use stage::StageLocation;

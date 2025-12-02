@@ -12,29 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::{NumberValue, Value, DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
 use crate::_macro_internal::Error;
 use crate::cursor_ext::{
     collect_binary_number, collect_number, BufferReadStringExt, ReadBytesExt, ReadCheckPointExt,
     ReadNumberExt,
 };
 use crate::error::{ConvertError, Result};
-use arrow_buffer::i256;
-use chrono::{DateTime, Datelike, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, TimeZone};
-use chrono_tz::Tz;
+use chrono::{Datelike, NaiveDate};
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
+use ethnum::i256;
 use hex;
+use jiff::{civil::DateTime as JiffDateTime, tz::TimeZone, Zoned};
 use std::io::{BufRead, Cursor};
-
-use super::{NumberValue, Value, DAYS_FROM_CE, TIMESTAMP_TIMEZONE_FORMAT};
+use std::str::FromStr;
 
 const NULL_VALUE: &str = "NULL";
 const TRUE_VALUE: &str = "1";
 const FALSE_VALUE: &str = "0";
 
-impl TryFrom<(&DataType, Option<String>, Tz)> for Value {
+impl TryFrom<(&DataType, Option<String>, &TimeZone)> for Value {
     type Error = Error;
 
-    fn try_from((t, v, tz): (&DataType, Option<String>, Tz)) -> Result<Self> {
+    fn try_from((t, v, tz): (&DataType, Option<String>, &TimeZone)) -> Result<Self> {
         match v {
             Some(v) => Self::try_from((t, v, tz)),
             None => match t {
@@ -48,10 +48,10 @@ impl TryFrom<(&DataType, Option<String>, Tz)> for Value {
     }
 }
 
-impl TryFrom<(&DataType, String, Tz)> for Value {
+impl TryFrom<(&DataType, String, &TimeZone)> for Value {
     type Error = Error;
 
-    fn try_from((t, v, tz): (&DataType, String, Tz)) -> Result<Self> {
+    fn try_from((t, v, tz): (&DataType, String, &TimeZone)) -> Result<Self> {
         match t {
             DataType::Null => Ok(Self::Null),
             DataType::EmptyArray => Ok(Self::EmptyArray),
@@ -89,6 +89,10 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
             DataType::Number(NumberDataType::Float64) => {
                 Ok(Self::Number(NumberValue::Float64(v.parse()?)))
             }
+            DataType::Decimal(DecimalDataType::Decimal64(size)) => {
+                let d = parse_decimal(v.as_str(), *size)?;
+                Ok(Self::Number(d))
+            }
             DataType::Decimal(DecimalDataType::Decimal128(size)) => {
                 let d = parse_decimal(v.as_str(), *size)?;
                 Ok(Self::Number(d))
@@ -99,8 +103,7 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
             }
             DataType::Timestamp => parse_timestamp(v.as_str(), tz),
             DataType::TimestampTz => {
-                let t =
-                    DateTime::<FixedOffset>::parse_from_str(v.as_str(), TIMESTAMP_TIMEZONE_FORMAT)?;
+                let t = Zoned::strptime(TIMESTAMP_TIMEZONE_FORMAT, v.as_str())?;
                 Ok(Self::TimestampTz(t))
             }
             DataType::Date => Ok(Self::Date(
@@ -114,7 +117,9 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
             DataType::Interval => Ok(Self::Interval(v)),
             DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) | DataType::Vector(_) => {
                 let mut reader = Cursor::new(v.as_str());
-                let decoder = ValueDecoder { timezone: tz };
+                let decoder = ValueDecoder {
+                    timezone: tz.clone(),
+                };
                 decoder.read_field(t, &mut reader)
             }
             DataType::Nullable(inner) => match inner.as_ref() {
@@ -134,7 +139,7 @@ impl TryFrom<(&DataType, String, Tz)> for Value {
 }
 
 struct ValueDecoder {
-    pub timezone: Tz,
+    pub timezone: TimeZone,
 }
 
 impl ValueDecoder {
@@ -158,6 +163,7 @@ impl ValueDecoder {
             DataType::Number(NumberDataType::UInt64) => self.read_uint64(reader),
             DataType::Number(NumberDataType::Float32) => self.read_float32(reader),
             DataType::Number(NumberDataType::Float64) => self.read_float64(reader),
+            DataType::Decimal(DecimalDataType::Decimal64(size)) => self.read_decimal(size, reader),
             DataType::Decimal(DecimalDataType::Decimal128(size)) => self.read_decimal(size, reader),
             DataType::Decimal(DecimalDataType::Decimal256(size)) => self.read_decimal(size, reader),
             DataType::String => self.read_string(reader),
@@ -299,14 +305,14 @@ impl ValueDecoder {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
-        parse_timestamp(v, self.timezone)
+        parse_timestamp(v, &self.timezone)
     }
 
     fn read_timestamp_tz<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
         reader.read_quoted_text(&mut buf, b'\'')?;
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
-        let t = DateTime::<FixedOffset>::parse_from_str(v, TIMESTAMP_TIMEZONE_FORMAT)?;
+        let t = Zoned::strptime(TIMESTAMP_TIMEZONE_FORMAT, v)?;
         Ok(Value::TimestampTz(t))
     }
 
@@ -453,17 +459,13 @@ impl ValueDecoder {
     }
 }
 
-fn parse_timestamp(ts_string: &str, tz: Tz) -> Result<Value> {
-    let naive_dt = NaiveDateTime::parse_from_str(ts_string, "%Y-%m-%d %H:%M:%S%.6f")?;
-    let dt_with_tz = match tz.from_local_datetime(&naive_dt) {
-        LocalResult::Single(dt) => dt,
-        LocalResult::None => {
-            return Err(Error::Parsing(format!(
-                "time {ts_string} not exists in timezone {tz}"
-            )))
-        }
-        LocalResult::Ambiguous(dt1, _dt2) => dt1,
-    };
+fn parse_timestamp(ts_string: &str, tz: &TimeZone) -> Result<Value> {
+    let local = JiffDateTime::strptime(TIMESTAMP_FORMAT, ts_string)?;
+    let dt_with_tz = local.to_zoned(tz.clone()).map_err(|e| {
+        Error::Parsing(format!(
+            "time {ts_string} not exists in timezone {tz:?}: {e}"
+        ))
+    })?;
     Ok(Value::Timestamp(dt_with_tz))
 }
 
@@ -515,9 +517,11 @@ fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
         let digits = unsafe { std::str::from_utf8_unchecked(&digits[..precision]) };
 
         let result = if size.precision > 38 {
-            NumberValue::Decimal256(i256::from_string(digits).unwrap(), size)
-        } else {
+            NumberValue::Decimal256(i256::from_str(digits).unwrap(), size)
+        } else if size.precision > 19 {
             NumberValue::Decimal128(digits.parse::<i128>()?, size)
+        } else {
+            NumberValue::Decimal64(digits.parse::<i64>()?, size)
         };
 
         // If the number was negative, negate the result
@@ -525,6 +529,7 @@ fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
             match result {
                 NumberValue::Decimal256(val, size) => Ok(NumberValue::Decimal256(-val, size)),
                 NumberValue::Decimal128(val, size) => Ok(NumberValue::Decimal128(-val, size)),
+                NumberValue::Decimal64(val, size) => Ok(NumberValue::Decimal64(-val, size)),
                 _ => Ok(result),
             }
         } else {
