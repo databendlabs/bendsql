@@ -1149,7 +1149,7 @@ impl APIClient {
                 }
                 Err(err) => (
                     Error::Request(err.to_string()),
-                    err.is_timeout() || err.is_connect(),
+                    err.is_timeout() || err.is_connect() || err.is_request(),
                 ),
             };
             if !retry {
@@ -1161,7 +1161,7 @@ impl APIClient {
                         retries = 0;
                     } else if retries == 2 {
                         return Err(err.with_context(&format!(
-                            "{} {} after 3 reties",
+                            "{} {} after 3 retries",
                             request.method(),
                             request.url()
                         )));
@@ -1183,6 +1183,7 @@ impl APIClient {
                     );
                 }
             }
+            warn!("will retry after 10 seconds");
             sleep(jitter(Duration::from_secs(10))).await;
         }
     }
