@@ -27,7 +27,7 @@ databend-driver = { path = "driver", version = "0.32.0" }
 databend-driver-core = { path = "sql", version = "0.32.0" }
 databend-driver-macros = { path = "macros", version = "0.32.0" }
 
-jsonb = { version = "0.5.3" }
+jsonb = { version = "0.5.5" }
 tokio-stream = "0.1"
 chrono = { version = "0.4.40", default-features = false, features = ["clock"] }
 chrono-tz = { version = "0.10.4" }
