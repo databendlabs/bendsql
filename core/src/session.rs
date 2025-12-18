@@ -40,18 +40,16 @@ pub struct SessionState {
 }
 
 impl SessionState {
-    pub fn with_settings(mut self, settings: Option<BTreeMap<String, String>>) -> Self {
-        self.settings = settings;
-        self
+    pub fn set(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        let settings = self.settings.get_or_insert_with(BTreeMap::new);
+        settings.insert(key.into(), value.into());
     }
 
-    pub fn with_database(mut self, database: Option<String>) -> Self {
-        self.database = database;
-        self
+    pub fn set_database(&mut self, database: impl Into<String>) {
+        self.database = Some(database.into());
     }
 
-    pub fn with_role(mut self, role: Option<String>) -> Self {
-        self.role = role;
-        self
+    pub fn set_role(&mut self, role: impl Into<String>) {
+        self.role = Some(role.into());
     }
 }

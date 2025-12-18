@@ -138,6 +138,26 @@ impl IConnection for RestAPIConnection {
         self.client.last_query_id()
     }
 
+    fn set_warehouse(&self, warehouse: &str) -> Result<()> {
+        self.client.set_warehouse(warehouse.to_string());
+        Ok(())
+    }
+
+    fn set_database(&self, database: &str) -> Result<()> {
+        self.client.set_database(database.to_string());
+        Ok(())
+    }
+
+    fn set_role(&self, role: &str) -> Result<()> {
+        self.client.set_role(role.to_string());
+        Ok(())
+    }
+
+    fn set_session(&self, key: &str, value: &str) -> Result<()> {
+        self.client.set_session(key.to_string(), value.to_string());
+        Ok(())
+    }
+
     async fn close(&self) -> Result<()> {
         self.client.close().await;
         Ok(())

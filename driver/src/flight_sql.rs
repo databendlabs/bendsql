@@ -66,6 +66,30 @@ impl IConnection for FlightSQLConnection {
         None
     }
 
+    fn set_warehouse(&self, _warehouse: &str) -> Result<()> {
+        Err(Error::Protocol(
+            "set_warehouse unavailable for FlightSQL".to_string(),
+        ))
+    }
+
+    fn set_database(&self, _database: &str) -> Result<()> {
+        Err(Error::Protocol(
+            "set_database unavailable for FlightSQL".to_string(),
+        ))
+    }
+
+    fn set_role(&self, _role: &str) -> Result<()> {
+        Err(Error::Protocol(
+            "set_role unavailable for FlightSQL".to_string(),
+        ))
+    }
+
+    fn set_session(&self, _key: &str, _value: &str) -> Result<()> {
+        Err(Error::Protocol(
+            "set_session unavailable for FlightSQL".to_string(),
+        ))
+    }
+
     async fn exec(&self, sql: &str) -> Result<i64> {
         self.handshake().await?;
         let mut client = self.client.lock().await;

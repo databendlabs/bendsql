@@ -177,13 +177,11 @@ impl APIClient {
             let password = percent_decode_str(password).decode_utf8()?;
             client.auth = Arc::new(BasicAuth::new(u.username(), password));
         }
-        let database = match u.path().trim_start_matches('/') {
-            "" => None,
-            s => Some(s.to_string()),
-        };
-        let mut role = None;
+
+        let mut session_state = SessionState::default();
+        session_state.set_database(u.path().trim_start_matches('/'));
+
         let mut scheme = "https";
-        let mut session_settings = BTreeMap::new();
         for (k, v) in u.query_pairs() {
             match k.as_ref() {
                 "wait_time_secs" => {
@@ -222,7 +220,7 @@ impl APIClient {
                 "warehouse" => {
                     client.warehouse = Mutex::new(Some(v.to_string()));
                 }
-                "role" => role = Some(v.to_string()),
+                "role" => session_state.set_role(v),
                 "sslmode" => match v.as_ref() {
                     "disable" => scheme = "http",
                     "require" | "enable" => scheme = "https",
@@ -273,7 +271,7 @@ impl APIClient {
                     }
                 }
                 _ => {
-                    session_settings.insert(k.to_string(), v.to_string());
+                    session_state.set(k, v);
                 }
             }
         }
@@ -286,14 +284,8 @@ impl APIClient {
             },
         };
         client.scheme = scheme.to_string();
-
         client.endpoint = Url::parse(&format!("{}://{}:{}", scheme, client.host, client.port))?;
-        client.session_state = Mutex::new(
-            SessionState::default()
-                .with_settings(Some(session_settings))
-                .with_role(role)
-                .with_database(database),
-        );
+        client.session_state = Mutex::new(session_state);
 
         Ok(client)
     }
@@ -370,6 +362,26 @@ impl APIClient {
     pub fn current_database(&self) -> Option<String> {
         let guard = self.session_state.lock();
         guard.database.clone()
+    }
+
+    pub fn set_warehouse(&self, warehouse: impl Into<String>) {
+        let mut guard = self.warehouse.lock();
+        *guard = Some(warehouse.into());
+    }
+
+    pub fn set_database(&self, database: impl Into<String>) {
+        let mut guard = self.session_state.lock();
+        guard.set_database(database);
+    }
+
+    pub fn set_role(&self, role: impl Into<String>) {
+        let mut guard = self.session_state.lock();
+        guard.set_role(role);
+    }
+
+    pub fn set_session(&self, key: impl Into<String>, value: impl Into<String>) {
+        let mut guard = self.session_state.lock();
+        guard.set(key, value);
     }
 
     pub async fn current_role(&self) -> Option<String> {

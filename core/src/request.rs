@@ -83,10 +83,10 @@ mod test {
 
     #[test]
     fn build_request() -> Result<()> {
+        let mut session = SessionState::default();
+        session.set_database("default");
         let req = QueryRequest::new("select 1")
-            .with_session(Some(
-                SessionState::default().with_database(Some("default".to_string())),
-            ))
+            .with_session(Some(session))
             .with_pagination(Some(PaginationConfig {
                 wait_time_secs: Some(1),
                 max_rows_in_buffer: Some(1),

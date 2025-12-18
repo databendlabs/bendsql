@@ -143,6 +143,14 @@ pub trait IConnection: Send + Sync {
         _method: LoadMethod,
     ) -> Result<ServerStats>;
 
+    fn set_warehouse(&self, warehouse: &str) -> Result<()>;
+
+    fn set_database(&self, database: &str) -> Result<()>;
+
+    fn set_role(&self, role: &str) -> Result<()>;
+
+    fn set_session(&self, key: &str, value: &str) -> Result<()>;
+
     // PUT file://<path_to_file>/<filename> internalStage|externalStage
     async fn put_files(&self, local_file: &str, stage: &str) -> Result<RowStatsIterator> {
         let mut total_count: usize = 0;

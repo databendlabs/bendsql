@@ -223,6 +223,22 @@ impl Connection {
         self.inner.stream_load(sql, data, method).await
     }
 
+    pub fn set_warehouse(&self, warehouse: &str) -> Result<()> {
+        self.inner.set_warehouse(warehouse)
+    }
+
+    pub fn set_database(&self, database: &str) -> Result<()> {
+        self.inner.set_database(database)
+    }
+
+    pub fn set_role(&self, role: &str) -> Result<()> {
+        self.inner.set_role(role)
+    }
+
+    pub fn set_session(&self, key: &str, value: &str) -> Result<()> {
+        self.inner.set_session(key, value)
+    }
+
     // PUT file://<path_to_file>/<filename> internalStage|externalStage
     pub async fn put_files(&self, local_file: &str, stage: &str) -> Result<RowStatsIterator> {
         self.inner.put_files(local_file, stage).await
