@@ -1,7 +1,7 @@
 {
   "name": "@databend-driver/lib-win32-x64-msvc",
   "repository": "https://github.com/databendlabs/bendsql.git",
-  "version": "0.32.0",
+  "version": "0.33.0",
   "os": [
     "win32"
   ],
