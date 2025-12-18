@@ -18,7 +18,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use bytes::Buf;
-use clap::{command, Parser};
+use clap::Parser;
 
 #[derive(Debug, Clone, Parser, PartialEq)]
 #[command(name = "ttc")]
