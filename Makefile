@@ -1,4 +1,4 @@
-.PHONY: check build test integration
+.PHONY: check build test integration bump-major bump-minor bump-patch
 
 default: build
 
@@ -60,3 +60,12 @@ integration-bindings-python:
 
 integration-bindings-nodejs:
 	make -C tests test-bindings-nodejs
+
+bump-major:
+	./scripts/bump_version.py major
+
+bump-minor:
+	./scripts/bump_version.py minor
+
+bump-patch:
+	./scripts/bump_version.py patch
