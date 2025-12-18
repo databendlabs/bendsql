@@ -179,7 +179,10 @@ impl APIClient {
         }
 
         let mut session_state = SessionState::default();
-        session_state.set_database(u.path().trim_start_matches('/'));
+        let database = u.path().trim_start_matches('/');
+        if !database.is_empty() {
+            session_state.set_database(database);
+        }
 
         let mut scheme = "https";
         for (k, v) in u.query_pairs() {
