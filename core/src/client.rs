@@ -179,6 +179,7 @@ impl APIClient {
         }
 
         let mut session_state = SessionState::default();
+
         let database = u.path().trim_start_matches('/');
         if !database.is_empty() {
             session_state.set_database(database);
