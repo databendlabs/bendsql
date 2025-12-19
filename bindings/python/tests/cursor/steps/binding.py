@@ -50,8 +50,8 @@ def _(context):
         "TEST_DATABEND_DSN",
         "databend://root:root@localhost:8000/?sslmode=disable",
     )
-    if os.getenv("BODY_FORMAT") == "arrow":
-        dsn += "&body_format=arrow"
+    if os.getenv("QUERY_RESULT_FORMAT") == "arrow":
+        dsn += "&query_result_format=arrow"
     client = databend_driver.BlockingDatabendClient(dsn)
     context.client = client
     context.cursor = client.cursor()

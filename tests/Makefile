@@ -25,7 +25,7 @@ test-driver: up
 test-bendsql: up
 	cd .. && ./cli/test.sh http
 	cd .. && ./cli/test.sh flight
-	BODY_FORMAT=arrow cd .. && ./cli/test.sh http
+	QUERY_RESULT_FORMAT=arrow cd .. && ./cli/test.sh http
 
 test-bindings-python: up
 	cd ../bindings/python && behave tests/asyncio

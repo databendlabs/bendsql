@@ -174,17 +174,17 @@ jobs:
         working-directory: bindings/python
         run: behave tests/asyncio
         env:
-          BODY_FORMAT: ${{ matrix.body }}
+          QUERY_RESULT_FORMAT: ${{ matrix.body }}
       - name: Test Blocking
         working-directory: bindings/python
         run: behave tests/blocking
         env:
-          BODY_FORMAT: ${{ matrix.body }}
+          QUERY_RESULT_FORMAT: ${{ matrix.body }}
       - name: Test Cursor
         working-directory: bindings/python
         run: behave tests/cursor
         env:
-          BODY_FORMAT: ${{ matrix.body }}
+          QUERY_RESULT_FORMAT: ${{ matrix.body }}
 
   compat:
     name: Compat Test

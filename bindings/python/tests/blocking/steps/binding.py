@@ -50,8 +50,8 @@ def _(context):
         "TEST_DATABEND_DSN",
         "databend://root:root@localhost:8000/?sslmode=disable",
     )
-    if os.getenv("BODY_FORMAT") == "arrow":
-        dsn += "&body_format=arrow"
+    if os.getenv("QUERY_RESULT_FORMAT") == "arrow":
+        dsn += "&query_result_format=arrow"
     client = databend_driver.BlockingDatabendClient(dsn)
     context.conn = client.get_conn()
     context.client = client
@@ -176,8 +176,11 @@ def _(context):
         )
         exp = datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=tz_expected)
         exp_bug = datetime(2024, 4, 16, 18, 34, 56, 789000, tzinfo=tz_expected)
-        if (DB_VERSION >= (1, 2, 840) and not os.getenv("BODY_FORMAT") == "arrow") or (
-            DB_VERSION >= (1, 2, 844) and os.getenv("BODY_FORMAT") == "arrow"
+        if (
+            DB_VERSION >= (1, 2, 840)
+            and not os.getenv("QUERY_RESULT_FORMAT") == "arrow"
+        ) or (
+            DB_VERSION >= (1, 2, 844) and os.getenv("QUERY_RESULT_FORMAT") == "arrow"
         ):
             assert row.values()[0] == exp, f"timestamp_tz: {row.values()[0]} {exp}"
         else:
