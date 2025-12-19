@@ -18,16 +18,16 @@ import os
 
 def generate_params1():
     for db_version in ["1.2.803", "1.2.791"]:
-        for body_format in ["arrow", "json"]:
+        for query_result_format in ["arrow", "json"]:
             v = tuple(map(int, db_version.split(".")))
-            if body_format == "arrow" and v < (1, 2, 836):
+            if query_result_format == "arrow" and v < (1, 2, 836):
                 continue
-            yield nox.param(db_version, body_format)
+            yield nox.param(db_version, query_result_format)
 
 
 @nox.session
-@nox.parametrize(["db_version", "body_format"], generate_params1())
-def new_driver_with_old_servers(session, db_version, body_format):
+@nox.parametrize(["db_version", "query_result_format"], generate_params1())
+def new_driver_with_old_servers(session, db_version, query_result_format):
     query_version = f"v{db_version}-nightly"
     session.install("behave")
     # cd bindings/python
@@ -42,7 +42,7 @@ def new_driver_with_old_servers(session, db_version, body_format):
             "DATABEND_QUERY_VERSION": query_version,
             "DATABEND_META_VERSION": query_version,
             "DB_VERSION": db_version,
-            "BODY_FORMAT": body_format,
+            "QUERY_RESULT_FORMAT": query_result_format,
         }
         session.run("make", "test-bindings-python", env=env)
         session.run("make", "down")
@@ -50,19 +50,22 @@ def new_driver_with_old_servers(session, db_version, body_format):
 
 def generate_params2():
     for driver_version in ["0.28.2", "0.28.1"]:
-        for body_format in ["arrow", "json"]:
+        for query_result_format in ["arrow", "json"]:
             v = tuple(map(int, driver_version.split(".")))
-            if body_format == "arrow" and v <= (0, 30, 3):
+            if query_result_format == "arrow" and v <= (0, 30, 3):
                 continue
-            yield nox.param(driver_version, body_format)
+            yield nox.param(driver_version, query_result_format)
 
 
 @nox.session
-@nox.parametrize(["driver_version", "body_format"], generate_params2())
-def new_test_with_old_drivers(session, driver_version, body_format):
+@nox.parametrize(["driver_version", "query_result_format"], generate_params2())
+def new_test_with_old_drivers(session, driver_version, query_result_format):
     session.install("behave")
     session.install(f"databend-driver=={driver_version}")
     with session.chdir(".."):
-        env = {"DRIVER_VERSION": driver_version, "BODY_FORMAT": body_format}
+        env = {
+            "DRIVER_VERSION": driver_version,
+            "QUERY_RESULT_FORMAT": query_result_format,
+        }
         session.run("make", "test-bindings-python", env=env)
         session.run("make", "down")

@@ -106,7 +106,7 @@ pub struct APIClient {
     route_hint: RouteHintGenerator,
 
     disable_login: bool,
-    body_format: String,
+    query_result_format: String,
     disable_session_token: bool,
     session_token_info: Option<Arc<Mutex<(SessionTokenInfo, Instant)>>>,
 
@@ -263,13 +263,13 @@ impl APIClient {
                         }
                     }
                 }
-                "body_format" => {
+                "body_format" | "query_result_format" => {
                     let v = v.to_string().to_lowercase();
                     match v.as_str() {
-                        "json" | "arrow" => client.body_format = v.to_string(),
+                        "json" | "arrow" => client.query_result_format = v.to_string(),
                         _ => {
                             return Err(Error::BadArgument(format!(
-                                "Invalid value for body_format: {v}"
+                                "Invalid value for query_result_format: {v}"
                             )))
                         }
                     }
@@ -508,7 +508,7 @@ impl APIClient {
         // headers
         let query_id = self.gen_query_id();
         let mut headers = self.make_headers(Some(&query_id))?;
-        if self.capability.arrow_data && self.body_format == "arrow" && !force_json_body {
+        if self.capability.arrow_data && self.query_result_format == "arrow" && !force_json_body {
             debug!("accept arrow data");
             headers.insert(ACCEPT, HeaderValue::from_static(CONTENT_TYPE_ARROW_OR_JSON));
         }
@@ -604,7 +604,7 @@ impl APIClient {
         info!("query page: {next_uri}");
         let endpoint = self.endpoint.join(next_uri)?;
         let mut headers = self.make_headers(Some(query_id))?;
-        if self.capability.arrow_data && self.body_format == "arrow" {
+        if self.capability.arrow_data && self.query_result_format == "arrow" {
             headers.insert(ACCEPT, HeaderValue::from_static(CONTENT_TYPE_ARROW_OR_JSON));
         }
         let mut builder = self.cli.get(endpoint.clone());
@@ -1294,7 +1294,7 @@ impl Default for APIClient {
             last_node_id: Default::default(),
             disable_session_token: true,
             disable_login: false,
-            body_format: "json".to_string(),
+            query_result_format: "json".to_string(),
             session_token_info: None,
             closed: AtomicBool::new(false),
             last_query_id: Default::default(),
