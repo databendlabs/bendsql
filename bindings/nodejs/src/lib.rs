@@ -24,8 +24,6 @@ use std::sync::Arc;
 use std::{collections::HashMap, path::Path};
 use tokio_stream::StreamExt;
 
-const TIMESTAMP_TIMEZONE_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.6f %z";
-
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     version.to_string()
@@ -326,8 +324,13 @@ impl ToNapiValue for Value<'_> {
                 Ok(js_date)
             }
             databend_driver::Value::TimestampTz(dt) => {
-                let formatted = dt.strftime(TIMESTAMP_TIMEZONE_FORMAT);
-                String::to_napi_value(env, formatted.to_string())
+                let mut js_date = std::ptr::null_mut();
+                let millis = dt.timestamp().as_millisecond() as f64;
+                check_status!(
+                    unsafe { sys::napi_create_date(env, millis, &mut js_date) },
+                    "Failed to convert jiff timestamp into napi value",
+                )?;
+                Ok(js_date)
             }
             databend_driver::Value::Date(_) => {
                 let inner = val.inner.clone();
