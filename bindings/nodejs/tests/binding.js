@@ -52,7 +52,10 @@ Given("A new Databend Driver Client", async function () {
     assert.fail("No connection returned");
   }
   this.conn = conn;
-  conn.exec("set timezone='Asia/Shanghai'");
+  // Initially no query ID
+  assert.equal(this.conn.lastQueryId(), null);
+
+  await conn.exec("set timezone='Asia/Shanghai'");
 });
 
 Then("Select string {string} should be equal to {string}", async function (input, output) {
@@ -142,7 +145,7 @@ Then("Select types should be expected native types", async function () {
   // TIMESTAMP
   {
     const row = await this.conn.queryRow(
-      "settings(timezone='Asia/Shanghai') SELECT to_datetime('2020-01-01 12:34:56.789'), to_datetime('2020-01-02 12:34:56.789')",
+      "SELECT to_datetime('2020-01-01 12:34:56.789'), to_datetime('2020-01-02 12:34:56.789')",
     );
     assert.deepEqual(row.values(), [new Date("2020-01-01T04:34:56.789Z"), new Date("2020-01-02T04:34:56.789Z")]);
   }
@@ -396,9 +399,6 @@ Then("Temp table is cleaned up when conn is dropped", async function () {
 });
 
 Then("last_query_id should return query ID after execution", async function () {
-  // Initially no query ID
-  assert.equal(this.conn.lastQueryId(), null);
-
   // Execute a query
   await this.conn.queryRow("SELECT 1");
 
