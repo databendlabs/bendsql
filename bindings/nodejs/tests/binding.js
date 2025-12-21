@@ -52,6 +52,7 @@ Given("A new Databend Driver Client", async function () {
     assert.fail("No connection returned");
   }
   this.conn = conn;
+  conn.exec("set timezone='Asia/Shanghai'");
 });
 
 Then("Select string {string} should be equal to {string}", async function (input, output) {
@@ -143,7 +144,7 @@ Then("Select types should be expected native types", async function () {
     const row = await this.conn.queryRow(
       "SELECT to_datetime('2020-01-01 12:34:56.789'), to_datetime('2020-01-02 12:34:56.789')",
     );
-    assert.deepEqual(row.values(), [new Date("2020-01-01T12:34:56.789Z"), new Date("2020-01-02T12:34:56.789Z")]);
+    assert.deepEqual(row.values(), [new Date("2020-01-01T04:34:56.789Z"), new Date("2020-01-02T04:34:56.789Z")]);
   }
 
   // VARCHAR
@@ -167,7 +168,7 @@ Then("Select types should be expected native types", async function () {
   // TUPLE
   {
     const row = await this.conn.queryRow(`SELECT (10, '20', to_datetime('2024-04-16 12:34:56.789'))`);
-    assert.deepEqual(row.values(), [[10, "20", new Date("2024-04-16T12:34:56.789Z")]]);
+    assert.deepEqual(row.values(), [[10, "20", new Date("2024-04-16T04:34:56.789Z")]]);
   }
 
   // MAP
@@ -220,7 +221,7 @@ Then("Select types should be expected native types", async function () {
   // TimestampTz
   if (!(DRIVER_VERSION > [0, 30, 3] && DB_VERSION >= [1, 2, 836])) {
     const row = await this.conn.queryRow(`SELECT to_datetime_tz('2024-04-16 12:34:56.789 +0800'))`);
-    assert.deepEqual(row.values(), ["2024-04-16T12:34:56.789 +0800"]);
+    assert.deepEqual(row.values(), [new Date("2024-04-16 04:34:56.789Z")]);
   }
 });
 
@@ -310,9 +311,9 @@ Then("Insert and Select should be equal", async function () {
     ret.push(row.values());
   }
   const expected = [
-    [-1, 1, 1.0, "'", null, new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
-    [-2, 2, 2.0, '"', "", new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
-    [-3, 3, 3.0, "\\", "NULL", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
+    [-1, 1, 1.0, "'", null, new Date("2011-03-06"), new Date("2011-03-05T22:20:00Z")],
+    [-2, 2, 2.0, '"', "", new Date("2012-05-31"), new Date("2012-05-31T03:20:00Z")],
+    [-3, 3, 3.0, "\\", "NULL", new Date("2016-04-04"), new Date("2016-04-04T03:30:00Z")],
   ];
   assert.deepEqual(ret, expected);
 });
@@ -353,9 +354,9 @@ Then("Load file with Stage and Select should be equal", async function () {
     ret.push(row.values());
   }
   const expected = [
-    [-1, 1, 1.0, "'", null, new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
-    [-2, 2, 2.0, '"', null, new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
-    [-3, 3, 3.0, "\\", "NULL", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
+    [-1, 1, 1.0, "'", null, new Date("2011-03-06"), new Date("2011-03-05T22:20:00Z")],
+    [-2, 2, 2.0, '"', null, new Date("2012-05-31"), new Date("2012-05-31T03:20:00Z")],
+    [-3, 3, 3.0, "\\", "NULL", new Date("2016-04-04"), new Date("2016-04-04T03:30:00Z")],
   ];
   assert.deepEqual(ret, expected);
 });
@@ -374,9 +375,9 @@ Then("Load file with Streaming and Select should be equal", async function () {
     ret.push(row.values());
   }
   const expected = [
-    [-1, 1, 1.0, "'", null, new Date("2011-03-06"), new Date("2011-03-06T06:20:00Z")],
-    [-2, 2, 2.0, '"', null, new Date("2012-05-31"), new Date("2012-05-31T11:20:00Z")],
-    [-3, 3, 3.0, "\\", "NULL", new Date("2016-04-04"), new Date("2016-04-04T11:30:00Z")],
+    [-1, 1, 1.0, "'", null, new Date("2011-03-06"), new Date("2011-03-05T22:20:00Z")],
+    [-2, 2, 2.0, '"', null, new Date("2012-05-31"), new Date("2012-05-31T03:20:00Z")],
+    [-3, 3, 3.0, "\\", "NULL", new Date("2016-04-04"), new Date("2016-04-04T03:30:00Z")],
   ];
   assert.deepEqual(ret, expected);
 });

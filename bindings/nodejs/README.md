@@ -73,20 +73,21 @@ await conn.close();
 
 ### General Data Types
 
-| Databend    | Node.js   |
-| ----------- | --------- |
-| `BOOLEAN`   | `Boolean` |
-| `TINYINT`   | `Number`  |
-| `SMALLINT`  | `Number`  |
-| `INT`       | `Number`  |
-| `BIGINT`    | `BigInt`  |
-| `FLOAT`     | `Number`  |
-| `DOUBLE`    | `Number`  |
-| `DECIMAL`   | `String`  |
-| `DATE`      | `Date`    |
-| `TIMESTAMP` | `Date`    |
-| `VARCHAR`   | `String`  |
-| `BINARY`    | `Buffer`  |
+| Databend       | Node.js   |
+| -------------- | --------- |
+| `BOOLEAN`      | `Boolean` |
+| `TINYINT`      | `Number`  |
+| `SMALLINT`     | `Number`  |
+| `INT`          | `Number`  |
+| `BIGINT`       | `BigInt`  |
+| `FLOAT`        | `Number`  |
+| `DOUBLE`       | `Number`  |
+| `DECIMAL`      | `String`  |
+| `DATE`         | `Date`    |
+| `TIMESTAMP`    | `Date`    |
+| `TIMESTAMP_TZ` | `Date`    |
+| `VARCHAR`      | `String`  |
+| `BINARY`       | `Buffer`  |
 
 ### Semi-Structured Data Types
 
