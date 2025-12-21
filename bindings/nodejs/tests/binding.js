@@ -142,7 +142,7 @@ Then("Select types should be expected native types", async function () {
   // TIMESTAMP
   {
     const row = await this.conn.queryRow(
-      "SELECT to_datetime('2020-01-01 12:34:56.789'), to_datetime('2020-01-02 12:34:56.789')",
+      "settings(timezone='Asia/Shanghai') SELECT to_datetime('2020-01-01 12:34:56.789'), to_datetime('2020-01-02 12:34:56.789')",
     );
     assert.deepEqual(row.values(), [new Date("2020-01-01T04:34:56.789Z"), new Date("2020-01-02T04:34:56.789Z")]);
   }
