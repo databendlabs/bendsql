@@ -64,16 +64,21 @@ impl Value {
             }
             Value::Number(n) => write!(f, "{n}"),
             Value::Binary(s) => write!(f, "{}", hex::encode_upper(s)),
-            Value::String(s)
-            | Value::Bitmap(s)
-            | Value::Variant(s)
-            | Value::Interval(s)
-            | Value::Geometry(s)
-            | Value::Geography(s) => {
+            Value::String(s) | Value::Bitmap(s) | Value::Interval(s) => {
                 if raw {
                     write!(f, "{s}")
                 } else {
-                    write!(f, "'{s}'")
+                    write!(f, "\"{s}\"")
+                }
+            }
+            Value::Variant(s) => {
+                write!(f, "{s}")
+            }
+            Value::Geometry(s) | Value::Geography(s) => {
+                if raw || s.starts_with('{') {
+                    write!(f, "{s}")
+                } else {
+                    write!(f, "\"{s}\"")
                 }
             }
             Value::Timestamp(dt) => {
@@ -81,7 +86,7 @@ impl Value {
                 if raw {
                     write!(f, "{formatted}")
                 } else {
-                    write!(f, "'{formatted}'")
+                    write!(f, "\"{formatted}\"")
                 }
             }
             Value::TimestampTz(dt) => {
@@ -89,7 +94,7 @@ impl Value {
                 if raw {
                     write!(f, "{formatted}")
                 } else {
-                    write!(f, "'{formatted}'")
+                    write!(f, "\"{formatted}\"")
                 }
             }
             Value::Date(i) => {
@@ -98,7 +103,7 @@ impl Value {
                 if raw {
                     write!(f, "{d}")
                 } else {
-                    write!(f, "'{d}'")
+                    write!(f, "\"{d}\"")
                 }
             }
             Value::Array(vals) => {

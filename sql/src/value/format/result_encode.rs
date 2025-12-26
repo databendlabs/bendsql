@@ -81,13 +81,18 @@ impl Value {
                 }
             },
             Value::Binary(s) => bytes.extend_from_slice(hex::encode_upper(s).as_bytes()),
-            Value::String(s)
-            | Value::Bitmap(s)
-            | Value::Variant(s)
-            | Value::Interval(s)
-            | Value::Geometry(s)
-            | Value::Geography(s) => {
+            Value::String(s) | Value::Bitmap(s) | Value::Interval(s) => {
                 Self::write_string(bytes, s, raw);
+            }
+            Value::Variant(s) => {
+                bytes.extend_from_slice(s.as_bytes());
+            }
+            Value::Geometry(s) | Value::Geography(s) => {
+                if s.starts_with('{') {
+                    bytes.extend_from_slice(s.as_bytes());
+                } else {
+                    Self::write_string(bytes, s, raw);
+                }
             }
             Value::Timestamp(dt) => {
                 let s = dt.strftime(TIMESTAMP_FORMAT).to_string();
@@ -150,9 +155,9 @@ impl Value {
 
     fn write_string(bytes: &mut Vec<u8>, string: &String, raw: bool) {
         if !raw {
-            bytes.push(b'\'');
-            write_quoted_string_min_escape(string.as_bytes(), bytes, b'\'');
-            bytes.push(b'\'');
+            bytes.push(b'"');
+            write_quoted_string_min_escape(string.as_bytes(), bytes, b'"');
+            bytes.push(b'"');
         } else {
             bytes.extend_from_slice(string.as_bytes());
         }
@@ -202,7 +207,7 @@ fn write_quoted_string_min_escape(bytes: &[u8], buf: &mut Vec<u8>, quote: u8) {
             if start < i {
                 buf.extend_from_slice(&bytes[start..i]);
             }
-            buf.push(quote);
+            buf.push(b'\\');
             buf.push(quote);
             start = i + 1;
         }
