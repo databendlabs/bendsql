@@ -24,6 +24,8 @@ use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberData
 use ethnum::i256;
 use hex;
 use jiff::{civil::DateTime as JiffDateTime, tz::TimeZone, Zoned};
+use serde::Deserialize;
+use serde_json::{value::RawValue, Deserializer};
 use std::io::{BufRead, Cursor};
 use std::str::FromStr;
 
@@ -281,7 +283,9 @@ impl ValueDecoder {
 
     fn read_string<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
+        if reader.read_quoted_text(&mut buf, b'"').is_err() {
+            reader.read_quoted_text(&mut buf, b'\'')?;
+        }
         Ok(Value::String(unsafe { String::from_utf8_unchecked(buf) }))
     }
 
@@ -295,7 +299,9 @@ impl ValueDecoder {
 
     fn read_date<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
+        if reader.read_quoted_text(&mut buf, b'"').is_err() {
+            reader.read_quoted_text(&mut buf, b'\'')?;
+        }
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
         let days = NaiveDate::parse_from_str(v, "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE;
         Ok(Value::Date(days))
@@ -303,14 +309,18 @@ impl ValueDecoder {
 
     fn read_timestamp<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
+        if reader.read_quoted_text(&mut buf, b'"').is_err() {
+            reader.read_quoted_text(&mut buf, b'\'')?;
+        }
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
         parse_timestamp(v, &self.timezone)
     }
 
     fn read_timestamp_tz<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
+        if reader.read_quoted_text(&mut buf, b'"').is_err() {
+            reader.read_quoted_text(&mut buf, b'\'')?;
+        }
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
         let t = Zoned::strptime(TIMESTAMP_TIMEZONE_FORMAT, v)?;
         Ok(Value::TimestampTz(t))
@@ -318,31 +328,49 @@ impl ValueDecoder {
 
     fn read_interval<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
+        if reader.read_quoted_text(&mut buf, b'"').is_err() {
+            reader.read_quoted_text(&mut buf, b'\'')?;
+        }
         Ok(Value::Interval(unsafe { String::from_utf8_unchecked(buf) }))
     }
 
     fn read_bitmap<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
+        if reader.read_quoted_text(&mut buf, b'"').is_err() {
+            reader.read_quoted_text(&mut buf, b'\'')?;
+        }
         Ok(Value::Bitmap(unsafe { String::from_utf8_unchecked(buf) }))
     }
 
     fn read_variant<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
-        let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
-        Ok(Value::Variant(unsafe { String::from_utf8_unchecked(buf) }))
+        if let Ok(val) = self.read_json(reader) {
+            Ok(Value::Variant(val))
+        } else {
+            let mut buf = Vec::new();
+            reader.read_quoted_text(&mut buf, b'\'')?;
+            Ok(Value::Variant(unsafe { String::from_utf8_unchecked(buf) }))
+        }
     }
 
     fn read_geometry<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
+        if reader.read_quoted_text(&mut buf, b'"').is_err() {
+            if let Ok(val) = self.read_json(reader) {
+                return Ok(Value::Variant(val));
+            }
+            reader.read_quoted_text(&mut buf, b'\'')?;
+        }
         Ok(Value::Geometry(unsafe { String::from_utf8_unchecked(buf) }))
     }
 
     fn read_geography<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
-        reader.read_quoted_text(&mut buf, b'\'')?;
+        if reader.read_quoted_text(&mut buf, b'"').is_err() {
+            if let Ok(val) = self.read_json(reader) {
+                return Ok(Value::Variant(val));
+            }
+            reader.read_quoted_text(&mut buf, b'\'')?;
+        }
         Ok(Value::Geography(unsafe {
             String::from_utf8_unchecked(buf)
         }))
@@ -456,6 +484,15 @@ impl ValueDecoder {
         }
         reader.must_ignore_byte(b')')?;
         Ok(Value::Tuple(vals))
+    }
+
+    fn read_json<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<String> {
+        let start = reader.position() as usize;
+        let data = reader.get_ref().as_ref();
+        let mut deserializer = Deserializer::from_slice(&data[start..]);
+        let raw: Box<RawValue> = Box::<RawValue>::deserialize(&mut deserializer)?;
+        reader.set_position((start + raw.get().len()) as u64);
+        Ok(raw.to_string())
     }
 }
 
