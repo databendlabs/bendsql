@@ -274,7 +274,7 @@ impl FormatDisplay<'_> {
         };
         let mut wtr = csv::WriterBuilder::new()
             .delimiter(b'\t')
-            .quote(b'\'')
+            .quote(b'"')
             .quote_style(quote_style)
             .from_writer(std::io::stdout());
         while let Some(line) = self.data.next().await {
