@@ -194,7 +194,7 @@ impl TryFrom<(RecordBatch, ResultFormatSettings)> for Rows {
             for j in 0..batch_schema.fields().len() {
                 let v = batch.column(j);
                 let field = batch_schema.field(j);
-                let value = Value::try_from((field, v, i, false, &settings))?;
+                let value = Value::try_from((field, v, i, &settings))?;
                 values.push(value);
             }
             rows.push(Row::new(schema.clone(), values));

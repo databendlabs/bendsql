@@ -79,17 +79,15 @@ impl
         &ArrowField,
         &Arc<dyn ArrowArray>,
         usize,
-        bool,
         &ResultFormatSettings,
     )> for Value
 {
     type Error = Error;
     fn try_from(
-        (field, array, seq, in_nested, settings): (
+        (field, array, seq, settings): (
             &ArrowField,
             &Arc<dyn ArrowArray>,
             usize,
-            bool,
             &ResultFormatSettings,
         ),
     ) -> std::result::Result<Self, Self::Error> {
@@ -346,36 +344,15 @@ impl
                 }
             }
             ArrowDataType::Utf8 => match array.as_any().downcast_ref::<StringArray>() {
-                Some(array) => {
-                    let val = if in_nested {
-                        array.value(seq).replace('"', "\\\"").to_string()
-                    } else {
-                        array.value(seq).to_string()
-                    };
-                    Ok(Value::String(val))
-                }
+                Some(array) => Ok(Value::String(array.value(seq).to_string())),
                 None => Err(ConvertError::new("string", format!("{array:?}")).into()),
             },
             ArrowDataType::LargeUtf8 => match array.as_any().downcast_ref::<LargeStringArray>() {
-                Some(array) => {
-                    let val = if in_nested {
-                        array.value(seq).replace('"', "\\\"").to_string()
-                    } else {
-                        array.value(seq).to_string()
-                    };
-                    Ok(Value::String(val))
-                }
+                Some(array) => Ok(Value::String(array.value(seq).to_string())),
                 None => Err(ConvertError::new("large string", format!("{array:?}")).into()),
             },
             ArrowDataType::Utf8View => match array.as_any().downcast_ref::<StringViewArray>() {
-                Some(array) => {
-                    let val = if in_nested {
-                        array.value(seq).replace('"', "\\\"").to_string()
-                    } else {
-                        array.value(seq).to_string()
-                    };
-                    Ok(Value::String(val))
-                }
+                Some(array) => Ok(Value::String(array.value(seq).to_string())),
                 None => Err(ConvertError::new("string view", format!("{array:?}")).into()),
             },
             // we only support timestamp in microsecond in databend
@@ -415,7 +392,7 @@ impl
                     let inner_array = unsafe { array.value_unchecked(seq) };
                     let mut values = Vec::with_capacity(inner_array.len());
                     for i in 0..inner_array.len() {
-                        let value = Value::try_from((f.as_ref(), &inner_array, i, true, settings))?;
+                        let value = Value::try_from((f.as_ref(), &inner_array, i, settings))?;
                         values.push(value);
                     }
                     Ok(Value::Array(values))
@@ -427,7 +404,7 @@ impl
                     let inner_array = unsafe { array.value_unchecked(seq) };
                     let mut values = Vec::with_capacity(inner_array.len());
                     for i in 0..inner_array.len() {
-                        let value = Value::try_from((f.as_ref(), &inner_array, i, true, settings))?;
+                        let value = Value::try_from((f.as_ref(), &inner_array, i, settings))?;
                         values.push(value);
                     }
                     Ok(Value::Array(values))
@@ -444,14 +421,12 @@ impl
                                 fs[0].as_ref(),
                                 inner_array.column(0),
                                 i,
-                                true,
                                 settings,
                             ))?;
                             let val = Value::try_from((
                                 fs[1].as_ref(),
                                 inner_array.column(1),
                                 i,
-                                true,
                                 settings,
                             ))?;
                             values.push((key, val));
@@ -470,8 +445,7 @@ impl
                 Some(array) => {
                     let mut values = Vec::with_capacity(array.len());
                     for (f, inner_array) in fs.iter().zip(array.columns().iter()) {
-                        let value =
-                            Value::try_from((f.as_ref(), inner_array, seq, true, settings))?;
+                        let value = Value::try_from((f.as_ref(), inner_array, seq, settings))?;
                         values.push(value);
                     }
                     Ok(Value::Tuple(values))
