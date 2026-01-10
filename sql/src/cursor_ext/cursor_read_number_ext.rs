@@ -99,6 +99,17 @@ pub fn collect_number(buffer: &[u8]) -> (usize, usize) {
     (index, effective)
 }
 
+fn collect_special_float(buffer: &[u8]) -> Option<usize> {
+    const SPECIAL_FLOATS: [&[u8]; 5] = [b"infinity", b"-infinity", b"inf", b"-inf", b"nan"];
+
+    for literal in SPECIAL_FLOATS {
+        if buffer.len() >= literal.len() && buffer[..literal.len()].eq_ignore_ascii_case(literal) {
+            return Some(literal.len());
+        }
+    }
+    None
+}
+
 #[inline]
 fn read_num_text_exact<T: FromLexical>(buf: &[u8]) -> Result<T> {
     match FromLexical::from_lexical(buf) {
@@ -135,12 +146,18 @@ where
 
     fn read_float_text<T: FromLexical>(&mut self) -> Result<T> {
         let buf = self.fill_buf()?;
-        let (n_in, n_out) = collect_number(buf);
-        if n_in == 0 {
-            return Err(std::io::Error::new(
-                ErrorKind::InvalidData,
-                "Unable to parse float: provided text is not in a recognizable floating-point format.".to_string()
-            ));
+        let (mut n_in, mut n_out) = collect_number(buf);
+        let may_special = n_in == 0 || (n_in == 1 && buf.first() == Some(&b'-'));
+        if may_special {
+            if let Some(n_special) = collect_special_float(buf) {
+                n_in = n_special;
+                n_out = n_special;
+            } else {
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidData,
+                    "Unable to parse float: provided text is not in a recognizable floating-point format.".to_string()
+                ));
+            }
         }
         let buf = self.fill_buf()?;
         let n = read_num_text_exact(&buf[..n_out])?;

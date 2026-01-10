@@ -593,7 +593,7 @@ fn create_table(
         && results[0].values().iter().all(|v| {
             if matches!(v, Value::Number(_)) {
                 let f: f64 = v.to_string().parse().unwrap();
-                f >= 1_000_000f64
+                (1_000_000f64..=1e+21f64).contains(&f)
             } else {
                 false
             }
@@ -720,6 +720,7 @@ fn format_table_style(
 ) -> Cell {
     let is_null = matches!(value, Value::Null);
     let is_string = matches!(value, Value::String(_));
+    let is_number = matches!(value, Value::Number(_));
     let mut value_str = value.to_string();
     if is_string && quote_string {
         let mut escaped_value_str = String::with_capacity(value_str.len());
@@ -737,6 +738,9 @@ fn format_table_style(
         value_str = escaped_value_str;
     }
     value_str = truncate_string(value_str, max_col_width);
+    if !is_number {
+        value_str = truncate_string(value_str, max_col_width);
+    }
     if is_string && quote_string {
         value_str = format!("'{value_str}'");
     }
