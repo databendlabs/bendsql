@@ -36,8 +36,16 @@ impl std::fmt::Display for NumberValue {
             NumberValue::UInt16(i) => write!(f, "{i}"),
             NumberValue::UInt32(i) => write!(f, "{i}"),
             NumberValue::UInt64(i) => write!(f, "{i}"),
-            NumberValue::Float32(i) => write!(f, "{i}"),
-            NumberValue::Float64(i) => write!(f, "{i}"),
+            NumberValue::Float32(i) => {
+                let mut buffer = zmij::Buffer::new();
+                let s = buffer.format_finite(*i);
+                write!(f, "{s}")
+            }
+            NumberValue::Float64(i) => {
+                let mut buffer = zmij::Buffer::new();
+                let s = buffer.format_finite(*i);
+                write!(f, "{s}")
+            }
             NumberValue::Decimal64(v, s) => {
                 write!(f, "{}", display_decimal_128(*v as i128, s.scale))
             }
@@ -143,11 +151,13 @@ impl Value {
             }
             Value::Vector(vals) => {
                 write!(f, "[")?;
+                let mut buffer = zmij::Buffer::new();
                 for (i, val) in vals.iter().enumerate() {
                     if i > 0 {
                         write!(f, ",")?;
                     }
-                    write!(f, "{val}")?;
+                    let s = buffer.format_finite(*val);
+                    write!(f, "{s}")?;
                 }
                 write!(f, "]")?;
                 Ok(())
