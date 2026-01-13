@@ -64,6 +64,9 @@ select a[1], b['k1'], c:x, c:y from test_nested;
 
 select {'k1':'v1','k2':'v2'}, [to_binary('ab'), to_binary('xyz')], (parse_json('[1,2]'), to_date('2024-04-10'));
 
+set geometry_output_format='GEOJSON';
+select [to_geometry('POINT(-122.35 37.55)')], [st_geographyfromewkt('LINESTRING(0.75 0.75, -10 20)')];
+
 select 'bye';
 drop table test;
 drop table test_decimal;
