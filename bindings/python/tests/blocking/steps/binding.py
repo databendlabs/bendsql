@@ -18,6 +18,9 @@ from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
 import time
 from time import sleep
+import unittest
+
+tc = unittest.TestCase()
 
 from behave import given, when, then
 
@@ -125,18 +128,6 @@ def _(context):
         f"Array: {row.values()}"
     )
 
-    # Map
-    row = context.conn.query_row("select {'xx':to_date('2020-01-01')}")
-    assert row.values() == ({"xx": date(2020, 1, 1)},), f"Map: {row.values()}"
-
-    # Tuple
-    row = context.conn.query_row(
-        "select (10, '20', to_datetime('2024-04-16 12:34:56.789'))"
-    )
-    assert row.values() == (
-        (10, "20", datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=default_tzinfo)),
-    ), f"Tuple: {row.values()}"
-
     import sys
 
     if (
@@ -197,6 +188,23 @@ def _(context):
             "settings(geometry_output_format='EWKT') SELECT st_point(60,37)"
         )
         assert row.values()[0] == "POINT(60 37)", f"geography: {row.values()}"
+
+    if DRIVER_VERSION >= (0, 33, 1):  # quote change to `"`
+        # Map
+        row = context.conn.query_row("select {'xx':to_date('2020-01-01')}")
+        assert row.values() == ({"xx": date(2020, 1, 1)},), f"Map: {row.values()}"
+
+        # Tuple
+        row = context.conn.query_row(
+            "select (10, '20', to_datetime('2024-04-16 12:34:56.789'))"
+        )
+        assert row.values() == (
+            (
+                10,
+                "20",
+                datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=default_tzinfo),
+            ),
+        ), f"Tuple: {row.values()}"
 
 
 @then("Select numbers should iterate all rows")
@@ -322,6 +330,9 @@ def test_load_file(context, load_method):
 
     rows = context.conn.query_iter("SELECT * FROM test1")
     ret = [row.values() for row in rows]
+
+    quoted_empty = "" if DB_VERSION >= (1, 2, 866) else None
+
     expected = [
         (
             -1,
@@ -337,7 +348,7 @@ def test_load_file(context, load_method):
             2,
             2.0,
             '"',
-            None,
+            quoted_empty,
             date(2012, 5, 31),
             datetime(2012, 5, 31, 11, 20, tzinfo=default_tzinfo),
         ),
@@ -351,7 +362,7 @@ def test_load_file(context, load_method):
             datetime(2016, 4, 4, 11, 30, tzinfo=default_tzinfo),
         ),
     ]
-    assert ret == expected, f"{load_method} ret: {ret}"
+    tc.assertEqual(ret, expected, load_method)
 
 
 @then("Load file with Stage and Select should be equal")

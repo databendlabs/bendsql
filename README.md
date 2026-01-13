@@ -218,18 +218,19 @@ Examples:
 
 #### RestAPI Client
 
-| Arg                         | Description                                                                                                                                                      |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wait_time_secs`            | Request wait time for page, default to `1`                                                                                                                       |
-| `max_rows_in_buffer`        | Max rows for page buffer                                                                                                                                         |
-| `max_rows_per_page`         | Max response rows for a single page                                                                                                                              |
-| `page_request_timeout_secs` | Timeout for a single page request, default to `30`                                                                                                               |
-| `presign`                   | Whether to enable presign for data loading, available arguments are `auto`/`detect`/`on`/`off`. Default to `auto` which only enable presign for `Databend Cloud` |
+| Arg                         | Description                                                                                                                                                      | Default   |
+|-----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|
+| `query_result_format`       | (Since v0.33.1) Format to fetch result set, available arguments are `json`/`arrow`.                                                                              | `JSON`    |
+| `sslmode`                   | SSL mode, available values are `enable`/`disable`.                                                                                                               | `disable` |
+| `wait_time_secs`            | Request wait time for page.                                                                                                                                      | `1`       |
+| `max_rows_per_page`         | Max result rows for a single page.                                                                                                                               | `10000`   |
+| `page_request_timeout_secs` | Timeout for a single page request.                                                                                                                               | `30`      |
+| `presign`                   | Whether to enable presign for data loading, available arguments are `auto`/`detect`/`on`/`off`. Default to `auto` which only enable presign for `Databend Cloud` | `auto`    |
 
 #### FlightSQL Client
 
 | Arg                         | Description                                                               |
-| --------------------------- | ------------------------------------------------------------------------- |
+|-----------------------------| ------------------------------------------------------------------------- |
 | `query_timeout`             | Query timeout seconds                                                     |
 | `tcp_nodelay`               | Default to `true`                                                         |
 | `tcp_keepalive`             | Tcp keepalive seconds, default to `3600`, set to `0` to disable keepalive |
@@ -239,7 +240,7 @@ Examples:
 
 #### Query Settings
 
-see: [Databend Query Settings](https://databend.rs/doc/sql-commands/show/show-settings)
+see: [Databend Query Settings](https://docs.databend.com/sql/sql-commands/administration-cmds/show-settings)
 
 ## Development
 
