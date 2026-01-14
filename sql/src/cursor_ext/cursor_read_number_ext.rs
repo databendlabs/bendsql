@@ -147,8 +147,7 @@ where
     fn read_float_text<T: FromLexical>(&mut self) -> Result<T> {
         let buf = self.fill_buf()?;
         let (mut n_in, mut n_out) = collect_number(buf);
-        let may_special = n_in == 0 || (n_in == 1 && buf.first() == Some(&b'-'));
-        if may_special {
+        if n_in == 0 || (n_in == 1 && buf.first() == Some(&b'-')) {
             if let Some(n_special) = collect_special_float(buf) {
                 n_in = n_special;
                 n_out = n_special;
