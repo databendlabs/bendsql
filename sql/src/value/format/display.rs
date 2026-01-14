@@ -36,16 +36,8 @@ impl std::fmt::Display for NumberValue {
             NumberValue::UInt16(i) => write!(f, "{i}"),
             NumberValue::UInt32(i) => write!(f, "{i}"),
             NumberValue::UInt64(i) => write!(f, "{i}"),
-            NumberValue::Float32(i) => {
-                let mut buffer = zmij::Buffer::new();
-                let s = buffer.format_finite(*i);
-                write!(f, "{s}")
-            }
-            NumberValue::Float64(i) => {
-                let mut buffer = zmij::Buffer::new();
-                let s = buffer.format_finite(*i);
-                write!(f, "{s}")
-            }
+            NumberValue::Float32(i) => display_float(*i, f),
+            NumberValue::Float64(i) => display_float(*i, f),
             NumberValue::Decimal64(v, s) => {
                 write!(f, "{}", display_decimal_128(*v as i128, s.scale))
             }
@@ -163,6 +155,58 @@ impl Value {
                 Ok(())
             }
         }
+    }
+}
+
+trait FloatForDisplay: Copy {
+    fn is_nan(self) -> bool;
+    fn is_infinite(self) -> bool;
+    fn is_sign_negative(self) -> bool;
+    fn write_with(self, buf: &mut zmij::Buffer) -> &str;
+}
+
+impl FloatForDisplay for f32 {
+    fn is_nan(self) -> bool {
+        f32::is_nan(self)
+    }
+    fn is_infinite(self) -> bool {
+        f32::is_infinite(self)
+    }
+    fn is_sign_negative(self) -> bool {
+        f32::is_sign_negative(self)
+    }
+    fn write_with(self, buf: &mut zmij::Buffer) -> &str {
+        buf.format_finite(self)
+    }
+}
+
+impl FloatForDisplay for f64 {
+    fn is_nan(self) -> bool {
+        f64::is_nan(self)
+    }
+    fn is_infinite(self) -> bool {
+        f64::is_infinite(self)
+    }
+    fn is_sign_negative(self) -> bool {
+        f64::is_sign_negative(self)
+    }
+    fn write_with(self, buf: &mut zmij::Buffer) -> &str {
+        buf.format_finite(self)
+    }
+}
+
+fn display_float<T: FloatForDisplay>(num: T, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    if num.is_nan() {
+        write!(f, "NaN")
+    } else if num.is_infinite() {
+        if num.is_sign_negative() {
+            write!(f, "-inf")
+        } else {
+            write!(f, "inf")
+        }
+    } else {
+        let mut buffer = zmij::Buffer::new();
+        write!(f, "{}", num.write_with(&mut buffer))
     }
 }
 
