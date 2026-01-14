@@ -354,26 +354,28 @@ impl ValueDecoder {
 
     fn read_geometry<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
-        if reader.read_quoted_text(&mut buf, b'"').is_err() {
-            if let Ok(val) = self.read_json(reader) {
-                return Ok(Value::Variant(val));
-            }
-            reader.read_quoted_text(&mut buf, b'\'')?;
+        if reader.read_quoted_text(&mut buf, b'"').is_ok()
+            || reader.read_quoted_text(&mut buf, b'\'').is_ok()
+        {
+            Ok(Value::Geometry(unsafe { String::from_utf8_unchecked(buf) }))
+        } else {
+            let val = self.read_json(reader)?;
+            Ok(Value::Geometry(val))
         }
-        Ok(Value::Geometry(unsafe { String::from_utf8_unchecked(buf) }))
     }
 
     fn read_geography<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
         let mut buf = Vec::new();
-        if reader.read_quoted_text(&mut buf, b'"').is_err() {
-            if let Ok(val) = self.read_json(reader) {
-                return Ok(Value::Variant(val));
-            }
-            reader.read_quoted_text(&mut buf, b'\'')?;
+        if reader.read_quoted_text(&mut buf, b'"').is_ok()
+            || reader.read_quoted_text(&mut buf, b'\'').is_ok()
+        {
+            Ok(Value::Geography(unsafe {
+                String::from_utf8_unchecked(buf)
+            }))
+        } else {
+            let val = self.read_json(reader)?;
+            Ok(Value::Geography(val))
         }
-        Ok(Value::Geography(unsafe {
-            String::from_utf8_unchecked(buf)
-        }))
     }
 
     fn read_nullable<R: AsRef<[u8]>>(
