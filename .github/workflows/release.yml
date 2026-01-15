@@ -2,11 +2,63 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 jobs:
+  check:
+    name: Check version and create release
+    runs-on: ubuntu-latest
+    outputs:
+      version_changed: ${{ steps.check.outputs.version_changed }}
+      new_version: ${{ steps.check.outputs.new_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check for version change
+        id: check
+        run: |
+          # Get the current version from Cargo.toml
+          CURRENT_VERSION=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+
+          # Get the previous version from the last commit
+          git checkout HEAD~1 -- Cargo.toml 2>/dev/null || true
+          if [ -f Cargo.toml ]; then
+            PREVIOUS_VERSION=$(grep -m1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+            git checkout HEAD -- Cargo.toml
+          else
+            PREVIOUS_VERSION=""
+          fi
+
+          echo "Current version: $CURRENT_VERSION"
+          echo "Previous version: $PREVIOUS_VERSION"
+
+          if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ] && [ -n "$CURRENT_VERSION" ]; then
+            echo "version_changed=true" >> $GITHUB_OUTPUT
+            echo "new_version=v$CURRENT_VERSION" >> $GITHUB_OUTPUT
+            echo "Version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
+          else
+            echo "version_changed=false" >> $GITHUB_OUTPUT
+            echo "No version change detected"
+          fi
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.version_changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${{ steps.check.outputs.new_version }}
+          echo "Creating release for $VERSION"
+          gh release create "$VERSION" \
+            --title "Release $VERSION" \
+            --generate-notes \
+            || echo "Release already exists"
+
   build_linux:
+    needs: check
+    if: needs.check.outputs.version_changed == 'true'
     name: build ${{ matrix.target }}
     strategy:
       matrix:
@@ -43,9 +95,11 @@ jobs:
         with:
           os: linux
           target: ${{ matrix.target }}
-          version: ${{ github.ref_name }}
+          version: ${{ needs.check.outputs.new_version }}
 
   build_other:
+    needs: check
+    if: needs.check.outputs.version_changed == 'true'
     name: build ${{ matrix.target }}
     strategy:
       matrix:
@@ -81,10 +135,11 @@ jobs:
         with:
           os: ${{ matrix.os }}
           target: ${{ matrix.target }}
-          version: ${{ github.ref_name }}
+          version: ${{ needs.check.outputs.new_version }}
 
   update_repo:
-    needs: [build_linux, build_other]
+    needs: [check, build_linux, build_other]
+    if: needs.check.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,8 +158,9 @@ jobs:
           aws s3 cp releases.json s3://repo/bendsql/releases.json --checksum-algorithm=CRC32
 
   crates:
+    needs: [check, build_linux]
+    if: needs.check.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
-    needs: build_linux
     environment:
       name: crates.io
       url: https://crates.io/crates/databend-driver
@@ -125,7 +181,8 @@ jobs:
           cargo workspaces publish --all --publish-as-is --yes
 
   distribution:
-    needs: build_linux
+    needs: [check, build_linux]
+    if: needs.check.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -173,17 +230,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p dist/pkg
-          gh release download ${{ github.ref_name }} --pattern "bendsql-${{ matrix.target }}.tar.gz" --dir dist/
+          gh release download ${{ needs.check.outputs.new_version }} --pattern "bendsql-${{ matrix.target }}.tar.gz" --dir dist/
           tar -xzf dist/bendsql-${{ matrix.target }}.tar.gz -C dist/
       - name: Package
         shell: bash
         run: |
           yq -i '.arch = "${{ matrix.arch }}"' nfpm.yaml
-          yq -i '.version = "${{ github.ref_name }}"' nfpm.yaml
+          yq -i '.version = "${{ needs.check.outputs.new_version }}"' nfpm.yaml
           nfpm package --packager ${{ matrix.packager }} --target dist/pkg/
       - name: Publish
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload ${{ github.ref_name }} dist/pkg/* --clobber
+          gh release upload ${{ needs.check.outputs.new_version }} dist/pkg/* --clobber
