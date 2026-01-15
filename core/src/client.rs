@@ -1094,7 +1094,10 @@ impl APIClient {
                     );
                 }
             };
-            warn!("retrying session token refresh after {} seconds", retry_delay.as_secs());
+            warn!(
+                "retrying session token refresh after {} seconds",
+                retry_delay.as_secs()
+            );
             sleep(jitter(retry_delay)).await;
         }
         Ok(())
@@ -1202,17 +1205,18 @@ impl APIClient {
                         } else {
                             "request error"
                         };
-                        RetryDecision::retry_with_reason(
-                            Error::Request(err.to_string()),
-                            reason,
-                        )
+                        RetryDecision::retry_with_reason(Error::Request(err.to_string()), reason)
                     } else {
                         RetryDecision::no_retry(Error::Request(err.to_string()))
                     }
                 }
             };
             if !decision.should_retry {
-                return Err(decision.error.with_context(&format!("{} {}", request.method(), request.url())));
+                return Err(decision.error.with_context(&format!(
+                    "{} {}",
+                    request.method(),
+                    request.url()
+                )));
             }
             match &decision.error {
                 Error::AuthFailure(_) => {
@@ -1258,7 +1262,11 @@ impl APIClient {
                 }
             }
             if let Some(reason) = decision.reason {
-                warn!("retrying after {} seconds due to: {}", retry_delay.as_secs(), reason);
+                warn!(
+                    "retrying after {} seconds due to: {}",
+                    retry_delay.as_secs(),
+                    reason
+                );
             } else {
                 warn!("retrying after {} seconds", retry_delay.as_secs());
             }
