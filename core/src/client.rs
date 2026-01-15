@@ -1065,7 +1065,9 @@ impl APIClient {
                             }
                         };
                     }
-                    if status != StatusCode::SERVICE_UNAVAILABLE || i >= max_retries - 1 {
+                    if status != StatusCode::SERVICE_UNAVAILABLE
+                        || i >= max_retries.saturating_sub(1)
+                    {
                         return Err(Error::response_error(status, &body));
                     }
                     info!(
@@ -1075,7 +1077,8 @@ impl APIClient {
                     );
                 }
                 Err(err) => {
-                    if !(err.is_timeout() || err.is_connect()) || i >= max_retries - 1 {
+                    if !(err.is_timeout() || err.is_connect()) || i >= max_retries.saturating_sub(1)
+                    {
                         return Err(Error::Request(err.to_string()));
                     }
                     let reason = if err.is_timeout() {
@@ -1222,7 +1225,7 @@ impl APIClient {
                 Error::AuthFailure(_) => {
                     if refreshed {
                         retries = 0;
-                    } else if retries >= max_retries - 1 {
+                    } else if retries >= max_retries.saturating_sub(1) {
                         return Err(decision.error.with_context(&format!(
                             "{} {} after {} retries",
                             request.method(),
@@ -1232,7 +1235,7 @@ impl APIClient {
                     }
                 }
                 _ => {
-                    if retries >= max_retries - 1 {
+                    if retries >= max_retries.saturating_sub(1) {
                         return Err(decision.error.with_context(&format!(
                             "{} {} after {} retries",
                             request.method(),
