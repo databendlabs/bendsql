@@ -23,6 +23,7 @@ mod pages;
 mod presign;
 mod request;
 mod response;
+mod retry;
 
 mod capability;
 mod client_mgr;
