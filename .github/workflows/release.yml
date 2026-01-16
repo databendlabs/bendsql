@@ -249,14 +249,76 @@ jobs:
     needs: [check, build_linux]
     if: needs.check.outputs.version_changed == 'true'
     uses: ./.github/workflows/bindings.python.yml
-    with:
-      publish: true
     secrets: inherit
+
+  bindings_python_publish:
+    needs: bindings_python
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment:
+      name: pypi.org
+      url: https://pypi.org/p/databend-driver/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: bindings/python/artifacts
+          pattern: bindings-python-*
+          merge-multiple: true
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@unstable/v1
+        with:
+          skip-existing: true
+          packages-dir: bindings/python/artifacts
 
   bindings_nodejs:
     needs: [check, build_linux]
     if: needs.check.outputs.version_changed == 'true'
     uses: ./.github/workflows/bindings.nodejs.yml
-    with:
-      publish: true
     secrets: inherit
+
+  bindings_nodejs_publish:
+    needs: bindings_nodejs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    environment:
+      name: npmjs.com
+      url: https://www.npmjs.com/package/databend-driver
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Corepack
+        working-directory: bindings/nodejs
+        run: npm i -g --force corepack && corepack enable
+      - name: Install dependencies
+        working-directory: bindings/nodejs
+        run: pnpm install
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: bindings/nodejs/artifacts
+          pattern: bindings-nodejs-*
+          merge-multiple: true
+      - name: Move artifacts
+        shell: bash
+        working-directory: bindings/nodejs
+        run: |
+          ls -lRh artifacts
+          pnpm napi artifacts
+          ls -lRh npm
+      - name: Add LICENSE
+        run: cp LICENSE ./bindings/nodejs
+      - name: Publish
+        working-directory: bindings/nodejs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
+          npm publish --access public --provenance

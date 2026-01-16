@@ -2,12 +2,6 @@ name: Bindings Node.js
 
 on:
   workflow_call:
-    inputs:
-      publish:
-        description: 'Whether to publish to npm'
-        type: boolean
-        required: false
-        default: false
 
 jobs:
   check:
@@ -118,49 +112,3 @@ jobs:
           name: bindings-nodejs-x86_64-unknown-linux-gnu
           path: bindings/nodejs
       - run: make -C tests test-bindings-nodejs
-
-  publish:
-    if: inputs.publish == true
-    needs: [build, integration]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-    environment:
-      name: npmjs.com
-      url: https://www.npmjs.com/package/databend-driver
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Corepack
-        working-directory: bindings/nodejs
-        run: npm i -g --force corepack && corepack enable
-      - name: Install dependencies
-        working-directory: bindings/nodejs
-        run: pnpm install
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: bindings/nodejs/artifacts
-          pattern: bindings-nodejs-*
-          merge-multiple: true
-      - name: Move artifacts
-        shell: bash
-        working-directory: bindings/nodejs
-        run: |
-          ls -lRh artifacts
-          pnpm napi artifacts
-          ls -lRh npm
-      - name: Add LICENSE
-        run: cp LICENSE ./bindings/nodejs
-      - name: Publish
-        working-directory: bindings/nodejs
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> ~/.npmrc
-          npm publish --access public --provenance

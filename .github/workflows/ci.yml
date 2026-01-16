@@ -93,13 +93,9 @@ jobs:
   bindings_python:
     needs: check
     uses: ./.github/workflows/bindings.python.yml
-    with:
-      publish: false
     secrets: inherit
 
   bindings_nodejs:
     needs: check
     uses: ./.github/workflows/bindings.nodejs.yml
-    with:
-      publish: false
     secrets: inherit
