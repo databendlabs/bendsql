@@ -95,7 +95,6 @@ jobs:
     uses: ./.github/workflows/bindings.python.yml
     with:
       publish: false
-      cancel_in_progress: true
     secrets: inherit
 
   bindings_nodejs:
@@ -103,5 +102,4 @@ jobs:
     uses: ./.github/workflows/bindings.nodejs.yml
     with:
       publish: false
-      cancel_in_progress: true
     secrets: inherit

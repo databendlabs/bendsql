@@ -8,15 +8,6 @@ on:
         type: boolean
         required: false
         default: false
-      cancel_in_progress:
-        description: 'Whether to cancel in-progress runs'
-        type: boolean
-        required: false
-        default: false
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.workflow_call.name || github.workflow_ref }}
-  cancel-in-progress: ${{ inputs.cancel_in_progress }}
 
 jobs:
   check:
