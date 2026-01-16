@@ -15,7 +15,7 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event.workflow_call.name || github.workflow_ref }}
   cancel-in-progress: ${{ inputs.cancel_in_progress }}
 
 jobs:
