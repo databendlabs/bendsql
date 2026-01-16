@@ -8,6 +8,7 @@ venv/
 *.output
 
 /dist
+/worktrees/
 
 **/.DS_Store
 
