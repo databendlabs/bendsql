@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -89,3 +89,17 @@ jobs:
       - run: make -C tests test-core
       - run: make -C tests test-driver
       - run: make -C tests test-bendsql
+
+  bindings_python:
+    needs: check
+    uses: ./.github/workflows/bindings.python.yml
+    with:
+      publish: false
+    secrets: inherit
+
+  bindings_nodejs:
+    needs: check
+    uses: ./.github/workflows/bindings.nodejs.yml
+    with:
+      publish: false
+    secrets: inherit
