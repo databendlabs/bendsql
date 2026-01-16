@@ -89,3 +89,19 @@ jobs:
       - run: make -C tests test-core
       - run: make -C tests test-driver
       - run: make -C tests test-bendsql
+
+  bindings_python:
+    needs: check
+    uses: ./.github/workflows/bindings.python.yml
+    with:
+      publish: false
+      cancel_in_progress: true
+    secrets: inherit
+
+  bindings_nodejs:
+    needs: check
+    uses: ./.github/workflows/bindings.nodejs.yml
+    with:
+      publish: false
+      cancel_in_progress: true
+    secrets: inherit

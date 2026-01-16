@@ -244,3 +244,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload ${{ needs.check.outputs.new_version }} dist/pkg/* --clobber
+
+  bindings_python:
+    needs: [check, build_linux]
+    if: needs.check.outputs.version_changed == 'true'
+    uses: ./.github/workflows/bindings.python.yml
+    with:
+      publish: true
+      cancel_in_progress: false
+    secrets: inherit
+
+  bindings_nodejs:
+    needs: [check, build_linux]
+    if: needs.check.outputs.version_changed == 'true'
+    uses: ./.github/workflows/bindings.nodejs.yml
+    with:
+      publish: true
+      cancel_in_progress: false
+    secrets: inherit
