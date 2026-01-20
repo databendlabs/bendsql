@@ -976,7 +976,8 @@ impl APIClient {
         let body = json!({
            "node_to_queries": node_to_queries
         });
-        let builder = self.cli.post(endpoint.clone()).json(&body);
+        let headers = self.make_headers(None)?;
+        let builder = self.cli.post(endpoint.clone()).json(&body).headers(headers);
         let request = self.wrap_auth_or_session_token(builder)?.build()?;
         let response = self.query_request_helper(request, true, false).await?;
         let json: Value = response.json().await?;
