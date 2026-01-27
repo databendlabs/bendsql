@@ -14,6 +14,7 @@
 
 use crate::error_code::ErrorCode;
 use reqwest::StatusCode;
+use std::error::Error as StdError;
 
 #[derive(Debug)]
 pub enum Error {
@@ -131,7 +132,9 @@ impl From<serde_json::Error> for Error {
 
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
-        Error::Request(e.to_string())
+        let e = e.without_url();
+        let source = e.source().map(|s| format!(", source={}", s)).unwrap();
+        Error::Request(format!("reqwest::Error: {}{}", e, source))
     }
 }
 
