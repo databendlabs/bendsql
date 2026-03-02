@@ -148,11 +148,9 @@ jobs:
         working-directory: bindings/python
         run: |
           pip install behave
-          if [[ "${{ matrix.pyver }}" == "3.8" ]]; then
-            pip install artifacts/*cp38*.whl
-          else
-            pip install artifacts/*abi3*.whl
-          fi
+          echo "Downloaded wheels:"
+          find artifacts -maxdepth 1 -type f -name "*.whl" -print | sort
+          pip install --no-index --find-links artifacts databend-driver
       - name: Test AsyncIO
         working-directory: bindings/python
         run: behave tests/asyncio
