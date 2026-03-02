@@ -87,7 +87,7 @@ jobs:
             base_args="--release --strip --out dist"
           fi
           if [[ "${{ matrix.wheel }}" == "py39-abi" ]]; then
-            wheel_args="--features py39-abi"
+            wheel_args="--features py39-abi --interpreter python3.9"
           else
             wheel_args="--no-default-features --features cp38 --interpreter python3.8"
           fi
