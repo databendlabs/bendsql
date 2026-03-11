@@ -16,9 +16,74 @@ use crate::error_code::ErrorCode;
 use reqwest::StatusCode;
 use std::error::Error as StdError;
 
+#[derive(Debug, Clone)]
+pub enum RequestKind {
+    QueryStart,
+    QueryPage,
+    QueryKill,
+    QueryFinal,
+    UploadToStage,
+    StreamingLoad,
+    Login,
+    Heartbeat,
+    SessionRefresh,
+    Other(String),
+}
+
+impl RequestKind {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::QueryStart => "query/start",
+            Self::QueryPage => "query/page",
+            Self::QueryKill => "query/kill",
+            Self::QueryFinal => "query/final",
+            Self::UploadToStage => "upload_to_stage",
+            Self::StreamingLoad => "streaming_load",
+            Self::Login => "login",
+            Self::Heartbeat => "heartbeat",
+            Self::SessionRefresh => "session/refresh",
+            Self::Other(v) => v.as_str(),
+        }
+    }
+}
+
+impl std::fmt::Display for RequestKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl From<&str> for RequestKind {
+    fn from(value: &str) -> Self {
+        match value {
+            "query/start" => Self::QueryStart,
+            "query/page" => Self::QueryPage,
+            "query/kill" => Self::QueryKill,
+            "query/final" => Self::QueryFinal,
+            "upload_to_stage" => Self::UploadToStage,
+            "streaming_load" => Self::StreamingLoad,
+            "login" => Self::Login,
+            "heartbeat" => Self::Heartbeat,
+            "session/refresh" => Self::SessionRefresh,
+            other => Self::Other(other.to_string()),
+        }
+    }
+}
+
+impl From<String> for RequestKind {
+    fn from(value: String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
 #[derive(Debug)]
 pub enum Error {
-    WithContext(Box<Error>, String),
+    WithContext {
+        inner: Box<Error>,
+        request_kind: Option<RequestKind>,
+        query_id: Option<String>,
+        retry_times: Option<u32>,
+    },
 
     /// errors detected before sending request.
     /// e.g. invalid DSN, header value, stage name.
@@ -48,7 +113,7 @@ pub enum Error {
         msg: String,
     },
 
-    /// the flowing are more detail type of Logic
+    /// the following are more detail type of Logic
     ///
     /// possible reasons:
     ///  - expired: if you have not polled the next_page_uri for too long, the session will be expired, you'll get a 404
@@ -69,15 +134,64 @@ impl Error {
         }
     }
 
-    pub fn with_context(self, ctx: &str) -> Self {
-        Error::WithContext(Box::new(self), ctx.to_string())
+    pub fn with_context(self, request_kind: impl Into<RequestKind>) -> Self {
+        Self::WithContext {
+            inner: Box::new(self),
+            request_kind: Some(request_kind.into()),
+            query_id: None,
+            retry_times: None,
+        }
+    }
+
+    pub fn with_query_id(self, query_id: impl Into<String>) -> Self {
+        match self {
+            Self::WithContext {
+                inner,
+                request_kind,
+                retry_times,
+                ..
+            } => Self::WithContext {
+                inner,
+                request_kind,
+                query_id: Some(query_id.into()),
+                retry_times,
+            },
+            other => Self::WithContext {
+                inner: Box::new(other),
+                request_kind: None,
+                query_id: Some(query_id.into()),
+                retry_times: None,
+            },
+        }
+    }
+
+    pub fn with_retry_times(self, retry_times: u32) -> Self {
+        match self {
+            Self::WithContext {
+                inner,
+                request_kind,
+                query_id,
+                ..
+            } => Self::WithContext {
+                inner,
+                request_kind,
+                query_id,
+                retry_times: Some(retry_times),
+            },
+            other => Self::WithContext {
+                inner: Box::new(other),
+                request_kind: None,
+                query_id: None,
+                retry_times: Some(retry_times),
+            },
+        }
     }
 
     pub fn status_code(&self) -> Option<StatusCode> {
         match self {
-            Error::Logic(status, ..) => Some(*status),
-            Error::Response { status, .. } => Some(*status),
-            Error::WithContext(err, _) => err.status_code(),
+            Self::Logic(status, ..) => Some(*status),
+            Self::Response { status, .. } => Some(*status),
+            Self::WithContext { inner, .. } => inner.status_code(),
             _ => None,
         }
     }
@@ -86,17 +200,35 @@ impl Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Decode(msg) => write!(f, "DecodeError: {msg}"),
-            Error::BadArgument(msg) => write!(f, "BadArgument: {msg}"),
-            Error::Request(msg) => write!(f, "{msg}"),
-            Error::Response { msg, status } => write!(f, "ResponseError: ({status}){msg}"),
-            Error::IO(msg) => write!(f, "IOError: {msg}"),
-            Error::Logic(status_code, ec) => write!(f, "BadRequest:({status_code}){ec}"),
-            Error::QueryNotFound(msg) => write!(f, "QueryNotFound: {msg}"),
-            Error::QueryFailed(ec) => write!(f, "QueryFailed: {ec}"),
-            Error::AuthFailure(ec) => write!(f, "AuthFailure: {ec}"),
-
-            Error::WithContext(err, ctx) => write!(f, "fail to {ctx}: {err}"),
+            Self::Decode(msg) => write!(f, "DecodeError: {msg}"),
+            Self::BadArgument(msg) => write!(f, "BadArgument: {msg}"),
+            Self::Request(msg) => write!(f, "{msg}"),
+            Self::Response { msg, status } => write!(f, "ResponseError: ({status}){msg}"),
+            Self::IO(msg) => write!(f, "IOError: {msg}"),
+            Self::Logic(status_code, ec) => write!(f, "BadRequest:({status_code}){ec}"),
+            Self::QueryNotFound(msg) => write!(f, "QueryNotFound: {msg}"),
+            Self::QueryFailed(ec) => write!(f, "QueryFailed: {ec}"),
+            Self::AuthFailure(ec) => write!(f, "AuthFailure: {ec}"),
+            Self::WithContext {
+                inner,
+                request_kind,
+                query_id,
+                retry_times,
+            } => {
+                write!(f, "[")?;
+                if let Some(v) = request_kind {
+                    write!(f, "request_kind={v}")?;
+                }
+                if let Some(v) = query_id {
+                    write!(f, " query_id={v}")?;
+                }
+                if let Some(v) = retry_times {
+                    if *v > 1 {
+                        write!(f, " retry_times={v}")?;
+                    }
+                }
+                write!(f, "]: {inner}")
+            }
         }
     }
 }
@@ -133,7 +265,10 @@ impl From<serde_json::Error> for Error {
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
         let e = e.without_url();
-        let source = e.source().map(|s| format!(", source={}", s)).unwrap();
+        let source = e
+            .source()
+            .map(|s| format!(", source={}", s))
+            .unwrap_or_default();
         Error::Request(format!("reqwest::Error: {}{}", e, source))
     }
 }

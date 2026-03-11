@@ -23,7 +23,6 @@ mod pages;
 mod presign;
 mod request;
 mod response;
-mod retry;
 
 mod capability;
 mod client_mgr;
@@ -36,6 +35,7 @@ mod settings;
 pub use auth::SensitiveString;
 pub use client::APIClient;
 pub use error::Error;
+pub use error::RequestKind;
 pub use pages::Page;
 pub use pages::Pages;
 pub use presign::presign_download_from_stage;
