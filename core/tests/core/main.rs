@@ -14,5 +14,6 @@
 
 mod common;
 
+mod retry;
 mod simple;
 mod stage;

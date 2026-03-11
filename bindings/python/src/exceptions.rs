@@ -321,13 +321,8 @@ fn map_api_error_to_exception(api_error: &databend_client::Error, error_msg: Str
         databend_client::Error::AuthFailure(_) => OperationalError::new_err(error_msg),
 
         // Wrapped errors - unwrap and recurse
-        databend_client::Error::WithContext(inner_error, context) => {
-            let inner_err = map_api_error_to_exception(inner_error, inner_error.to_string());
-            let context_msg = format!("{}: {}", context, inner_err);
-
-            // Return a DatabaseError with context message to simplify the logic
-            // The original error classification is preserved in the context
-            DatabaseError::new_err(context_msg)
+        databend_client::Error::WithContext { inner, .. } => {
+            map_api_error_to_exception(inner, error_msg)
         }
     }
 }

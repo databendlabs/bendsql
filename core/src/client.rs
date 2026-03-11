@@ -23,10 +23,9 @@ use crate::login::{
 };
 use crate::presign::{presign_upload_to_stage, PresignMode, PresignedResponse, Reader};
 use crate::response::LoadResponse;
-use crate::retry::RetryDecision;
 use crate::stage::StageLocation;
 use crate::{
-    error::{Error, Result},
+    error::{Error, RequestKind, Result},
     request::{PaginationConfig, QueryRequest, StageAttachmentConfig},
     response::QueryResponse,
     session::SessionState,
@@ -37,6 +36,7 @@ use arrow_array::RecordBatch;
 use arrow_ipc::reader::StreamReader;
 use base64::engine::general_purpose::URL_SAFE;
 use base64::Engine;
+use bytes::Bytes;
 use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -44,11 +44,15 @@ use percent_encoding::percent_decode_str;
 use reqwest::cookie::CookieStore;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE};
 use reqwest::multipart::{Form, Part};
-use reqwest::{Body, Client as HttpClient, Request, RequestBuilder, Response, StatusCode};
+use reqwest::{
+    Body, Client as HttpClient, Error as ReqwestError, Request, RequestBuilder, StatusCode,
+};
 use semver::Version;
 use serde::{de, Deserialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
+use std::error::Error as StdError;
+use std::io::ErrorKind;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -88,6 +92,12 @@ impl QueryState {
         let t = *self.last_access_time.lock();
         now.duration_since(t).as_secs() > self.timeout_secs / 2
     }
+}
+
+struct HttpResponseData {
+    status: StatusCode,
+    headers: HeaderMap,
+    body: Bytes,
 }
 
 pub struct APIClient {
@@ -143,6 +153,80 @@ impl Drop for APIClient {
 }
 
 impl APIClient {
+    fn has_transient_io_source(mut source: Option<&(dyn StdError + 'static)>) -> bool {
+        while let Some(err) = source {
+            if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+                match io_err.kind() {
+                    ErrorKind::TimedOut
+                    | ErrorKind::UnexpectedEof
+                    | ErrorKind::ConnectionReset
+                    | ErrorKind::ConnectionAborted
+                    | ErrorKind::BrokenPipe
+                    | ErrorKind::NotConnected
+                    | ErrorKind::WouldBlock
+                    | ErrorKind::Interrupted => return true,
+                    _ => {}
+                }
+            }
+            source = err.source();
+        }
+        false
+    }
+
+    fn retry_reason_for_reqwest(err: &ReqwestError) -> Option<&'static str> {
+        if err.is_timeout() {
+            Some("request timeout")
+        } else if err.is_connect() {
+            Some("connection error")
+        } else if err.is_request() {
+            Some("request error")
+        } else if err.is_body() || err.is_decode() {
+            if Self::has_transient_io_source(err.source()) {
+                Some("response read transient I/O error")
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn request_query_id(request: &Request) -> Option<String> {
+        request
+            .headers()
+            .get(HEADER_QUERY_ID)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string())
+    }
+
+    fn with_request_context(
+        reqwest_error: ReqwestError,
+        request_kind: &RequestKind,
+        request: &Request,
+        retry_times: Option<u32>,
+    ) -> Error {
+        let error: Error = reqwest_error.into();
+        let error = error.with_context(request_kind.clone());
+        let error = if let Some(retry_times) = retry_times {
+            error.with_retry_times(retry_times)
+        } else {
+            error
+        };
+        if let Some(query_id) = Self::request_query_id(request) {
+            error.with_query_id(query_id)
+        } else {
+            error
+        }
+    }
+
+    fn status_body_to_error(status: StatusCode, body: &[u8]) -> Error {
+        match serde_json::from_slice::<ResponseWithErrorCode>(body) {
+            Ok(resp) if status == StatusCode::UNAUTHORIZED => Error::AuthFailure(resp.error),
+            Ok(resp) => Error::Logic(status, resp.error),
+            Err(_) => Error::response_error(status, body),
+        }
+    }
+
     pub async fn new(dsn: &str, name: Option<String>) -> Result<Arc<Self>> {
         let mut client = Self::from_dsn(dsn).await?;
         client.build_client(name).await?;
@@ -478,7 +562,7 @@ impl APIClient {
             let query_id = query_id.to_owned();
             GLOBAL_RUNTIME.spawn(async move {
                 if let Err(e) = self_cloned
-                    .end_query(&query_id, "final", Some(state.node_id.as_str()))
+                    .end_query(&query_id, false, Some(state.node_id.as_str()))
                     .await
                 {
                     error!("failed to final query {query_id}: {e}");
@@ -531,12 +615,14 @@ impl APIClient {
         let mut builder = self.cli.post(endpoint.clone()).json(&req);
         builder = self.wrap_auth_or_session_token(builder)?;
         let request = builder.headers(headers.clone()).build()?;
-        let response = self.query_request_helper(request, true, true).await?;
+        let response = self
+            .query_request_helper(request, true, true, true, RequestKind::QueryStart)
+            .await?;
         self.handle_page(response, true).await
     }
 
-    fn is_arrow_data(response: &Response) -> bool {
-        if let Some(typ) = response.headers().get(CONTENT_TYPE) {
+    fn is_arrow_data(headers: &HeaderMap) -> bool {
+        if let Some(typ) = headers.get(CONTENT_TYPE) {
             if let Ok(t) = typ.to_str() {
                 return t == CONTENT_TYPE_ARROW;
             }
@@ -546,20 +632,28 @@ impl APIClient {
 
     async fn handle_page(
         &self,
-        response: Response,
+        response: HttpResponseData,
         is_first: bool,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
-        let status = response.status();
-        if status != 200 {
-            return Err(Error::response_error(status, &response.bytes().await?));
+        let status = response.status;
+        if status != StatusCode::OK {
+            let error = Self::status_body_to_error(status, &response.body);
+            if !is_first {
+                if let Error::Logic(code, ec) = &error {
+                    if *code == StatusCode::NOT_FOUND {
+                        return Err(Error::QueryNotFound(ec.message.clone()));
+                    }
+                }
+            }
+            return Err(error);
         }
-        let is_arrow_data = Self::is_arrow_data(&response);
+        let is_arrow_data = Self::is_arrow_data(&response.headers);
         if is_first {
-            if let Some(route_hint) = response.headers().get(HEADER_ROUTE_HINT) {
+            if let Some(route_hint) = response.headers.get(HEADER_ROUTE_HINT) {
                 self.route_hint.set(route_hint.to_str().unwrap_or_default());
             }
         }
-        let mut body = response.bytes().await?;
+        let mut body = response.body;
         let mut batches = vec![];
         if is_arrow_data {
             if is_first {
@@ -583,14 +677,7 @@ impl APIClient {
             }
             body = json_body
         };
-        let resp: QueryResponse = json_from_slice(&body).map_err(|e| {
-            if let Error::Logic(status, ec) = &e {
-                if *status == 404 {
-                    return Error::QueryNotFound(ec.message.clone());
-                }
-            }
-            e
-        })?;
+        let resp: QueryResponse = json_from_slice(&body)?;
         self.handle_session(&resp.session).await;
         if let Some(err) = &resp.error {
             return Err(Error::QueryFailed(err.clone()));
@@ -627,31 +714,38 @@ impl APIClient {
         }
         let request = builder.build()?;
 
-        let response = self.query_request_helper(request, false, true).await?;
+        let response = self
+            .query_request_helper(request, false, true, true, RequestKind::QueryPage)
+            .await?;
         self.handle_page(response, false).await
     }
 
     pub async fn kill_query(&self, query_id: &str) -> Result<()> {
-        self.end_query(query_id, "kill", None).await
+        self.end_query(query_id, true, None).await
     }
 
     pub async fn final_query(&self, query_id: &str, node_id: Option<&str>) -> Result<()> {
-        self.end_query(query_id, "final", node_id).await
+        self.end_query(query_id, false, node_id).await
     }
 
     pub async fn end_query(
         &self,
         query_id: &str,
-        method: &str,
+        is_kill: bool,
         node_id: Option<&str>,
     ) -> Result<()> {
+        let (method, request_kind) = if is_kill {
+            ("kill", RequestKind::QueryKill)
+        } else {
+            ("final", RequestKind::QueryFinal)
+        };
         let uri = format!("/v1/query/{query_id}/{method}");
         let endpoint = self.endpoint.join(&uri)?;
         let headers = self.make_headers(Some(query_id))?;
 
         info!("{method} query: {uri}");
 
-        let mut builder = self.cli.post(endpoint);
+        let mut builder = self.cli.post(endpoint.clone());
         if let Some(node_id) = node_id {
             builder = builder.header(HEADER_STICKY_NODE, node_id)
         }
@@ -659,7 +753,8 @@ impl APIClient {
         let resp = builder.headers(headers.clone()).send().await?;
         if resp.status() != 200 {
             return Err(Error::response_error(resp.status(), &resp.bytes().await?)
-                .with_context(&format!("{method} query")));
+                .with_context(request_kind)
+                .with_query_id(query_id));
         }
         Ok(())
     }
@@ -825,9 +920,9 @@ impl APIClient {
         let resp = builder.headers(headers).multipart(form).send().await?;
         let status = resp.status();
         if status != 200 {
-            return Err(
-                Error::response_error(status, &resp.bytes().await?).with_context("upload_to_stage")
-            );
+            return Err(Error::response_error(status, &resp.bytes().await?)
+                .with_context(RequestKind::UploadToStage)
+                .with_query_id(query_id));
         }
         Ok(())
     }
@@ -889,9 +984,9 @@ impl APIClient {
             }
         };
         if status != 200 {
-            return Err(
-                Error::response_error(status, &resp.bytes().await?).with_context("streaming_load")
-            );
+            return Err(Error::response_error(status, &resp.bytes().await?)
+                .with_context(RequestKind::StreamingLoad)
+                .with_query_id(query_id));
         }
         let resp = resp.json::<LoadResponse>().await?;
         Ok(resp)
@@ -910,23 +1005,24 @@ impl APIClient {
             .headers(headers.clone())
             .timeout(self.connect_timeout)
             .build()?;
-        let response = self.query_request_helper(request, true, false).await;
-        let response = match response {
-            Ok(r) => r,
-            Err(e) if e.status_code() == Some(StatusCode::NOT_FOUND) => {
-                info!("login return 404, skip login on the old version server");
-                return Ok(());
-            }
-            Err(e) => return Err(e),
-        };
-        if let Some(v) = response.headers().get(HEADER_SESSION_ID) {
+        let response = self
+            .query_request_helper(request, true, false, true, RequestKind::Login)
+            .await?;
+        if response.status == StatusCode::NOT_FOUND {
+            info!("login return 404, skip login on the old version server");
+            return Ok(());
+        }
+        if response.status != StatusCode::OK {
+            return Err(Self::status_body_to_error(response.status, &response.body)
+                .with_context(RequestKind::Login));
+        }
+        if let Some(v) = response.headers.get(HEADER_SESSION_ID) {
             if let Ok(s) = v.to_str() {
                 self.session_id = s.to_string();
             }
         }
 
-        let body = response.bytes().await?;
-        let response = json_from_slice(&body)?;
+        let response = json_from_slice(&response.body)?;
         match response {
             LoginResponseResult::Err { error } => return Err(Error::AuthFailure(error)),
             LoginResponseResult::Ok(info) => {
@@ -979,8 +1075,14 @@ impl APIClient {
         let headers = self.make_headers(None)?;
         let builder = self.cli.post(endpoint.clone()).json(&body).headers(headers);
         let request = self.wrap_auth_or_session_token(builder)?.build()?;
-        let response = self.query_request_helper(request, true, false).await?;
-        let json: Value = response.json().await?;
+        let response = self
+            .query_request_helper(request, true, false, true, RequestKind::Heartbeat)
+            .await?;
+        if response.status != StatusCode::OK {
+            return Err(Self::status_body_to_error(response.status, &response.body)
+                .with_context(RequestKind::Heartbeat));
+        }
+        let json: Value = json_from_slice(&response.body)?;
         let session_id = self.session_id.as_str();
         info!("[session {session_id}] heartbeat request={body}, response={json}");
         if let Some(queries_to_remove) = json.get("queries_to_remove") {
@@ -1046,65 +1148,21 @@ impl APIClient {
             .bearer_auth(session_token_info.refresh_token.clone())
             .timeout(self.connect_timeout)
             .build()?;
-
-        let max_retries = self.retry_count;
-        let retry_delay = Duration::from_secs(self.retry_delay_secs);
-        // avoid recursively call request_helper
-        for i in 0..max_retries {
-            let req = request.try_clone().expect("request not cloneable");
-            match self.cli.execute(req).await {
-                Ok(response) => {
-                    let status = response.status();
-                    let body = response.bytes().await?;
-                    if status == StatusCode::OK {
-                        let response = json_from_slice(&body)?;
-                        return match response {
-                            RefreshResponse::Err { error } => Err(Error::AuthFailure(error)),
-                            RefreshResponse::Ok(info) => {
-                                *self_login_info.lock() = (info, Instant::now());
-                                Ok(())
-                            }
-                        };
-                    }
-                    if status != StatusCode::SERVICE_UNAVAILABLE
-                        || i >= max_retries.saturating_sub(1)
-                    {
-                        return Err(Error::response_error(status, &body));
-                    }
-                    info!(
-                        "retry {}/{} for session token refresh due to: service unavailable (503)",
-                        i + 1,
-                        max_retries
-                    );
-                }
-                Err(err) => {
-                    if !(err.is_timeout() || err.is_connect()) || i >= max_retries.saturating_sub(1)
-                    {
-                        return Err(Error::Request(err.to_string()));
-                    }
-                    let reason = if err.is_timeout() {
-                        "request timeout"
-                    } else if err.is_connect() {
-                        "connection error"
-                    } else {
-                        "request error"
-                    };
-                    info!(
-                        "retry {}/{} for session token refresh due to: {} (error: {})",
-                        i + 1,
-                        max_retries,
-                        reason,
-                        err
-                    );
-                }
-            };
-            warn!(
-                "retrying session token refresh after {} seconds",
-                retry_delay.as_secs()
-            );
-            sleep(jitter(retry_delay)).await;
+        let response = self
+            .query_request_helper(request, true, false, false, RequestKind::SessionRefresh)
+            .await?;
+        if response.status != StatusCode::OK {
+            return Err(Self::status_body_to_error(response.status, &response.body)
+                .with_context(RequestKind::SessionRefresh));
         }
-        Ok(())
+        let response = json_from_slice(&response.body)?;
+        match response {
+            RefreshResponse::Err { error } => Err(Error::AuthFailure(error)),
+            RefreshResponse::Ok(info) => {
+                *self_login_info.lock() = (info, Instant::now());
+                Ok(())
+            }
+        }
     }
 
     async fn need_pre_refresh_session(&self) -> Option<Arc<Mutex<(SessionTokenInfo, Instant)>>> {
@@ -1120,10 +1178,10 @@ impl APIClient {
         None
     }
 
-    /// return Ok if and only if status code is 200.
+    /// Send request with retry and return raw HTTP status/headers/body.
     ///
     /// retry on
-    ///   - network errors
+    ///   - network/request/body transient errors
     ///   - (optional) 503
     ///
     /// refresh databend token or reload jwt token if needed.
@@ -1132,149 +1190,158 @@ impl APIClient {
         mut request: Request,
         retry_if_503: bool,
         refresh_if_401: bool,
-    ) -> std::result::Result<Response, Error> {
+        reload_auth_if_401: bool,
+        request_kind: RequestKind,
+    ) -> Result<HttpResponseData> {
         let mut refreshed = false;
         let mut retries = 0;
         let max_retries = self.retry_count;
         let retry_delay = Duration::from_secs(self.retry_delay_secs);
+
         loop {
             let req = request.try_clone().expect("request not cloneable");
-            let decision = match self.cli.execute(req).await {
-                Ok(response) => {
-                    let status = response.status();
-                    if status == StatusCode::OK {
-                        return Ok(response);
-                    }
-                    let body = response.bytes().await?;
-                    if retry_if_503 && status == StatusCode::SERVICE_UNAVAILABLE {
-                        // waiting for server to start
-                        RetryDecision::retry_with_reason(
-                            Error::response_error(status, &body),
-                            "service unavailable (503), server may be starting",
-                        )
-                    } else {
-                        let resp = serde_json::from_slice::<ResponseWithErrorCode>(&body);
-                        match resp {
-                            Ok(r) => {
-                                let e = r.error;
-                                if status == StatusCode::UNAUTHORIZED {
-                                    request.headers_mut().remove(reqwest::header::AUTHORIZATION);
-                                    if let Some(session_token_info) = &self.session_token_info {
-                                        if need_refresh_token(e.code)
-                                            && !refreshed
-                                            && refresh_if_401
-                                        {
-                                            self.refresh_session_token(session_token_info.clone())
-                                                .await?;
-                                            refreshed = true;
-                                            RetryDecision::retry_with_reason(
-                                                Error::AuthFailure(e),
-                                                "session token expired and refreshed",
-                                            )
-                                        } else {
-                                            RetryDecision::no_retry(Error::AuthFailure(e))
-                                        }
-                                    } else if self.auth.can_reload() {
-                                        let builder = RequestBuilder::from_parts(
-                                            HttpClient::new(),
-                                            request.try_clone().unwrap(),
-                                        );
-                                        let builder = self.auth.wrap(builder)?;
-                                        request = builder.build()?;
-                                        RetryDecision::retry_with_reason(
-                                            Error::AuthFailure(e),
-                                            "authentication token reloaded",
-                                        )
-                                    } else {
-                                        RetryDecision::no_retry(Error::AuthFailure(e))
-                                    }
-                                } else {
-                                    RetryDecision::no_retry(Error::Logic(status, e))
-                                }
-                            }
-                            Err(_) => RetryDecision::no_retry(Error::Response {
-                                status,
-                                msg: String::from_utf8_lossy(&body).to_string(),
-                            }),
-                        }
-                    }
-                }
+            let response = match self.cli.execute(req).await {
+                Ok(response) => response,
                 Err(err) => {
-                    let is_retryable = err.is_timeout() || err.is_connect() || err.is_request();
-                    if is_retryable {
-                        let reason = if err.is_timeout() {
-                            "request timeout"
-                        } else if err.is_connect() {
-                            "connection error"
-                        } else {
-                            "request error"
-                        };
-                        RetryDecision::retry_with_reason(Error::Request(err.to_string()), reason)
-                    } else {
-                        RetryDecision::no_retry(Error::Request(err.to_string()))
-                    }
-                }
-            };
-            if !decision.should_retry {
-                return Err(decision.error.with_context(&format!(
-                    "{} {}",
-                    request.method(),
-                    request.url()
-                )));
-            }
-            match &decision.error {
-                Error::AuthFailure(_) => {
-                    if refreshed {
-                        retries = 0;
-                    } else if retries >= max_retries.saturating_sub(1) {
-                        return Err(decision.error.with_context(&format!(
-                            "{} {} after {} retries",
-                            request.method(),
-                            request.url(),
-                            max_retries
-                        )));
-                    }
-                }
-                _ => {
-                    if retries >= max_retries.saturating_sub(1) {
-                        return Err(decision.error.with_context(&format!(
-                            "{} {} after {} retries",
-                            request.method(),
-                            request.url(),
-                            max_retries
-                        )));
-                    }
-                    retries += 1;
-                    if let Some(reason) = decision.reason {
-                        info!(
-                            "retry {}/{} for {} due to: {} (error: {})",
+                    if let Some(reason) = Self::retry_reason_for_reqwest(&err) {
+                        if retries >= max_retries.saturating_sub(1) {
+                            return Err(Self::with_request_context(
+                                err,
+                                &request_kind,
+                                &request,
+                                Some(retries),
+                            ));
+                        }
+                        retries += 1;
+                        warn!(
+                            "retry {}/{} for {} due to: {} (error: {}), retrying after {} seconds",
                             retries,
                             max_retries,
                             request.url(),
                             reason,
-                            decision.error
+                            err,
+                            retry_delay.as_secs(),
                         );
-                    } else {
-                        info!(
-                            "retry {}/{} for {} on error: {}",
+                        sleep(jitter(retry_delay)).await;
+                        continue;
+                    }
+                    return Err(Self::with_request_context(
+                        err,
+                        &request_kind,
+                        &request,
+                        Some(retries),
+                    ));
+                }
+            };
+
+            let status = response.status();
+            let headers = response.headers().clone();
+            let body = match response.bytes().await {
+                Ok(body) => body,
+                Err(err) => {
+                    if let Some(reason) = Self::retry_reason_for_reqwest(&err) {
+                        if retries >= max_retries.saturating_sub(1) {
+                            return Err(Self::with_request_context(
+                                err,
+                                &request_kind,
+                                &request,
+                                Some(retries),
+                            ));
+                        }
+                        retries += 1;
+                        warn!(
+                            "retry {}/{} for {} due to: {} (error: {}), retrying after {} seconds",
                             retries,
                             max_retries,
                             request.url(),
-                            decision.error
+                            reason,
+                            err,
+                            retry_delay.as_secs(),
                         );
+                        sleep(jitter(retry_delay)).await;
+                        continue;
+                    }
+                    return Err(Self::with_request_context(
+                        err,
+                        &request_kind,
+                        &request,
+                        Some(retries),
+                    ));
+                }
+            };
+
+            if retry_if_503 && status == StatusCode::SERVICE_UNAVAILABLE {
+                if retries >= max_retries.saturating_sub(1) {
+                    return Ok(HttpResponseData {
+                        status,
+                        headers,
+                        body,
+                    });
+                }
+                retries += 1;
+                warn!(
+                    "retry {}/{} for {} due to: service unavailable (503), server may be starting, retrying after {} seconds",
+                    retries,
+                    max_retries,
+                    request.url(),
+                    retry_delay.as_secs()
+                );
+                sleep(jitter(retry_delay)).await;
+                continue;
+            }
+
+            if status == StatusCode::UNAUTHORIZED {
+                request.headers_mut().remove(reqwest::header::AUTHORIZATION);
+                let unauthorized_error =
+                    serde_json::from_slice::<ResponseWithErrorCode>(&body).ok();
+                if let Some(session_token_info) = &self.session_token_info {
+                    let should_refresh = unauthorized_error
+                        .as_ref()
+                        .map(|r| need_refresh_token(r.error.code))
+                        .unwrap_or(false);
+                    if refresh_if_401 && should_refresh && !refreshed {
+                        Box::pin(self.refresh_session_token(session_token_info.clone())).await?;
+                        refreshed = true;
+                        retries = 0;
+                        warn!(
+                            "retry for {} due to: session token expired and refreshed, retrying after {} seconds",
+                            request.url(),
+                            retry_delay.as_secs()
+                        );
+                        sleep(jitter(retry_delay)).await;
+                        continue;
                     }
                 }
+                if reload_auth_if_401 && self.auth.can_reload() {
+                    if retries >= max_retries.saturating_sub(1) {
+                        return Ok(HttpResponseData {
+                            status,
+                            headers,
+                            body,
+                        });
+                    }
+                    retries += 1;
+                    let builder =
+                        RequestBuilder::from_parts(HttpClient::new(), request.try_clone().unwrap());
+                    let builder = self.auth.wrap(builder)?;
+                    request = builder.build()?;
+                    warn!(
+                        "retry {}/{} for {} due to: authentication token reloaded, retrying after {} seconds",
+                        retries,
+                        max_retries,
+                        request.url(),
+                        retry_delay.as_secs()
+                    );
+                    sleep(jitter(retry_delay)).await;
+                    continue;
+                }
             }
-            if let Some(reason) = decision.reason {
-                warn!(
-                    "retrying after {} seconds due to: {}",
-                    retry_delay.as_secs(),
-                    reason
-                );
-            } else {
-                warn!("retrying after {} seconds", retry_delay.as_secs());
-            }
-            sleep(jitter(retry_delay)).await;
+
+            return Ok(HttpResponseData {
+                status,
+                headers,
+                body,
+            });
         }
     }
 
