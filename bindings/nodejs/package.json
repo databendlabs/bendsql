@@ -56,7 +56,7 @@
     "docs": "typedoc",
     "format": "prettier --write .",
     "test": "cucumber-js",
-    "prepublishOnly": "napi prepublish -t npm"
+    "prepublishOnly": "napi prepublish -t npm --skip-gh-release"
   },
   "prettier": {
     "overrides": [
