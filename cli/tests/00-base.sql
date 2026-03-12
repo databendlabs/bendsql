@@ -46,6 +46,16 @@ $$;
 select 'in comment block';
 */
 
+select 'stmt before comment'; /* unclosed
+block comment here
+*/ select 'stmt after comment';
+
+select 'line comment with /*'; -- /*
+
+/* closed */ /* also closed */ select 'after closed comments'; /* unclosed
+still in comment
+*/
+
 select 1.00 + 2.00, 3.00, 0.0000000170141183460469231731687303715884105727000, -0.0000000170141183460469231731687303715884105727000;
 select 10.234567899999999e80, 1234567890123456789012345678901234567890123456789012345678901234567890.1e-80, CAST('NaN' AS FLOAT), CAST('inf' AS DOUBLE);
 

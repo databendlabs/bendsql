@@ -136,10 +136,112 @@ impl SqlParser {
         parsed.statements
     }
 
+    /// Find the byte offset where an unclosed block comment (`/*`) begins.
+    /// Returns `None` if all block comments are properly closed.
+    /// Skips `--` line comments, `$$` dollar-quoted strings, and respects
+    /// single/double-quoted string literals.
+    /// Block comments are non-nested (matches tokenizer behaviour): the
+    /// first `*/` always closes the comment.
+    fn unclosed_block_comment_start(s: &str) -> Option<usize> {
+        let mut in_block_comment = false;
+        let mut open_pos = None;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut in_dollar_quote = false;
+        let mut in_line_comment = false;
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let c = bytes[i];
+
+            // Newline resets line-comment state.
+            if c == b'\n' {
+                in_line_comment = false;
+                i += 1;
+                continue;
+            }
+            if in_line_comment {
+                i += 1;
+                continue;
+            }
+
+            // Inside a block comment, only look for `*/`.
+            if in_block_comment {
+                if c == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                    in_block_comment = false;
+                    open_pos = None;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Inside a dollar-quoted string, only look for `$$`.
+            if in_dollar_quote {
+                if c == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'$' {
+                    in_dollar_quote = false;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+
+            match c {
+                b'\'' if !in_double_quote => in_single_quote = !in_single_quote,
+                b'"' if !in_single_quote => in_double_quote = !in_double_quote,
+                b'$' if !in_single_quote
+                    && !in_double_quote
+                    && i + 1 < bytes.len()
+                    && bytes[i + 1] == b'$' =>
+                {
+                    in_dollar_quote = true;
+                    i += 2;
+                    continue;
+                }
+                b'-' if !in_single_quote
+                    && !in_double_quote
+                    && i + 1 < bytes.len()
+                    && bytes[i + 1] == b'-' =>
+                {
+                    in_line_comment = true;
+                    i += 2;
+                    continue;
+                }
+                b'/' if !in_single_quote
+                    && !in_double_quote
+                    && i + 1 < bytes.len()
+                    && bytes[i + 1] == b'*' =>
+                {
+                    in_block_comment = true;
+                    open_pos = Some(i);
+                    i += 2;
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if in_block_comment {
+            open_pos
+        } else {
+            None
+        }
+    }
+
     /// Parse accumulated query text to extract complete statements
     fn parse_statements(&self, query: &str) -> ParseResult {
+        // Split off the unclosed block-comment tail so the tokenizer only
+        // sees text it can handle.  Statements before the `/*` are still
+        // extracted normally; the comment portion stays in `remaining`.
+        let (to_parse, comment_tail) = match Self::unclosed_block_comment_start(query) {
+            Some(pos) => (&query[..pos], &query[pos..]),
+            None => (query, ""),
+        };
+
         let mut statements = Vec::new();
-        let mut remaining_query = query.to_string();
+        let mut remaining_query = to_parse.to_string();
         let mut err = String::new();
 
         'Parser: loop {
@@ -182,6 +284,11 @@ impl SqlParser {
                 }
             }
             break;
+        }
+
+        // Re-attach the unclosed comment tail so it keeps accumulating.
+        if !comment_tail.is_empty() {
+            remaining_query.push_str(comment_tail);
         }
 
         ParseResult {
