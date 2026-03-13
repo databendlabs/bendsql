@@ -265,11 +265,21 @@ impl From<serde_json::Error> for Error {
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
         let e = e.without_url();
-        let source = e
-            .source()
-            .map(|s| format!(", source={}", s))
-            .unwrap_or_default();
-        Error::Request(format!("reqwest::Error: {}{}", e, source))
+        let mut source_chain = String::new();
+        let mut current = e.source();
+        if current.is_some() {
+            source_chain.push_str(", source_chain=");
+        }
+        let mut first = true;
+        while let Some(source) = current {
+            if !first {
+                source_chain.push_str(" -> ");
+            }
+            first = false;
+            source_chain.push_str(&source.to_string());
+            current = source.source();
+        }
+        Error::Request(format!("reqwest::Error: {}{}", e, source_chain))
     }
 }
 
