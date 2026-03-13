@@ -411,6 +411,7 @@ impl APIClient {
         cookie_provider.set_cookies(&mut initial_cookies, &Url::parse("https://a.com").unwrap());
         let mut cli_builder = HttpClient::builder()
             .user_agent(ua)
+            .connect_timeout(self.connect_timeout)
             .cookie_provider(Arc::new(cookie_provider))
             .pool_idle_timeout(Duration::from_secs(1));
         #[cfg(any(feature = "rustls", feature = "native-tls"))]
@@ -614,7 +615,10 @@ impl APIClient {
         }
         let mut builder = self.cli.post(endpoint.clone()).json(&req);
         builder = self.wrap_auth_or_session_token(builder)?;
-        let request = builder.headers(headers.clone()).build()?;
+        let request = builder
+            .headers(headers.clone())
+            .timeout(self.page_request_timeout)
+            .build()?;
         let response = self
             .query_request_helper(request, true, true, true, RequestKind::QueryStart)
             .await?;
@@ -1003,7 +1007,7 @@ impl APIClient {
         let builder = self.auth.wrap(builder)?;
         let request = builder
             .headers(headers.clone())
-            .timeout(self.connect_timeout)
+            .timeout(self.connect_timeout.saturating_add(Duration::from_secs(10)))
             .build()?;
         let response = self
             .query_request_helper(request, true, false, true, RequestKind::Login)
@@ -1146,7 +1150,7 @@ impl APIClient {
             .json(&body)
             .headers(headers.clone())
             .bearer_auth(session_token_info.refresh_token.clone())
-            .timeout(self.connect_timeout)
+            .timeout(self.connect_timeout.saturating_add(Duration::from_secs(10)))
             .build()?;
         let response = self
             .query_request_helper(request, true, false, false, RequestKind::SessionRefresh)
@@ -1428,7 +1432,7 @@ impl Default for APIClient {
             max_rows_in_buffer: None,
             max_rows_per_page: None,
             connect_timeout: Duration::from_secs(10),
-            page_request_timeout: Duration::from_secs(30),
+            page_request_timeout: Duration::from_secs(300),
             tls_ca_file: None,
             presign: Mutex::new(PresignMode::Auto),
             route_hint: RouteHintGenerator::new(),
