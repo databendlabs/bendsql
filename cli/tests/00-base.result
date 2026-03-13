@@ -25,6 +25,10 @@ with error 'unable to recognize the rest tokens'
 aa
 "def add(a, b):
 	a + b"
+stmt before comment
+stmt after comment
+line comment with /*
+after closed comments
 3.00	3.00	0.0000000170141183460469231731687303715884105727000	-0.0000000170141183460469231731687303715884105727000
 1.0234567899999998e+81	1.2345678901234568e-11	NaN	inf
 Asia/Shanghai
