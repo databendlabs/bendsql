@@ -49,16 +49,15 @@ pub enum Error {
     Convert(ConvertError),
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Error {
+    fn formatted_message(&self) -> String {
         match self {
-            Error::Parsing(msg) => write!(f, "ParseError: {msg}"),
-            Error::Protocol(msg) => write!(f, "ProtocolError: {msg}"),
-            Error::Transport(msg) => write!(f, "TransportError: {msg}"),
-            Error::IO(msg) => write!(f, "IOError: {msg}"),
-
-            Error::BadArgument(msg) => write!(f, "BadArgument: {msg}"),
-            Error::InvalidResponse(msg) => write!(f, "ResponseError: {msg}"),
+            Error::Parsing(msg) => format!("ParseError: {msg}"),
+            Error::Protocol(msg) => format!("ProtocolError: {msg}"),
+            Error::Transport(msg) => format!("TransportError: {msg}"),
+            Error::IO(msg) => format!("IOError: {msg}"),
+            Error::BadArgument(msg) => format!("BadArgument: {msg}"),
+            Error::InvalidResponse(msg) => format!("ResponseError: {msg}"),
             Error::Arrow(e) => {
                 let msg = match e {
                     arrow_schema::ArrowError::IoError(msg, _) => {
@@ -72,15 +71,25 @@ impl std::fmt::Display for Error {
                     }
                     other => format!("{other}"),
                 };
-                write!(f, "ArrowError: {msg}")
+                format!("ArrowError: {msg}")
             }
-            Error::Convert(e) => write!(
-                f,
+            Error::Convert(e) => format!(
                 "ConvertError: cannot convert {} to {}: {:?}",
                 e.data, e.target, e.message
             ),
-            Error::Api(e) => write!(f, "APIError: {e}"),
+            Error::Api(e) => format!("APIError: {e}"),
         }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} [v{}]",
+            self.formatted_message(),
+            env!("CARGO_PKG_VERSION")
+        )
     }
 }
 
