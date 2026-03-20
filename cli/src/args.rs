@@ -61,7 +61,7 @@ impl ConnectionArgs {
                 args.insert(k.to_string(), v.to_string());
             }
         }
-        let flight = matches!(u.scheme(), "databend+flight");
+        let flight = u.scheme().ends_with("+flight");
         let host = u.host_str().ok_or(anyhow!("missing host"))?.to_string();
         let port = u.port();
         let user = u.username().to_string();

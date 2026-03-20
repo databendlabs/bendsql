@@ -429,7 +429,10 @@ impl APIClient {
     async fn check_presign(self: &Arc<Self>) -> Result<()> {
         let mode = match self.get_presign_mode() {
             PresignMode::Auto => {
-                if self.host.ends_with(".databend.com") || self.host.ends_with(".databend.cn") {
+                if self.host.ends_with(".databend.com")
+                    || self.host.ends_with(".databend.cn")
+                    || self.host.ends_with(".tidbcloud.com")
+                {
                     PresignMode::On
                 } else {
                     PresignMode::Off
