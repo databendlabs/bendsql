@@ -40,19 +40,26 @@ fn sql_string_to_json(s: &str) -> serde_json::Value {
     if s == "NULL" {
         return serde_json::Value::Null;
     }
-    if s == "TRUE" {
+    // Accept both uppercase (from Param for bool) and lowercase (from serde_json::Value::Bool)
+    if s.eq_ignore_ascii_case("TRUE") {
         return serde_json::Value::Bool(true);
     }
-    if s == "FALSE" {
+    if s.eq_ignore_ascii_case("FALSE") {
         return serde_json::Value::Bool(false);
     }
-    // Try integer
+    // Try i64 first
     if let Ok(n) = s.parse::<i64>() {
         return serde_json::json!(n);
     }
-    // Try float
-    if let Ok(n) = s.parse::<f64>() {
+    // Try u64 for values above i64::MAX (e.g. large u64/u128 IDs)
+    if let Ok(n) = s.parse::<u64>() {
         return serde_json::json!(n);
+    }
+    // Try float (only if not a pure integer string, to avoid precision loss on u128/i128)
+    if s.contains('.') || s.contains('e') || s.contains('E') {
+        if let Ok(n) = s.parse::<f64>() {
+            return serde_json::json!(n);
+        }
     }
     // Strip surrounding single quotes for strings
     if s.starts_with('\'') && s.ends_with('\'') && s.len() >= 2 {
@@ -452,6 +459,17 @@ mod tests {
         let params: Params = (Some(42), None::<()>, Some("world")).into();
         let json = params.to_json_value();
         assert_eq!(json, serde_json::json!([42, null, "world"]));
+
+        // Test lowercase bool (from serde_json::Value::Bool)
+        let params: Params = serde_json::json!([true, false]).into();
+        let json = params.to_json_value();
+        assert_eq!(json, serde_json::json!([true, false]));
+
+        // Test large u64 above i64::MAX
+        let big: u64 = u64::MAX;
+        let params = Params::QuestionParams(vec![big.to_string()]);
+        let json = params.to_json_value();
+        assert_eq!(json, serde_json::json!([big]));
     }
 
     #[test]
