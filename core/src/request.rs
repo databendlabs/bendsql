@@ -26,6 +26,8 @@ pub struct QueryRequest<'a> {
     pagination: Option<PaginationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stage_attachment: Option<StageAttachmentConfig<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Debug)]
@@ -54,6 +56,7 @@ impl<'r, 't: 'r> QueryRequest<'r> {
             sql,
             pagination: None,
             stage_attachment: None,
+            params: None,
         }
     }
 
@@ -72,6 +75,11 @@ impl<'r, 't: 'r> QueryRequest<'r> {
         stage_attachment: Option<StageAttachmentConfig<'t>>,
     ) -> Self {
         self.stage_attachment = stage_attachment;
+        self
+    }
+
+    pub fn with_params(mut self, params: Option<serde_json::Value>) -> Self {
+        self.params = params;
         self
     }
 }
@@ -101,6 +109,20 @@ mod test {
             serde_json::to_string(&req)?,
             r#"{"session":{"database":"default"},"sql":"select 1","pagination":{"wait_time_secs":1,"max_rows_in_buffer":1,"max_rows_per_page":1},"stage_attachment":{"location":"@~/my_location"}}"#
         );
+        Ok(())
+    }
+
+    #[test]
+    fn build_request_with_params() -> Result<()> {
+        let req = QueryRequest::new("SELECT ? + ?").with_params(Some(serde_json::json!([1, 2])));
+        assert_eq!(
+            serde_json::to_string(&req)?,
+            r#"{"sql":"SELECT ? + ?","params":[1,2]}"#
+        );
+
+        // params=None should not appear in serialized output
+        let req = QueryRequest::new("SELECT 1").with_params(None);
+        assert_eq!(serde_json::to_string(&req)?, r#"{"sql":"SELECT 1"}"#);
         Ok(())
     }
 }

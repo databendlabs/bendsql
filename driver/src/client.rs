@@ -22,14 +22,17 @@ use url::Url;
 use crate::conn::IConnection;
 #[cfg(feature = "flight-sql")]
 use crate::flight_sql::FlightSQLConnection;
+use crate::placeholder::PlaceholderVisitor;
 use crate::ConnectionInfo;
 use crate::Params;
 
 use databend_client::PresignedResponse;
+use databend_common_ast::parser::Dialect;
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::raw_rows::{RawRow, RawRowIterator};
 use databend_driver_core::rows::{Row, RowIterator, RowStatsIterator, ServerStats};
 use databend_driver_core::value::Value;
+use tokio_stream::StreamExt;
 
 use crate::rest_api::RestAPIConnection;
 
@@ -448,21 +451,66 @@ impl<'a> QueryBuilder<'a> {
     }
 
     pub async fn iter(self) -> Result<RowIterator> {
+        if let Some(params) = &self.params {
+            if self.should_use_server_side_params() {
+                let json_params = params.to_json_value();
+                return self
+                    .connection
+                    .inner
+                    .query_iter_with_params(&self.sql, Some(json_params))
+                    .await;
+            }
+        }
         let sql = self.get_final_sql();
         self.connection.inner.query_iter(&sql).await
     }
 
     pub async fn iter_ext(self) -> Result<RowStatsIterator> {
+        if let Some(params) = &self.params {
+            if self.should_use_server_side_params() {
+                let json_params = params.to_json_value();
+                return self
+                    .connection
+                    .inner
+                    .query_iter_ext_with_params(&self.sql, Some(json_params))
+                    .await;
+            }
+        }
         let sql = self.get_final_sql();
         self.connection.inner.query_iter_ext(&sql).await
     }
 
     pub async fn one(self) -> Result<Option<Row>> {
+        if let Some(params) = &self.params {
+            if self.should_use_server_side_params() {
+                let json_params = params.to_json_value();
+                let mut rows = self
+                    .connection
+                    .inner
+                    .query_iter_with_params(&self.sql, Some(json_params))
+                    .await?;
+                return match rows.next().await {
+                    Some(r) => Ok(Some(r?)),
+                    None => Ok(None),
+                };
+            }
+        }
         let sql = self.get_final_sql();
         self.connection.inner.query_row(&sql).await
     }
 
     pub async fn all(self) -> Result<Vec<Row>> {
+        if let Some(params) = &self.params {
+            if self.should_use_server_side_params() {
+                let json_params = params.to_json_value();
+                let rows = self
+                    .connection
+                    .inner
+                    .query_iter_with_params(&self.sql, Some(json_params))
+                    .await?;
+                return rows.collect().await;
+            }
+        }
         let sql = self.get_final_sql();
         self.connection.inner.query_all(&sql).await
     }
@@ -480,6 +528,29 @@ impl<'a> QueryBuilder<'a> {
         };
         let row_iter = self.connection.inner.query_iter(&final_sql).await?;
         Ok(QueryCursor::new(row_iter))
+    }
+
+    /// Check if we should use server-side parameter binding.
+    /// Returns true when the server supports it AND the SQL does not contain `$N` placeholders.
+    fn should_use_server_side_params(&self) -> bool {
+        if !self.connection.inner.supports_server_side_params() {
+            return false;
+        }
+        !self.has_dollar_placeholders()
+    }
+
+    /// Detect if the SQL contains `$N` column position placeholders.
+    fn has_dollar_placeholders(&self) -> bool {
+        let tokens = match databend_common_ast::parser::tokenize_sql(&self.sql) {
+            Ok(t) => t,
+            Err(_) => return false,
+        };
+        if let Ok((stmt, _)) = databend_common_ast::parser::parse_sql(&tokens, Dialect::PostgreSQL)
+        {
+            let mut visitor = PlaceholderVisitor::new();
+            return visitor.has_dollar_positions(&stmt);
+        }
+        false
     }
 
     fn get_final_sql(&self) -> String {
@@ -512,11 +583,41 @@ impl<'a> ExecBuilder<'a> {
     }
 
     pub async fn execute(self) -> Result<i64> {
+        if let Some(ref params) = self.params {
+            if self.should_use_server_side_params() {
+                let json_params = params.to_json_value();
+                return self
+                    .connection
+                    .inner
+                    .exec_with_params(&self.sql, Some(json_params))
+                    .await;
+            }
+        }
         let sql = match self.params {
             Some(params) => params.replace(&self.sql),
             None => self.sql,
         };
         self.connection.inner.exec(&sql).await
+    }
+
+    fn should_use_server_side_params(&self) -> bool {
+        if !self.connection.inner.supports_server_side_params() {
+            return false;
+        }
+        !self.has_dollar_placeholders()
+    }
+
+    fn has_dollar_placeholders(&self) -> bool {
+        let tokens = match databend_common_ast::parser::tokenize_sql(&self.sql) {
+            Ok(t) => t,
+            Err(_) => return false,
+        };
+        if let Ok((stmt, _)) = databend_common_ast::parser::parse_sql(&tokens, Dialect::PostgreSQL)
+        {
+            let mut visitor = PlaceholderVisitor::new();
+            return visitor.has_dollar_positions(&stmt);
+        }
+        false
     }
 }
 

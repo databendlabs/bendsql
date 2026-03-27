@@ -96,6 +96,56 @@ fn to_sql_string(v: Bound<PyAny>) -> PyResult<String> {
     }
 }
 
+/// Convert Python params directly to JSON values, preserving native types.
+pub(crate) fn to_json_params(v: Option<Bound<PyAny>>) -> Option<serde_json::Value> {
+    match v {
+        Some(v) => {
+            if let Ok(v) = v.downcast::<PyDict>() {
+                let mut map = serde_json::Map::new();
+                for (k, v) in v.iter() {
+                    let k = k.extract::<String>().unwrap();
+                    let v = py_to_json(v).unwrap();
+                    map.insert(k, v);
+                }
+                Some(serde_json::Value::Object(map))
+            } else if let Ok(v) = v.downcast::<PyList>() {
+                let arr: Vec<serde_json::Value> =
+                    v.iter().map(|v| py_to_json(v).unwrap()).collect();
+                Some(serde_json::Value::Array(arr))
+            } else if let Ok(v) = v.downcast::<PyTuple>() {
+                let arr: Vec<serde_json::Value> =
+                    v.iter().map(|v| py_to_json(v).unwrap()).collect();
+                Some(serde_json::Value::Array(arr))
+            } else {
+                Some(serde_json::Value::Array(vec![py_to_json(v).unwrap()]))
+            }
+        }
+        None => None,
+    }
+}
+
+fn py_to_json(v: Bound<PyAny>) -> PyResult<serde_json::Value> {
+    if v.is_none() {
+        return Ok(serde_json::Value::Null);
+    }
+    // Check bool before int (bool is a subclass of int in Python)
+    if let Ok(v) = v.extract::<bool>() {
+        return Ok(serde_json::Value::Bool(v));
+    }
+    if let Ok(v) = v.extract::<i64>() {
+        return Ok(serde_json::json!(v));
+    }
+    if let Ok(v) = v.extract::<f64>() {
+        return Ok(serde_json::json!(v));
+    }
+    if let Ok(v) = v.extract::<String>() {
+        return Ok(serde_json::Value::String(v));
+    }
+    Err(PyAttributeError::new_err(format!(
+        "Invalid parameter type for: {v:?}, expected str, bool, int or float"
+    )))
+}
+
 pub(super) fn options_as_ref(
     format_options: &Option<BTreeMap<String, String>>,
 ) -> Option<BTreeMap<&str, &str>> {

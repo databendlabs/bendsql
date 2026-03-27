@@ -35,6 +35,41 @@ impl Default for Params {
     }
 }
 
+/// Reverse-parse an `as_sql_string()` output back into a typed JSON value.
+fn sql_string_to_json(s: &str) -> serde_json::Value {
+    if s == "NULL" {
+        return serde_json::Value::Null;
+    }
+    if s == "TRUE" {
+        return serde_json::Value::Bool(true);
+    }
+    if s == "FALSE" {
+        return serde_json::Value::Bool(false);
+    }
+    // Try integer
+    if let Ok(n) = s.parse::<i64>() {
+        return serde_json::json!(n);
+    }
+    // Try float
+    if let Ok(n) = s.parse::<f64>() {
+        return serde_json::json!(n);
+    }
+    // Strip surrounding single quotes for strings
+    if s.starts_with('\'') && s.ends_with('\'') && s.len() >= 2 {
+        let inner = &s[1..s.len() - 1];
+        // Handle JSON cast suffix like '{"a": 1}'::JSON
+        return serde_json::Value::String(inner.to_string());
+    }
+    // Strip JSON cast suffix
+    if let Some(json_str) = s.strip_suffix("'::JSON") {
+        if let Some(inner) = json_str.strip_prefix('\'') {
+            return serde_json::Value::String(inner.to_string());
+        }
+    }
+    // Fallback: treat as string
+    serde_json::Value::String(s.to_string())
+}
+
 impl Params {
     pub fn len(&self) -> usize {
         match self {
@@ -74,6 +109,23 @@ impl Params {
                 map1.extend(map2);
             }
             _ => panic!("Cannot merge QuestionParams with NamedParams"),
+        }
+    }
+
+    /// Convert params to a JSON value suitable for server-side parameter binding.
+    /// `QuestionParams` → `Value::Array`, `NamedParams` → `Value::Object`.
+    pub fn to_json_value(&self) -> serde_json::Value {
+        match self {
+            Params::QuestionParams(vec) => {
+                serde_json::Value::Array(vec.iter().map(|s| sql_string_to_json(s)).collect())
+            }
+            Params::NamedParams(map) => {
+                let obj: serde_json::Map<String, serde_json::Value> = map
+                    .iter()
+                    .map(|(k, v)| (k.clone(), sql_string_to_json(v)))
+                    .collect();
+                serde_json::Value::Object(obj)
+            }
         }
     }
 
@@ -374,6 +426,32 @@ mod tests {
                 _ => panic!("Expected QuestionParams"),
             }
         }
+    }
+
+    #[test]
+    fn test_to_json_value() {
+        // Test positional params
+        let params = params! {1, "hello", 9.99};
+        let json = params.to_json_value();
+        assert_eq!(json, serde_json::json!([1, "hello", 9.99]));
+
+        // Test named params
+        let params = params! {a => 1, b => "hello", c => true};
+        let json = params.to_json_value();
+        let obj = json.as_object().unwrap();
+        assert_eq!(obj.get("a").unwrap(), &serde_json::json!(1));
+        assert_eq!(obj.get("b").unwrap(), &serde_json::json!("hello"));
+        assert_eq!(obj.get("c").unwrap(), &serde_json::json!(true));
+
+        // Test NULL
+        let params = params! {()};
+        let json = params.to_json_value();
+        assert_eq!(json, serde_json::json!([null]));
+
+        // Test Option<T>
+        let params: Params = (Some(42), None::<()>, Some("world")).into();
+        let json = params.to_json_value();
+        assert_eq!(json, serde_json::json!([42, null, "world"]));
     }
 
     #[test]

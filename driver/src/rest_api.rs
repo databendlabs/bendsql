@@ -62,7 +62,7 @@ impl RestAPIConnection {
         self.upload_to_stage(&location, data, size).await?;
         if self.client.capability().streaming_load {
             let sql = sql.replace(LOAD_PLACEHOLDER, &location);
-            let page = self.client.query_all(&sql).await?;
+            let page = self.client.query_all(&sql, None).await?;
             Ok(ServerStats::from(page.stats))
         } else {
             let file_format_options = Self::default_file_format_options();
@@ -168,9 +168,19 @@ impl IConnection for RestAPIConnection {
         Ok(())
     }
 
+    fn supports_server_side_params(&self) -> bool {
+        self.client.capability().server_side_params
+    }
+
     async fn exec(&self, sql: &str) -> Result<i64> {
         info!("exec: {}", sql);
-        let page = self.client.query_all(sql).await?;
+        let page = self.client.query_all(sql, None).await?;
+        Ok(page.stats.progresses.write_progress.rows as i64)
+    }
+
+    async fn exec_with_params(&self, sql: &str, params: Option<serde_json::Value>) -> Result<i64> {
+        info!("exec with params: {}", sql);
+        let page = self.client.query_all(sql, params).await?;
         Ok(page.stats.progresses.write_progress.rows as i64)
     }
 
@@ -187,7 +197,29 @@ impl IConnection for RestAPIConnection {
 
     async fn query_iter_ext(&self, sql: &str) -> Result<RowStatsIterator> {
         info!("query iter ext: {}", sql);
-        let pages = self.client.start_query(sql, true).await?;
+        let pages = self.client.start_query(sql, true, None).await?;
+        let (schema, rows) = RestAPIRows::<RowWithStats>::from_pages(pages).await?;
+        Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
+    }
+
+    async fn query_iter_with_params(
+        &self,
+        sql: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<RowIterator> {
+        info!("query iter with params: {}", sql);
+        let rows_with_progress = self.query_iter_ext_with_params(sql, params).await?;
+        let rows = rows_with_progress.filter_rows().await?;
+        Ok(rows)
+    }
+
+    async fn query_iter_ext_with_params(
+        &self,
+        sql: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<RowStatsIterator> {
+        info!("query iter ext with params: {}", sql);
+        let pages = self.client.start_query(sql, true, params).await?;
         let (schema, rows) = RestAPIRows::<RowWithStats>::from_pages(pages).await?;
         Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
     }
@@ -195,7 +227,7 @@ impl IConnection for RestAPIConnection {
     // raw data response query, only for test
     async fn query_raw_iter(&self, sql: &str) -> Result<RawRowIterator> {
         info!("query raw iter: {}", sql);
-        let pages = self.client.start_query(sql, true).await?;
+        let pages = self.client.start_query(sql, true, None).await?;
         let (schema, rows) = RestAPIRows::<RawRowWithStats>::from_pages(pages).await?;
         Ok(RawRowIterator::new(Arc::new(schema), Box::pin(rows)))
     }

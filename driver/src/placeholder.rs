@@ -76,6 +76,12 @@ impl PlaceholderVisitor {
         }
     }
 
+    /// Returns true if the SQL contains `$N` column position placeholders.
+    pub fn has_dollar_positions(&mut self, stmt: &Statement) -> bool {
+        stmt.drive(self);
+        !self.column_positions.is_empty()
+    }
+
     pub fn replace_sql(&mut self, params: &Params, stmt: &Statement, sql: &str) -> String {
         stmt.drive(self);
         self.placeholders.sort_by(|l, r| l.start.cmp(&r.start));
