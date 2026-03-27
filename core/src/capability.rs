@@ -18,6 +18,7 @@ use semver::Version;
 pub struct Capability {
     pub streaming_load: bool,
     pub arrow_data: bool,
+    pub server_side_params: bool,
 }
 
 impl Capability {
@@ -25,6 +26,8 @@ impl Capability {
         Capability {
             streaming_load: ver > &Version::new(1, 2, 781),
             arrow_data: ver > &Version::new(1, 2, 835),
+            // TODO: update version threshold when server PR gets a release version
+            server_side_params: ver > &Version::new(1, 2, 900),
         }
     }
 }
