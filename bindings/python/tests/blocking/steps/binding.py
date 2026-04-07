@@ -185,7 +185,7 @@ def _(context):
             f"geography: {row.values()}"
         )
         row = context.conn.query_row(
-            "settings(geometry_output_format='EWKT') SELECT st_point(60,37)"
+            "settings(geometry_output_format='WKT') SELECT st_point(60,37)"
         )
         assert row.values()[0] == "POINT(60 37)", f"geography: {row.values()}"
 
