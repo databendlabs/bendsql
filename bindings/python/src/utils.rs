@@ -15,7 +15,6 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use databend_driver::Param;
 use databend_driver::Params;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::types::PyTuple;
@@ -46,81 +45,23 @@ pub(crate) fn to_sql_params(v: Option<Bound<PyAny>>) -> Params {
                 let mut params = HashMap::new();
                 for (k, v) in v.iter() {
                     let k = k.extract::<String>().unwrap();
-                    let v = to_sql_string(v).unwrap();
+                    let v = py_to_json(v).unwrap();
                     params.insert(k, v);
                 }
                 Params::NamedParams(params)
             } else if let Ok(v) = v.downcast::<PyList>() {
-                let mut params = vec![];
-                for v in v.iter() {
-                    let v = to_sql_string(v).unwrap();
-                    params.push(v);
-                }
+                let params: Vec<serde_json::Value> =
+                    v.iter().map(|v| py_to_json(v).unwrap()).collect();
                 Params::QuestionParams(params)
             } else if let Ok(v) = v.downcast::<PyTuple>() {
-                let mut params = vec![];
-                for v in v.iter() {
-                    let v = to_sql_string(v).unwrap();
-                    params.push(v);
-                }
+                let params: Vec<serde_json::Value> =
+                    v.iter().map(|v| py_to_json(v).unwrap()).collect();
                 Params::QuestionParams(params)
             } else {
-                Params::QuestionParams(vec![to_sql_string(v).unwrap()])
+                Params::QuestionParams(vec![py_to_json(v).unwrap()])
             }
         }
         None => Params::default(),
-    }
-}
-
-fn to_sql_string(v: Bound<PyAny>) -> PyResult<String> {
-    if v.is_none() {
-        return Ok("NULL".to_string());
-    }
-    match v.downcast::<PyAny>() {
-        Ok(v) => {
-            if let Ok(v) = v.extract::<String>() {
-                Ok(v.as_sql_string())
-            } else if let Ok(v) = v.extract::<bool>() {
-                Ok(v.as_sql_string())
-            } else if let Ok(v) = v.extract::<i64>() {
-                Ok(v.as_sql_string())
-            } else if let Ok(v) = v.extract::<f64>() {
-                Ok(v.as_sql_string())
-            } else {
-                Err(PyAttributeError::new_err(format!(
-                    "Invalid parameter type for: {v:?}, expected str, bool, int or float"
-                )))
-            }
-        }
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// Convert Python params directly to JSON values, preserving native types.
-pub(crate) fn to_json_params(v: Option<Bound<PyAny>>) -> Option<serde_json::Value> {
-    match v {
-        Some(v) => {
-            if let Ok(v) = v.downcast::<PyDict>() {
-                let mut map = serde_json::Map::new();
-                for (k, v) in v.iter() {
-                    let k = k.extract::<String>().unwrap();
-                    let v = py_to_json(v).unwrap();
-                    map.insert(k, v);
-                }
-                Some(serde_json::Value::Object(map))
-            } else if let Ok(v) = v.downcast::<PyList>() {
-                let arr: Vec<serde_json::Value> =
-                    v.iter().map(|v| py_to_json(v).unwrap()).collect();
-                Some(serde_json::Value::Array(arr))
-            } else if let Ok(v) = v.downcast::<PyTuple>() {
-                let arr: Vec<serde_json::Value> =
-                    v.iter().map(|v| py_to_json(v).unwrap()).collect();
-                Some(serde_json::Value::Array(arr))
-            } else {
-                Some(serde_json::Value::Array(vec![py_to_json(v).unwrap()]))
-            }
-        }
-        None => None,
     }
 }
 

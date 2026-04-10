@@ -352,9 +352,9 @@ where
         let mut total_inserted = 0;
         for row in &self.rows {
             let values = row.to_values();
-            let param_strings: Vec<String> =
-                values.into_iter().map(|v| v.to_sql_string()).collect();
-            let params = Params::QuestionParams(param_strings);
+            let json_values: Vec<serde_json::Value> =
+                values.into_iter().map(|v| v.to_json_value()).collect();
+            let params = Params::QuestionParams(json_values);
             let inserted = connection.exec(&sql).bind(params).await?;
             total_inserted += inserted;
         }
