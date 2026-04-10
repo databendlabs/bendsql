@@ -25,6 +25,7 @@ use databend_common_ast::Range;
 use derive_visitor::Drive;
 use derive_visitor::Visitor;
 
+use crate::params::json_value_to_sql_string;
 use crate::Params;
 
 #[derive(Visitor)]
@@ -90,13 +91,13 @@ impl PlaceholderVisitor {
 
         for (index, range) in self.placeholders.iter().enumerate() {
             if let Some(v) = params.get_by_index(index + 1) {
-                results.push((v.to_string(), *range));
+                results.push((json_value_to_sql_string(v), *range));
             }
         }
 
         for (name, range) in self.names.iter() {
             if let Some(v) = params.get_by_name(name) {
-                results.push((v.to_string(), *range));
+                results.push((json_value_to_sql_string(v), *range));
             }
         }
 
@@ -118,7 +119,7 @@ impl PlaceholderVisitor {
                 if let Some(value) = params.get_by_index(*index) {
                     let start = r.start as usize;
                     let end = r.end as usize;
-                    sql.replace_range(start..end, value);
+                    sql.replace_range(start..end, &json_value_to_sql_string(value));
                 }
             }
         }
