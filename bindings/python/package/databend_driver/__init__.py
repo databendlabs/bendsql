@@ -15,6 +15,14 @@
 # flake8: noqa
 
 from ._databend_driver import *
+from .local import (
+    LocalConnection,
+    LocalRelation,
+    LocalRow,
+    LocalRowIterator,
+    connect,
+    connect_local,
+)
 
 # Export for convenience at module level
 __all__ = [
@@ -42,4 +50,11 @@ __all__ = [
     "Row",
     "RowIterator",
     "ServerStats",
+    # Local embedded mode
+    "LocalConnection",
+    "LocalRelation",
+    "LocalRow",
+    "LocalRowIterator",
+    "connect",
+    "connect_local",
 ]

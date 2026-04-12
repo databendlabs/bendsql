@@ -8,6 +8,54 @@ Databend Python Client
 
 ## Usage
 
+### Local Embedded Connection
+
+```python
+from databend_driver import connect
+
+conn = connect("databend+local:///./local-state")
+conn.exec("CREATE TABLE books(id INT, title STRING)")
+conn.exec("INSERT INTO books VALUES (1, 'Databend')")
+
+row = conn.query_row("SELECT title FROM books ORDER BY id LIMIT 1")
+rows = [row.values() for row in conn.query_iter("SELECT * FROM books ORDER BY id")]
+
+tenant_conn = connect("databend+local:///./local-state?tenant=default")
+```
+
+The local embedded API is defined by `databend-driver`, but it depends on the
+internal `databend` package at runtime. Install `databend-driver[local]` when
+you want this mode available in Python environments. The current embedded
+dependency is only available on Python 3.12 and later.
+
+Supported local targets:
+
+- `connect(":memory:")`: create a temporary embedded instance
+- `connect("databend+local:///:memory:")`: explicit temporary embedded instance
+- `connect("databend+local:///./local-state")`: persistent embedded state under `./local-state`
+- `connect("databend+local:///./local-state?tenant=default")`: persistent embedded state with an explicit tenant
+
+If the optional `databend` package is not installed, `connect()` will raise an
+ImportError with guidance about enabling the `local` extra and the current
+Python version requirement.
+
+For remote Databend, the same `connect()` entrypoint accepts standard DSNs:
+
+```python
+from databend_driver import connect
+
+conn = connect("databend://root:@localhost:8000/?sslmode=disable")
+row = conn.query_row("SELECT 1")
+```
+
+The local connection also keeps the embedded-specific relation API as an
+extension:
+
+```python
+relation = conn.sql("SELECT * FROM books")
+df = relation.df()
+```
+
 ### PEP 249 Cursor Object
 
 ```python
@@ -368,11 +416,14 @@ make up
 
 ```shell
 cd bindings/python
-uv sync
+uv python install 3.12
+uv venv --python 3.12
+uv sync --extra local
 source .venv/bin/activate
 maturin develop --uv
 
 behave tests/asyncio
 behave tests/blocking
 behave tests/cursor
+behave tests/local
 ```
