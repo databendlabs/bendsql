@@ -22,5 +22,6 @@ pub mod value;
 pub mod _macro_internal {
     pub use crate::error::{Error, Result};
     pub use crate::rows::{Row, RowIterator};
+    pub use crate::value::GeoValue;
     pub use crate::value::Value;
 }

@@ -19,8 +19,10 @@ use crate::cursor_ext::{
     ReadNumberExt,
 };
 use crate::error::{ConvertError, Result};
+use crate::value::base::GeoValue;
 use chrono::{Datelike, NaiveDate};
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
+use databend_client::ResultFormatSettings;
 use ethnum::i256;
 use hex;
 use jiff::{civil::DateTime as JiffDateTime, tz::TimeZone, Zoned};
@@ -33,12 +35,14 @@ const NULL_VALUE: &str = "NULL";
 const TRUE_VALUE: &str = "1";
 const FALSE_VALUE: &str = "0";
 
-impl TryFrom<(&DataType, Option<String>, &TimeZone)> for Value {
+impl TryFrom<(&DataType, Option<String>, &ResultFormatSettings)> for Value {
     type Error = Error;
 
-    fn try_from((t, v, tz): (&DataType, Option<String>, &TimeZone)) -> Result<Self> {
+    fn try_from(
+        (t, v, settings): (&DataType, Option<String>, &ResultFormatSettings),
+    ) -> Result<Self> {
         match v {
-            Some(v) => Self::try_from((t, v, tz)),
+            Some(v) => Self::try_from((t, v, settings)),
             None => match t {
                 DataType::Null => Ok(Self::Null),
                 DataType::Nullable(_) => Ok(Self::Null),
@@ -50,10 +54,10 @@ impl TryFrom<(&DataType, Option<String>, &TimeZone)> for Value {
     }
 }
 
-impl TryFrom<(&DataType, String, &TimeZone)> for Value {
+impl TryFrom<(&DataType, String, &ResultFormatSettings)> for Value {
     type Error = Error;
 
-    fn try_from((t, v, tz): (&DataType, String, &TimeZone)) -> Result<Self> {
+    fn try_from((t, v, settings): (&DataType, String, &ResultFormatSettings)) -> Result<Self> {
         match t {
             DataType::Null => Ok(Self::Null),
             DataType::EmptyArray => Ok(Self::EmptyArray),
@@ -103,7 +107,7 @@ impl TryFrom<(&DataType, String, &TimeZone)> for Value {
                 let d = parse_decimal(v.as_str(), *size)?;
                 Ok(Self::Number(d))
             }
-            DataType::Timestamp => parse_timestamp(v.as_str(), tz),
+            DataType::Timestamp => parse_timestamp(v.as_str(), &settings.timezone),
             DataType::TimestampTz => {
                 let t = Zoned::strptime(TIMESTAMP_TIMEZONE_FORMAT, v.as_str())?;
                 Ok(Self::TimestampTz(t))
@@ -114,13 +118,19 @@ impl TryFrom<(&DataType, String, &TimeZone)> for Value {
             )),
             DataType::Bitmap => Ok(Self::Bitmap(v)),
             DataType::Variant => Ok(Self::Variant(v)),
-            DataType::Geometry => Ok(Self::Geometry(v)),
-            DataType::Geography => Ok(Self::Geography(v)),
+            DataType::Geometry => Ok(Self::Geometry(GeoValue::from_string(
+                v,
+                settings.geometry_output_format,
+            )?)),
+            DataType::Geography => Ok(Self::Geography(GeoValue::from_string(
+                v,
+                settings.geometry_output_format,
+            )?)),
             DataType::Interval => Ok(Self::Interval(v)),
             DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) | DataType::Vector(_) => {
                 let mut reader = Cursor::new(v.as_str());
                 let decoder = ValueDecoder {
-                    timezone: tz.clone(),
+                    settings: settings.clone(),
                 };
                 decoder.read_field(t, &mut reader)
             }
@@ -132,7 +142,7 @@ impl TryFrom<(&DataType, String, &TimeZone)> for Value {
                     if v == NULL_VALUE {
                         Ok(Self::Null)
                     } else {
-                        Self::try_from((inner.as_ref(), v, tz))
+                        Self::try_from((inner.as_ref(), v, settings))
                     }
                 }
             },
@@ -141,7 +151,7 @@ impl TryFrom<(&DataType, String, &TimeZone)> for Value {
 }
 
 struct ValueDecoder {
-    pub timezone: TimeZone,
+    pub settings: ResultFormatSettings,
 }
 
 impl ValueDecoder {
@@ -313,7 +323,7 @@ impl ValueDecoder {
             reader.read_quoted_text(&mut buf, b'\'')?;
         }
         let v = unsafe { std::str::from_utf8_unchecked(&buf) };
-        parse_timestamp(v, &self.timezone)
+        parse_timestamp(v, &self.settings.timezone)
     }
 
     fn read_timestamp_tz<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -353,29 +363,23 @@ impl ValueDecoder {
     }
 
     fn read_geometry<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
-        let mut buf = Vec::new();
-        if reader.read_quoted_text(&mut buf, b'"').is_ok()
-            || reader.read_quoted_text(&mut buf, b'\'').is_ok()
-        {
-            Ok(Value::Geometry(unsafe { String::from_utf8_unchecked(buf) }))
-        } else {
-            let val = self.read_json(reader)?;
-            Ok(Value::Geometry(val))
-        }
+        Ok(Value::Geometry(self.read_geo(reader)?))
     }
 
-    fn read_geography<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+    fn read_geo<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<GeoValue> {
         let mut buf = Vec::new();
         if reader.read_quoted_text(&mut buf, b'"').is_ok()
             || reader.read_quoted_text(&mut buf, b'\'').is_ok()
         {
-            Ok(Value::Geography(unsafe {
-                String::from_utf8_unchecked(buf)
-            }))
+            let s = unsafe { String::from_utf8_unchecked(buf) };
+            GeoValue::from_string(s, self.settings.geometry_output_format)
         } else {
             let val = self.read_json(reader)?;
-            Ok(Value::Geography(val))
+            Ok(GeoValue::String(val))
         }
+    }
+    fn read_geography<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        Ok(Value::Geography(self.read_geo(reader)?))
     }
 
     fn read_nullable<R: AsRef<[u8]>>(

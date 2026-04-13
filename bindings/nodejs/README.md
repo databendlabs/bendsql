@@ -98,8 +98,8 @@ await conn.close();
 | `MAP`       | `Object`          |
 | `VARIANT`   | `String / Object` |
 | `BITMAP`    | `String`          |
-| `GEOMETRY`  | `String`          |
-| `GEOGRAPHY` | `String`          |
+| `GEOMETRY`  | `String / Buffer` |
+| `GEOGRAPHY` | `String / Buffer` |
 
 Note: `VARIANT` is a json encoded string. Example:
 
@@ -116,6 +116,8 @@ const data = row.values()[0];
 const value = JSON.parse(data);
 console.log(value);
 ```
+
+`GEOMETRY` and `GEOGRAPHY` return `Buffer` for `WKB` / `EWKB` output formats, and `String` for text formats such as `GeoJSON` or `WKT`.
 
 We also provide a helper function to convert `VARIANT` to `Object`:
 

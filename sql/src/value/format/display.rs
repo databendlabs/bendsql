@@ -75,6 +75,7 @@ impl Value {
                 write!(f, "{s}")
             }
             Value::Geometry(s) | Value::Geography(s) => {
+                let s = s.to_string();
                 if raw || s.starts_with('{') {
                     write!(f, "{s}")
                 } else {
