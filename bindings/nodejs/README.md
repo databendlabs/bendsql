@@ -117,7 +117,16 @@ const value = JSON.parse(data);
 console.log(value);
 ```
 
-`GEOMETRY` and `GEOGRAPHY` return `Buffer` for `WKB` / `EWKB` output formats, and `String` for text formats such as `GeoJSON` or `WKT`.
+`GEOMETRY` and `GEOGRAPHY` follow the current `geometry_output_format` setting. Text formats such as `GeoJSON` or `WKT` return `String`; binary formats such as `WKB` or `EWKB` return `Buffer`.
+
+For example:
+
+```javascript
+const row = await conn.queryRow(
+  "settings(geometry_output_format='WKB') SELECT st_point(60, 37)",
+);
+console.log(Buffer.isBuffer(row.values()[0]));
+```
 
 We also provide a helper function to convert `VARIANT` to `Object`:
 
