@@ -13,8 +13,10 @@
 // limitations under the License.
 
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
+use databend_client::GeometryDataType;
 use ethnum::i256;
 use jiff::Zoned;
+use std::borrow::Cow;
 
 // Thu 1970-01-01 is R.D. 719163
 pub(crate) const DAYS_FROM_CE: i32 = 719_163;
@@ -39,6 +41,39 @@ pub enum NumberValue {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum GeoValue {
+    String(String),
+    Binary(Vec<u8>),
+}
+
+impl GeoValue {
+    pub fn from_string(s: String, typ: GeometryDataType) -> crate::error::Result<Self> {
+        match typ {
+            GeometryDataType::WKB | GeometryDataType::EWKB => {
+                Ok(GeoValue::Binary(hex::decode(&s).map_err(|_| {
+                    crate::error::Error::Parsing(format!("fail to unhex {:?} data: {}", typ, s))
+                })?))
+            }
+            _ => Ok(GeoValue::String(s)),
+        }
+    }
+
+    pub fn from_binary(v: Vec<u8>, typ: GeometryDataType) -> crate::error::Result<Self> {
+        match typ {
+            GeometryDataType::WKB | GeometryDataType::EWKB => Ok(GeoValue::Binary(v)),
+            _ => Ok(GeoValue::String(unsafe { String::from_utf8_unchecked(v) })),
+        }
+    }
+
+    pub fn to_string(&self) -> Cow<'_, String> {
+        match self {
+            Self::String(s) => Cow::Borrowed(s),
+            Self::Binary(v) => Cow::Owned(hex::encode_upper(v)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Null,
     EmptyArray,
@@ -56,8 +91,8 @@ pub enum Value {
     Tuple(Vec<Value>),
     Bitmap(String),
     Variant(String),
-    Geometry(String),
-    Geography(String),
+    Geometry(GeoValue),
+    Geography(GeoValue),
     Interval(String),
     Vector(Vec<f32>),
 }

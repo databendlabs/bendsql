@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use super::{Interval, NumberValue, Value};
 use crate::error::{ConvertError, Error};
-use crate::value::geo::convert_geometry;
+use crate::value::base::GeoValue;
 use arrow_array::{
     Array as ArrowArray, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
     Decimal64Array, Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, Int8Array,
@@ -166,13 +166,10 @@ impl
                         return Ok(Value::Null);
                     }
                     match array.as_any().downcast_ref::<LargeBinaryArray>() {
-                        Some(array) => {
-                            let value = convert_geometry(
-                                array.value(seq),
-                                settings.geometry_output_format,
-                            )?;
-                            Ok(Value::Geometry(value))
-                        }
+                        Some(array) => Ok(Value::Geometry(GeoValue::from_binary(
+                            array.value(seq).to_vec(),
+                            settings.geometry_output_format,
+                        )?)),
                         None => Err(ConvertError::new("geometry", format!("{array:?}")).into()),
                     }
                 }
@@ -181,13 +178,10 @@ impl
                         return Ok(Value::Null);
                     }
                     match array.as_any().downcast_ref::<LargeBinaryArray>() {
-                        Some(array) => {
-                            let value = convert_geometry(
-                                array.value(seq),
-                                settings.geometry_output_format,
-                            )?;
-                            Ok(Value::Geography(value))
-                        }
+                        Some(array) => Ok(Value::Geography(GeoValue::from_binary(
+                            array.value(seq).to_vec(),
+                            settings.geometry_output_format,
+                        )?)),
                         None => Err(ConvertError::new("geography", format!("{array:?}")).into()),
                     }
                 }
