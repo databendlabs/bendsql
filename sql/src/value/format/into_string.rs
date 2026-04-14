@@ -30,8 +30,8 @@ impl TryFrom<Value> for String {
             }
             Value::Number(NumberValue::Decimal128(v, s)) => Ok(display_decimal_128(v, s.scale)),
             Value::Number(NumberValue::Decimal256(v, s)) => Ok(display_decimal_256(v, s.scale)),
-            Value::Geometry(s) => Ok(s),
-            Value::Geography(s) => Ok(s),
+            Value::Geometry(s) => Ok(s.to_string().to_string()),
+            Value::Geography(s) => Ok(s.to_string().to_string()),
             Value::Interval(s) => Ok(s),
             Value::Variant(s) => Ok(s),
             Value::Date(d) => {

@@ -33,6 +33,7 @@ use crate::exceptions::map_error_to_exception;
 use crate::utils::wait_for_future;
 #[cfg(feature = "cp38")]
 use databend_driver::{self, zoned_to_chrono_datetime, zoned_to_chrono_fixed_offset};
+use databend_driver_core::value::GeoValue;
 
 pub static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -129,8 +130,20 @@ impl<'py> IntoPyObject<'py> for Value {
             }
             databend_driver::Value::Bitmap(s) => s.into_bound_py_any(py)?,
             databend_driver::Value::Variant(s) => s.into_bound_py_any(py)?,
-            databend_driver::Value::Geometry(s) => s.into_bound_py_any(py)?,
-            databend_driver::Value::Geography(s) => s.into_bound_py_any(py)?,
+            databend_driver::Value::Geometry(s) => match s {
+                GeoValue::String(s) => s.into_bound_py_any(py)?,
+                GeoValue::Binary(b) => {
+                    let buf = PyBytes::new(py, &b);
+                    buf.into_bound_py_any(py)?
+                }
+            },
+            databend_driver::Value::Geography(s) => match s {
+                GeoValue::String(s) => s.into_bound_py_any(py)?,
+                GeoValue::Binary(b) => {
+                    let buf = PyBytes::new(py, &b);
+                    buf.into_bound_py_any(py)?
+                }
+            },
             databend_driver::Value::Interval(s) => {
                 let value = databend_driver::Interval::from_string(&s).unwrap();
                 let total_micros = (value.months as i64) * 30 * 86400000000

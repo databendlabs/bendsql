@@ -88,10 +88,11 @@ impl Value {
                 bytes.extend_from_slice(s.as_bytes());
             }
             Value::Geometry(s) | Value::Geography(s) => {
+                let s = s.to_string();
                 if s.starts_with('{') {
                     bytes.extend_from_slice(s.as_bytes());
                 } else {
-                    Self::write_string(bytes, s, raw);
+                    Self::write_string(bytes, &s, raw);
                 }
             }
             Value::Timestamp(dt) => {

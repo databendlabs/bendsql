@@ -98,8 +98,8 @@ await conn.close();
 | `MAP`       | `Object`          |
 | `VARIANT`   | `String / Object` |
 | `BITMAP`    | `String`          |
-| `GEOMETRY`  | `String`          |
-| `GEOGRAPHY` | `String`          |
+| `GEOMETRY`  | `String / Buffer` |
+| `GEOGRAPHY` | `String / Buffer` |
 
 Note: `VARIANT` is a json encoded string. Example:
 
@@ -115,6 +115,17 @@ const row = await conn.queryRow("SELECT * FROM example limit 1;");
 const data = row.values()[0];
 const value = JSON.parse(data);
 console.log(value);
+```
+
+`GEOMETRY` and `GEOGRAPHY` follow the current `geometry_output_format` setting. Text formats such as `GeoJSON` or `WKT` return `String`; binary formats such as `WKB` or `EWKB` return `Buffer`.
+
+For example:
+
+```javascript
+const row = await conn.queryRow(
+  "settings(geometry_output_format='WKB') SELECT st_point(60, 37)",
+);
+console.log(Buffer.isBuffer(row.values()[0]));
 ```
 
 We also provide a helper function to convert `VARIANT` to `Object`:

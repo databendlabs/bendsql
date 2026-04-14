@@ -45,6 +45,10 @@ const dsn = process.env.TEST_DATABEND_DSN
   ? process.env.TEST_DATABEND_DSN
   : "databend://root:@localhost:8000/default?sslmode=disable";
 
+const POINT_GEOJSON = '{"type": "Point", "coordinates": [60,37]}';
+const POINT_WKT = "POINT(60 37)";
+const POINT_WKB = Buffer.from("01010000000000000000004E400000000000804240", "hex");
+
 Given("A new Databend Driver Client", async function () {
   this.client = new Client(dsn);
   const conn = await this.client.getConn();
@@ -225,6 +229,23 @@ Then("Select types should be expected native types", async function () {
   if (!(DRIVER_VERSION > [0, 30, 3] && DB_VERSION >= [1, 2, 836])) {
     const row = await this.conn.queryRow(`SELECT to_datetime_tz('2024-04-16 12:34:56.789 +0800'))`);
     assert.deepEqual(row.values(), [new Date("2024-04-16 04:34:56.789Z")]);
+  }
+
+  if (DRIVER_VERSION > [0, 31, 0] && DB_VERSION > [1, 2, 894]) {
+    {
+      const row = await this.conn.queryRow("SELECT st_point(60,37)");
+      assert.deepEqual(row.values(), [POINT_GEOJSON]);
+    }
+
+    {
+      const row = await this.conn.queryRow("settings(geometry_output_format='WKT') SELECT st_point(60,37)");
+      assert.deepEqual(row.values(), [POINT_WKT]);
+    }
+
+    {
+      const row = await this.conn.queryRow("settings(geometry_output_format='WKB') SELECT st_point(60,37)");
+      assert.deepEqual(row.values(), [POINT_WKB]);
+    }
   }
 });
 

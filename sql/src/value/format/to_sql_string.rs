@@ -124,8 +124,8 @@ impl Value {
             }
             Value::Bitmap(b) => format!("'{}'", b),
             Value::Variant(v) => format!("'{}'", v),
-            Value::Geometry(g) => format!("'{}'", g),
-            Value::Geography(g) => format!("'{}'", g),
+            Value::Geometry(g) => format!("'{}'", g.to_string()),
+            Value::Geography(g) => format!("'{}'", g.to_string()),
             Value::Interval(i) => format!("'{}'", i),
             Value::Vector(v) => {
                 let items: Vec<String> = v.iter().map(|f| f.to_string()).collect();

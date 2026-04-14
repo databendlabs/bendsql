@@ -16,11 +16,10 @@ mod arrow_decoder;
 mod base;
 mod convert;
 mod format;
-mod geo;
 mod interval;
 mod string_decoder;
 
-pub use base::{NumberValue, Value};
+pub use base::{GeoValue, NumberValue, Value};
 pub use convert::{zoned_to_chrono_datetime, zoned_to_chrono_fixed_offset};
 pub use interval::Interval;
 

@@ -371,9 +371,23 @@ impl ToNapiValue for Value<'_> {
                     String::to_napi_value(env, s.to_string())
                 }
             }
-            databend_driver::Value::Geometry(s) => String::to_napi_value(env, s.to_string()),
+            databend_driver::Value::Geometry(s) => match s {
+                databend_driver_core::value::GeoValue::String(s) => {
+                    String::to_napi_value(env, s.to_string())
+                }
+                databend_driver_core::value::GeoValue::Binary(b) => {
+                    Buffer::to_napi_value(env, Buffer::from(b.as_slice()))
+                }
+            },
             databend_driver::Value::Interval(s) => String::to_napi_value(env, s.to_string()),
-            databend_driver::Value::Geography(s) => String::to_napi_value(env, s.to_string()),
+            databend_driver::Value::Geography(s) => match s {
+                databend_driver_core::value::GeoValue::String(s) => {
+                    String::to_napi_value(env, s.to_string())
+                }
+                databend_driver_core::value::GeoValue::Binary(b) => {
+                    Buffer::to_napi_value(env, Buffer::from(b.as_slice()))
+                }
+            },
             databend_driver::Value::Vector(inner) => {
                 let mut arr = ctx.create_array(inner.len() as u32)?;
                 for (i, v) in inner.iter().enumerate() {

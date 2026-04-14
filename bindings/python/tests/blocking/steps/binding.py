@@ -41,6 +41,10 @@ if DRIVER_VERSION is not None:
 else:
     DRIVER_VERSION = (100, 0, 0)
 
+POINT_GEOJSON = '{"type": "Point", "coordinates": [60,37]}'
+POINT_WKT = "POINT(60 37)"
+POINT_WKB = bytes.fromhex("01010000000000000000004E400000000000804240")
+
 if DRIVER_VERSION > (0, 30, 3):
     default_tzinfo = timezone.utc
 else:
@@ -179,15 +183,17 @@ def _(context):
                 f"timestamp_tz: {row.values()[0]} {exp_bug}"
             )
 
-    if DRIVER_VERSION > (0, 31, 0) and DB_VERSION > (1, 2, 841):
+    if DRIVER_VERSION > (0, 31, 0) and DB_VERSION > (1, 2, 894):
         row = context.conn.query_row("SELECT st_point(60,37)")
-        assert row.values()[0] == '{"type": "Point", "coordinates": [60,37]}', (
-            f"geography: {row.values()}"
-        )
+        assert row.values()[0] == POINT_GEOJSON, f"geography: {row.values()}"
         row = context.conn.query_row(
             "settings(geometry_output_format='WKT') SELECT st_point(60,37)"
         )
-        assert row.values()[0] == "POINT(60 37)", f"geography: {row.values()}"
+        assert row.values()[0] == POINT_WKT, f"geography: {row.values()}"
+        row = context.conn.query_row(
+            "settings(geometry_output_format='WKB') SELECT st_point(60,37)"
+        )
+        assert row.values()[0] == POINT_WKB, f"geography: {row.values()}"
 
     if DRIVER_VERSION >= (0, 33, 1):  # quote change to `"`
         # Map
