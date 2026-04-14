@@ -199,15 +199,15 @@ except Exception as e:
 
 ### Semi-Structured Data Types
 
-| Databend    | Python  |
-| ----------- | ------- |
-| `ARRAY`     | `list`  |
-| `TUPLE`     | `tuple` |
-| `MAP`       | `dict`  |
-| `VARIANT`   | `str`   |
-| `BITMAP`    | `str`   |
-| `GEOMETRY`  | `str`   |
-| `GEOGRAPHY` | `str`   |
+| Databend    | Python        |
+| ----------- | ------------- |
+| `ARRAY`     | `list`        |
+| `TUPLE`     | `tuple`       |
+| `MAP`       | `dict`        |
+| `VARIANT`   | `str`         |
+| `BITMAP`    | `str`         |
+| `GEOMETRY`  | `str / bytes` |
+| `GEOGRAPHY` | `str / bytes` |
 
 Note: `VARIANT` is a json encoded string. Example:
 
@@ -223,6 +223,15 @@ row = await conn.query_row("SELECT * FROM example limit 1;")
 data = row.values()[0]
 value = json.loads(data)
 print(value)
+```
+
+`GEOMETRY` and `GEOGRAPHY` follow the current `geometry_output_format` setting. Text formats such as `GeoJSON` or `WKT` return `str`; binary formats such as `WKB` or `EWKB` return `bytes`.
+
+For example:
+
+```python
+row = await conn.query_row("settings(geometry_output_format='WKB') SELECT st_point(60, 37)")
+assert isinstance(row.values()[0], bytes)
 ```
 
 ## APIs

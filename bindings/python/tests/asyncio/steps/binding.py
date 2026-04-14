@@ -40,6 +40,10 @@ if DRIVER_VERSION is not None:
 else:
     DRIVER_VERSION = (100, 0, 0)
 
+POINT_GEOJSON = '{"type": "Point", "coordinates": [60,37]}'
+POINT_WKT = "POINT(60 37)"
+POINT_WKB = bytes.fromhex("01010000000000000000004E400000000000804240")
+
 if DRIVER_VERSION > (0, 30, 3):
     default_tzinfo = timezone.utc
 else:
@@ -148,6 +152,20 @@ async def _(context):
                 datetime(2024, 4, 16, 12, 34, 56, 789000, tzinfo=default_tzinfo),
             ),
         ), f"Tuple: {row.values()}"
+
+    if DRIVER_VERSION > (0, 31, 0) and DB_VERSION > (1, 2, 894):
+        row = await context.conn.query_row("SELECT st_point(60,37)")
+        assert row.values()[0] == POINT_GEOJSON, f"geography: {row.values()}"
+
+        row = await context.conn.query_row(
+            "settings(geometry_output_format='WKT') SELECT st_point(60,37)"
+        )
+        assert row.values()[0] == POINT_WKT, f"geography: {row.values()}"
+
+        row = await context.conn.query_row(
+            "settings(geometry_output_format='WKB') SELECT st_point(60,37)"
+        )
+        assert row.values()[0] == POINT_WKB, f"geography: {row.values()}"
 
 
 @then("Select numbers should iterate all rows")

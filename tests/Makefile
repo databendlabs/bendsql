@@ -1,5 +1,6 @@
 DATABEND_META_VERSION ?= nightly
 DATABEND_QUERY_VERSION ?= nightly
+PYTHON ?= python3
 
 default: run
 
@@ -27,10 +28,24 @@ test-bendsql: up
 	cd .. && ./cli/test.sh flight
 	QUERY_RESULT_FORMAT=arrow cd .. && ./cli/test.sh http
 
-test-bindings-python: up
-	cd ../bindings/python && behave tests/asyncio
-	cd ../bindings/python && behave tests/blocking
-	cd ../bindings/python && behave tests/cursor
+prepare-bindings-python:
+	if [ -n "$$CI" ]; then \
+		echo "Skipping local Python bindings setup in CI"; \
+	else \
+		command -v uv >/dev/null || { echo "uv is required for local Python binding tests"; exit 1; }; \
+		cd ../bindings/python && uv sync && uv run maturin develop --uv; \
+	fi
+
+test-bindings-python: up prepare-bindings-python
+	cd ../bindings/python && \
+	if [ -n "$$CI" ]; then \
+		python_bin="$(PYTHON)"; \
+	else \
+		python_bin=".venv/bin/python"; \
+	fi; \
+	for suite in tests/asyncio tests/blocking tests/cursor; do \
+		"$$python_bin" -m behave "$$suite" || exit $$?; \
+	done
 
 test-bindings-nodejs: up
 	cd ../bindings/nodejs && pnpm run test
