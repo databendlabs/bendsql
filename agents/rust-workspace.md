@@ -23,6 +23,7 @@ Use this guide for work in `cli/`, `core/`, `driver/`, `sql/`, `macros/`, and `t
 - Prefer targeted Rust validation first when the scope is narrow.
 - For general Rust changes, run `make test`.
 - For broad or user-facing changes, run `make check`.
+- This repo ignores `Cargo.lock`. If local Rust results differ from CI and the change may depend on dependency resolution, check whether a stale local `Cargo.lock` is masking the issue. Regenerate or remove it only as a targeted troubleshooting step, not as a default workflow.
 
 `make check` currently runs:
 

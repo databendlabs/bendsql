@@ -25,6 +25,8 @@ Use this guide for Docker-based integration tests and for work in `bindings/pyth
 - For externally visible API or type-mapping changes, inspect whether bindings need matching updates or verification.
 - Python binding integration tests run with `behave`.
 - Node.js binding integration tests run with `pnpm run test`.
+- For local Python binding test runs, make sure the interpreter that owns `behave` is loading the current `databend_driver` build or install, not a stale site-packages copy.
+- When adjusting local binding test flow, prefer changes that keep `Makefile` targets and related helper scripts aligned with the CI workflow instead of introducing local-only behavior that can drift from CI.
 
 ## Response Expectations
 
