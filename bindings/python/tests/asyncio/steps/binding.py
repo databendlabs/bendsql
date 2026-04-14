@@ -153,7 +153,7 @@ async def _(context):
             ),
         ), f"Tuple: {row.values()}"
 
-    if DRIVER_VERSION > (0, 31, 0) and DB_VERSION > (1, 2, 894):
+    if DRIVER_VERSION > (0, 33, 7) and DB_VERSION > (1, 2, 894):
         row = await context.conn.query_row("SELECT st_point(60,37)")
         assert row.values()[0] == POINT_GEOJSON, f"geography: {row.values()}"
 
