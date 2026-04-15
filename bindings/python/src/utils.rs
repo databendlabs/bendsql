@@ -15,7 +15,6 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use databend_driver::Param;
 use databend_driver::Params;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::types::PyTuple;
@@ -46,54 +45,46 @@ pub(crate) fn to_sql_params(v: Option<Bound<PyAny>>) -> Params {
                 let mut params = HashMap::new();
                 for (k, v) in v.iter() {
                     let k = k.extract::<String>().unwrap();
-                    let v = to_sql_string(v).unwrap();
+                    let v = py_to_json(v).unwrap();
                     params.insert(k, v);
                 }
                 Params::NamedParams(params)
             } else if let Ok(v) = v.downcast::<PyList>() {
-                let mut params = vec![];
-                for v in v.iter() {
-                    let v = to_sql_string(v).unwrap();
-                    params.push(v);
-                }
+                let params: Vec<serde_json::Value> =
+                    v.iter().map(|v| py_to_json(v).unwrap()).collect();
                 Params::QuestionParams(params)
             } else if let Ok(v) = v.downcast::<PyTuple>() {
-                let mut params = vec![];
-                for v in v.iter() {
-                    let v = to_sql_string(v).unwrap();
-                    params.push(v);
-                }
+                let params: Vec<serde_json::Value> =
+                    v.iter().map(|v| py_to_json(v).unwrap()).collect();
                 Params::QuestionParams(params)
             } else {
-                Params::QuestionParams(vec![to_sql_string(v).unwrap()])
+                Params::QuestionParams(vec![py_to_json(v).unwrap()])
             }
         }
         None => Params::default(),
     }
 }
 
-fn to_sql_string(v: Bound<PyAny>) -> PyResult<String> {
+fn py_to_json(v: Bound<PyAny>) -> PyResult<serde_json::Value> {
     if v.is_none() {
-        return Ok("NULL".to_string());
+        return Ok(serde_json::Value::Null);
     }
-    match v.downcast::<PyAny>() {
-        Ok(v) => {
-            if let Ok(v) = v.extract::<String>() {
-                Ok(v.as_sql_string())
-            } else if let Ok(v) = v.extract::<bool>() {
-                Ok(v.as_sql_string())
-            } else if let Ok(v) = v.extract::<i64>() {
-                Ok(v.as_sql_string())
-            } else if let Ok(v) = v.extract::<f64>() {
-                Ok(v.as_sql_string())
-            } else {
-                Err(PyAttributeError::new_err(format!(
-                    "Invalid parameter type for: {v:?}, expected str, bool, int or float"
-                )))
-            }
-        }
-        Err(e) => Err(e.into()),
+    // Check bool before int (bool is a subclass of int in Python)
+    if let Ok(v) = v.extract::<bool>() {
+        return Ok(serde_json::Value::Bool(v));
     }
+    if let Ok(v) = v.extract::<i64>() {
+        return Ok(serde_json::json!(v));
+    }
+    if let Ok(v) = v.extract::<f64>() {
+        return Ok(serde_json::json!(v));
+    }
+    if let Ok(v) = v.extract::<String>() {
+        return Ok(serde_json::Value::String(v));
+    }
+    Err(PyAttributeError::new_err(format!(
+        "Invalid parameter type for: {v:?}, expected str, bool, int or float"
+    )))
 }
 
 pub(super) fn options_as_ref(

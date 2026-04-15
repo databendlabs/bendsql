@@ -74,6 +74,30 @@ pub trait IConnection: Send + Sync {
     async fn query_iter(&self, sql: &str) -> Result<RowIterator>;
     async fn query_iter_ext(&self, sql: &str) -> Result<RowStatsIterator>;
 
+    fn supports_server_side_params(&self) -> bool {
+        false
+    }
+
+    async fn exec_with_params(&self, sql: &str, _params: Option<serde_json::Value>) -> Result<i64> {
+        self.exec(sql).await
+    }
+
+    async fn query_iter_with_params(
+        &self,
+        sql: &str,
+        _params: Option<serde_json::Value>,
+    ) -> Result<RowIterator> {
+        self.query_iter(sql).await
+    }
+
+    async fn query_iter_ext_with_params(
+        &self,
+        sql: &str,
+        _params: Option<serde_json::Value>,
+    ) -> Result<RowStatsIterator> {
+        self.query_iter_ext(sql).await
+    }
+
     async fn query_row(&self, sql: &str) -> Result<Option<Row>> {
         let rows = self.query_all(sql).await?;
         let row = rows.into_iter().next();

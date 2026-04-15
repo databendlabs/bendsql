@@ -18,20 +18,55 @@ use std::fmt::Debug;
 use databend_common_ast::parser::Dialect;
 
 pub trait Param: Debug {
-    fn as_sql_string(&self) -> String;
+    fn as_json_value(&self) -> serde_json::Value;
+
+    fn as_sql_string(&self) -> String {
+        json_value_to_sql_string(&self.as_json_value())
+    }
 }
 
 #[derive(Debug)]
 pub enum Params {
     // ?, ?
-    QuestionParams(Vec<String>),
+    QuestionParams(Vec<serde_json::Value>),
     // :name, :age
-    NamedParams(HashMap<String, String>),
+    NamedParams(HashMap<String, serde_json::Value>),
 }
 
 impl Default for Params {
     fn default() -> Self {
         Params::QuestionParams(vec![])
+    }
+}
+
+/// Convert a `serde_json::Value` to a SQL string representation for client-side binding.
+pub fn json_value_to_sql_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Bool(b) => {
+            if *b {
+                "TRUE".to_string()
+            } else {
+                "FALSE".to_string()
+            }
+        }
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => format!("'{s}'"),
+        serde_json::Value::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(json_value_to_sql_string).collect();
+            format!("[{}]", items.join(", "))
+        }
+        serde_json::Value::Object(map) => {
+            let mut s = String::from("'{");
+            for (i, (k, v)) in map.iter().enumerate() {
+                if i > 0 {
+                    s.push_str(", ");
+                }
+                s.push_str(&format!("\"{k}\": {}", json_value_to_sql_string(v)));
+            }
+            s.push_str("}'::JSON");
+            s
+        }
     }
 }
 
@@ -48,7 +83,7 @@ impl Params {
     }
 
     // index based from 1
-    pub fn get_by_index(&self, index: usize) -> Option<&String> {
+    pub fn get_by_index(&self, index: usize) -> Option<&serde_json::Value> {
         if index == 0 {
             return None;
         }
@@ -58,7 +93,7 @@ impl Params {
         }
     }
 
-    pub fn get_by_name(&self, name: &str) -> Option<&String> {
+    pub fn get_by_name(&self, name: &str) -> Option<&serde_json::Value> {
         match self {
             Params::NamedParams(map) => map.get(name),
             _ => None,
@@ -77,6 +112,19 @@ impl Params {
         }
     }
 
+    /// Convert params to a JSON value suitable for server-side parameter binding.
+    /// `QuestionParams` → `Value::Array`, `NamedParams` → `Value::Object`.
+    pub fn to_json_value(&self) -> serde_json::Value {
+        match self {
+            Params::QuestionParams(vec) => serde_json::Value::Array(vec.clone()),
+            Params::NamedParams(map) => {
+                let obj: serde_json::Map<String, serde_json::Value> =
+                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                serde_json::Value::Object(obj)
+            }
+        }
+    }
+
     pub fn replace(&self, sql: &str) -> String {
         if !self.is_empty() {
             let tokens = databend_common_ast::parser::tokenize_sql(sql).unwrap();
@@ -91,48 +139,63 @@ impl Params {
     }
 }
 
-// impl param for all integer types and string types
-macro_rules! impl_param_for_integer {
+// Implement Param for numeric types that fit in serde_json::Number
+macro_rules! impl_param_for_json_number {
     ($($t:ty)*) => ($(
         impl Param for $t {
-            fn as_sql_string(&self) -> String {
-                self.to_string()
+            fn as_json_value(&self) -> serde_json::Value {
+                serde_json::json!(self)
             }
         }
     )*)
 }
 
-impl_param_for_integer! { i8 i16 i32 i64 f32 f64 i128 isize u8 u16 u32 u64 u128 usize }
+impl_param_for_json_number! { i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 }
 
-// Implement Param for String
-impl Param for bool {
-    fn as_sql_string(&self) -> String {
-        if *self {
-            "TRUE".to_string()
+// i128/u128 cannot be represented in JSON numbers, store as string
+impl Param for i128 {
+    fn as_json_value(&self) -> serde_json::Value {
+        // If it fits in i64, use a number; otherwise use a string to avoid precision loss
+        if *self >= i128::from(i64::MIN) && *self <= i128::from(i64::MAX) {
+            serde_json::json!(*self as i64)
         } else {
-            "FALSE".to_string()
+            serde_json::Value::String(self.to_string())
         }
     }
 }
 
-// Implement Param for String
+impl Param for u128 {
+    fn as_json_value(&self) -> serde_json::Value {
+        // If it fits in u64, use a number; otherwise use a string to avoid precision loss
+        if *self <= u128::from(u64::MAX) {
+            serde_json::json!(*self as u64)
+        } else {
+            serde_json::Value::String(self.to_string())
+        }
+    }
+}
+
+impl Param for bool {
+    fn as_json_value(&self) -> serde_json::Value {
+        serde_json::Value::Bool(*self)
+    }
+}
+
 impl Param for String {
-    fn as_sql_string(&self) -> String {
-        format!("'{self}'")
+    fn as_json_value(&self) -> serde_json::Value {
+        serde_json::Value::String(self.clone())
     }
 }
 
-// Implement Param for &str
 impl Param for &str {
-    fn as_sql_string(&self) -> String {
-        format!("'{self}'")
+    fn as_json_value(&self) -> serde_json::Value {
+        serde_json::Value::String(self.to_string())
     }
 }
 
-// Impl Param for None
 impl Param for () {
-    fn as_sql_string(&self) -> String {
-        "NULL".to_string()
+    fn as_json_value(&self) -> serde_json::Value {
+        serde_json::Value::Null
     }
 }
 
@@ -140,44 +203,17 @@ impl<T> Param for Option<T>
 where
     T: Param,
 {
-    fn as_sql_string(&self) -> String {
+    fn as_json_value(&self) -> serde_json::Value {
         match self {
-            Some(s) => s.as_sql_string(),
-            None => "NULL".to_string(),
+            Some(s) => s.as_json_value(),
+            None => serde_json::Value::Null,
         }
     }
 }
 
 impl Param for serde_json::Value {
-    fn as_sql_string(&self) -> String {
-        match self {
-            serde_json::Value::Number(n) => n.to_string(),
-            serde_json::Value::String(s) => format!("'{s}'"),
-            serde_json::Value::Bool(b) => b.to_string(),
-            serde_json::Value::Null => "NULL".to_string(),
-            serde_json::Value::Array(values) => {
-                let mut s = String::from("[");
-                for (i, v) in values.iter().enumerate() {
-                    if i > 0 {
-                        s.push_str(", ");
-                    }
-                    s.push_str(&v.as_sql_string());
-                }
-                s.push(']');
-                s
-            }
-            serde_json::Value::Object(map) => {
-                let mut s = String::from("'{");
-                for (i, (k, v)) in map.iter().enumerate() {
-                    if i > 0 {
-                        s.push_str(", ");
-                    }
-                    s.push_str(&format!("\"{k}\": {}", v.as_sql_string()));
-                }
-                s.push_str("}'::JSON");
-                s
-            }
-        }
+    fn as_json_value(&self) -> serde_json::Value {
+        self.clone()
     }
 }
 
@@ -196,7 +232,7 @@ macro_rules! params {
             let mut map = HashMap::new();
 
             $(
-                map.insert(stringify!($key).to_string(), $crate::Param::as_sql_string(&$value));
+                map.insert(stringify!($key).to_string(), $crate::Param::as_json_value(&$value));
             )*
             map
         })
@@ -205,7 +241,7 @@ macro_rules! params {
     ($($value:expr),* $(,)?) => {
         $crate::Params::QuestionParams(vec![
             $(
-                $crate::Param::as_sql_string(&$value),
+                $crate::Param::as_json_value(&$value),
             )*
         ])
     };
@@ -228,8 +264,8 @@ macro_rules! impl_from_tuple_for_params {
         impl<$head: Param, $($tail: Param),*> From<($head, $($tail),*)> for Params {
             fn from(tuple: ($head, $($tail),*)) -> Self {
                 let (h, $($tail),*) = tuple;
-                let mut params = Params::QuestionParams(vec![h.as_sql_string()]);
-                $(params.merge(Params::QuestionParams(vec![$tail.as_sql_string()]));)*
+                let mut params = Params::QuestionParams(vec![h.as_json_value()]);
+                $(params.merge(Params::QuestionParams(vec![$tail.as_json_value()]));)*
                 params
             }
         }
@@ -241,7 +277,7 @@ macro_rules! impl_from_tuple_for_params {
     ($last:ident) => {
         impl<$last: Param> From<($last,)> for Params {
             fn from(tuple: ($last,)) -> Self {
-                Params::QuestionParams(vec![tuple.0.as_sql_string()])
+                Params::QuestionParams(vec![tuple.0.as_json_value()])
             }
         }
     };
@@ -261,21 +297,9 @@ impl From<Option<serde_json::Value>> for Params {
 impl From<serde_json::Value> for Params {
     fn from(value: serde_json::Value) -> Self {
         match value {
-            serde_json::Value::Array(obj) => {
-                let mut array = Vec::new();
-                for v in obj {
-                    array.push(v.as_sql_string());
-                }
-                Params::QuestionParams(array)
-            }
-            serde_json::Value::Object(obj) => {
-                let mut map = HashMap::new();
-                for (k, v) in obj {
-                    map.insert(k, v.as_sql_string());
-                }
-                Params::NamedParams(map)
-            }
-            other => Params::QuestionParams(vec![other.as_sql_string()]),
+            serde_json::Value::Array(arr) => Params::QuestionParams(arr),
+            serde_json::Value::Object(obj) => Params::NamedParams(obj.into_iter().collect()),
+            other => Params::QuestionParams(vec![other]),
         }
     }
 }
@@ -293,9 +317,9 @@ mod tests {
             let params = params! {a => 1, b => age, c => name};
             match params {
                 Params::NamedParams(map) => {
-                    assert_eq!(map.get("a").unwrap(), "1");
-                    assert_eq!(map.get("b").unwrap(), "4");
-                    assert_eq!(map.get("c").unwrap(), "'d'");
+                    assert_eq!(map.get("a").unwrap(), &serde_json::json!(1));
+                    assert_eq!(map.get("b").unwrap(), &serde_json::json!(4));
+                    assert_eq!(map.get("c").unwrap(), &serde_json::json!("d"));
                 }
                 _ => panic!("Expected NamedParams"),
             }
@@ -310,7 +334,14 @@ mod tests {
             let params = params! {name, age, 33u64};
             match params {
                 Params::QuestionParams(vec) => {
-                    assert_eq!(vec, vec!["'d'", "4", "33"]);
+                    assert_eq!(
+                        vec,
+                        vec![
+                            serde_json::json!("d"),
+                            serde_json::json!(4),
+                            serde_json::json!(33u64)
+                        ]
+                    );
                 }
                 _ => panic!("Expected QuestionParams"),
             }
@@ -321,7 +352,17 @@ mod tests {
             let params: Params = (1, "44", 2, 3, "55", "66").into();
             match params {
                 Params::QuestionParams(vec) => {
-                    assert_eq!(vec, vec!["1", "'44'", "2", "3", "'55'", "'66'"]);
+                    assert_eq!(
+                        vec,
+                        vec![
+                            serde_json::json!(1),
+                            serde_json::json!("44"),
+                            serde_json::json!(2),
+                            serde_json::json!(3),
+                            serde_json::json!("55"),
+                            serde_json::json!("66"),
+                        ]
+                    );
                 }
                 _ => panic!("Expected QuestionParams"),
             }
@@ -331,7 +372,15 @@ mod tests {
         {
             let params: Params = (Some(1), None::<()>, Some("44"), None::<()>).into();
             match params {
-                Params::QuestionParams(vec) => assert_eq!(vec, vec!["1", "NULL", "'44'", "NULL"]),
+                Params::QuestionParams(vec) => assert_eq!(
+                    vec,
+                    vec![
+                        serde_json::json!(1),
+                        serde_json::Value::Null,
+                        serde_json::json!("44"),
+                        serde_json::Value::Null,
+                    ]
+                ),
                 _ => panic!("Expected QuestionParams"),
             }
         }
@@ -349,12 +398,12 @@ mod tests {
             .into();
             match params {
                 Params::NamedParams(map) => {
-                    assert_eq!(map.get("a").unwrap(), "1");
-                    assert_eq!(map.get("b").unwrap(), "'44'");
-                    assert_eq!(map.get("c").unwrap(), "2");
-                    assert_eq!(map.get("d").unwrap(), "3");
-                    assert_eq!(map.get("e").unwrap(), "'55'");
-                    assert_eq!(map.get("f").unwrap(), "'66'");
+                    assert_eq!(map.get("a").unwrap(), &serde_json::json!(1));
+                    assert_eq!(map.get("b").unwrap(), &serde_json::json!("44"));
+                    assert_eq!(map.get("c").unwrap(), &serde_json::json!(2));
+                    assert_eq!(map.get("d").unwrap(), &serde_json::json!(3));
+                    assert_eq!(map.get("e").unwrap(), &serde_json::json!("55"));
+                    assert_eq!(map.get("f").unwrap(), &serde_json::json!("66"));
                 }
                 _ => panic!("Expected NamedParams"),
             }
@@ -368,12 +417,56 @@ mod tests {
                 Params::QuestionParams(vec) => {
                     assert_eq!(
                         vec,
-                        vec!["1", "'44'", "2", "'{\"a\": 1}'::JSON", "'55'", "'66'"]
+                        vec![
+                            serde_json::json!(1),
+                            serde_json::json!("44"),
+                            serde_json::json!(2),
+                            serde_json::json!({"a": 1}),
+                            serde_json::json!("55"),
+                            serde_json::json!("66"),
+                        ]
                     );
                 }
                 _ => panic!("Expected QuestionParams"),
             }
         }
+    }
+
+    #[test]
+    fn test_to_json_value() {
+        // Test positional params
+        let params = params! {1, "hello", 9.99};
+        let json = params.to_json_value();
+        assert_eq!(json, serde_json::json!([1, "hello", 9.99]));
+
+        // Test named params
+        let params = params! {a => 1, b => "hello", c => true};
+        let json = params.to_json_value();
+        let obj = json.as_object().unwrap();
+        assert_eq!(obj.get("a").unwrap(), &serde_json::json!(1));
+        assert_eq!(obj.get("b").unwrap(), &serde_json::json!("hello"));
+        assert_eq!(obj.get("c").unwrap(), &serde_json::json!(true));
+
+        // Test NULL
+        let params = params! {()};
+        let json = params.to_json_value();
+        assert_eq!(json, serde_json::json!([null]));
+
+        // Test Option<T>
+        let params: Params = (Some(42), None::<()>, Some("world")).into();
+        let json = params.to_json_value();
+        assert_eq!(json, serde_json::json!([42, null, "world"]));
+
+        // Test lowercase bool (from serde_json::Value::Bool)
+        let params: Params = serde_json::json!([true, false]).into();
+        let json = params.to_json_value();
+        assert_eq!(json, serde_json::json!([true, false]));
+
+        // Test large u64 above i64::MAX
+        let big: u64 = u64::MAX;
+        let params: Params = (big,).into();
+        let json = params.to_json_value();
+        assert_eq!(json, serde_json::json!([big]));
     }
 
     #[test]

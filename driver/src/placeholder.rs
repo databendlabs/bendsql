@@ -25,6 +25,7 @@ use databend_common_ast::Range;
 use derive_visitor::Drive;
 use derive_visitor::Visitor;
 
+use crate::params::json_value_to_sql_string;
 use crate::Params;
 
 #[derive(Visitor)]
@@ -76,6 +77,12 @@ impl PlaceholderVisitor {
         }
     }
 
+    /// Returns true if the SQL contains `$N` column position placeholders.
+    pub fn has_dollar_positions(&mut self, stmt: &Statement) -> bool {
+        stmt.drive(self);
+        !self.column_positions.is_empty()
+    }
+
     pub fn replace_sql(&mut self, params: &Params, stmt: &Statement, sql: &str) -> String {
         stmt.drive(self);
         self.placeholders.sort_by(|l, r| l.start.cmp(&r.start));
@@ -84,13 +91,13 @@ impl PlaceholderVisitor {
 
         for (index, range) in self.placeholders.iter().enumerate() {
             if let Some(v) = params.get_by_index(index + 1) {
-                results.push((v.to_string(), *range));
+                results.push((json_value_to_sql_string(v), *range));
             }
         }
 
         for (name, range) in self.names.iter() {
             if let Some(v) = params.get_by_name(name) {
-                results.push((v.to_string(), *range));
+                results.push((json_value_to_sql_string(v), *range));
             }
         }
 
@@ -112,7 +119,7 @@ impl PlaceholderVisitor {
                 if let Some(value) = params.get_by_index(*index) {
                     let start = r.start as usize;
                     let end = r.end as usize;
-                    sql.replace_range(start..end, value);
+                    sql.replace_range(start..end, &json_value_to_sql_string(value));
                 }
             }
         }
