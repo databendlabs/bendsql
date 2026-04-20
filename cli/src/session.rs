@@ -107,20 +107,18 @@ impl Session {
                         }
                         databend_driver::Error::Arrow(arrow::error::ArrowError::IpcError(
                             ref ipc_err,
-                        )) => {
-                            if ipc_err.contains("Unauthenticated")
-                                || ipc_err.contains("Connection refused")
-                            {
+                        ))
+                            if (ipc_err.contains("Unauthenticated")
+                                || ipc_err.contains("Connection refused"))
+                            => {
                                 return Err(err.into());
                             }
-                        }
                         databend_driver::Error::Api(databend_client::Error::Request(
                             ref resp_err,
-                        )) => {
-                            if resp_err.contains("error sending request for url") {
+                        ))
+                            if resp_err.contains("error sending request for url") => {
                                 return Err(err.into());
                             }
-                        }
                         _ => {}
                     }
                     "".to_string()
