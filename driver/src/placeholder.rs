@@ -105,8 +105,7 @@ impl PlaceholderVisitor {
         }
 
         if !self.column_positions.is_empty() {
-            self.column_positions
-                .sort_by_key(|a| a.1.start);
+            self.column_positions.sort_by_key(|a| a.1.start);
 
             for (index, r) in self.column_positions.iter().rev() {
                 if let Some(value) = params.get_by_index(*index) {
