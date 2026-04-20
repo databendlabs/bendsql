@@ -23,13 +23,17 @@ use std::str::FromStr;
 pub struct ResultFormatSettings {
     pub geometry_output_format: GeometryDataType,
     pub timezone: TimeZone,
+    pub arrow_result_version: Option<i64>,
+    pub binary_output_format: BinaryFormat,
 }
 
 impl Default for ResultFormatSettings {
     fn default() -> Self {
         Self {
             geometry_output_format: GeometryDataType::default(),
+            binary_output_format: BinaryFormat::default(),
             timezone: TimeZone::UTC,
+            arrow_result_version: None,
         }
     }
 }
@@ -51,9 +55,25 @@ impl ResultFormatSettings {
                     }
                 };
 
+                let binary_output_format = match settings.get("binary_output_format") {
+                    None => BinaryFormat::default(),
+                    Some(t) => {
+                        BinaryFormat::from_str(t).map_err(|e| Error::Decode(e.to_string()))?
+                    }
+                };
+
+                let arrow_result_version = match settings.get("arrow_result_version") {
+                    None => None,
+                    Some(t) => Some(t.parse().map_err(|_| {
+                        Error::Decode(format!("invalid arrow result version '{t}"))
+                    })?),
+                };
+
                 Ok(Self {
                     timezone,
+                    arrow_result_version,
                     geometry_output_format,
+                    binary_output_format,
                 })
             }
         }
@@ -81,6 +101,31 @@ impl FromStr for GeometryDataType {
             "EWKT" => Ok(GeometryDataType::EWKT),
             "GEOJSON" => Ok(GeometryDataType::GEOJSON),
             _ => Err(Error::Decode("Invalid geometry type format".to_string())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BinaryFormat {
+    #[default]
+    Hex,
+    Base64,
+    Utf8,
+    Utf8Lossy,
+}
+
+impl FromStr for BinaryFormat {
+    type Err = Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "hex" => Ok(BinaryFormat::Hex),
+            "base64" => Ok(BinaryFormat::Base64),
+            "utf-8" | "utf8" => Ok(BinaryFormat::Utf8),
+            "utf-8-lossy" | "utf8-lossy" => Ok(BinaryFormat::Utf8Lossy),
+            other => Err(Error::Decode(format!(
+                "Invalid binary format '{other}', valid values: HEX | BASE64 | UTF-8 | UTF-8-LOSSY"
+            ))),
         }
     }
 }

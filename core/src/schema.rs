@@ -471,21 +471,17 @@ fn parse_type_desc(s: &str) -> Result<TypeDesc<'_>> {
                     start = i + 1;
                 }
             }
-            ',' => {
-                if depth == 1 {
-                    let s = &s[start..i];
-                    args.push(parse_type_desc(s)?);
-                    start = i + 1;
-                }
+            ',' if depth == 1 => {
+                let s = &s[start..i];
+                args.push(parse_type_desc(s)?);
+                start = i + 1;
             }
-            ' ' => {
-                if depth == 0 {
-                    let s = &s[start..i];
-                    if !s.is_empty() {
-                        name = s;
-                    }
-                    start = i + 1;
+            ' ' if depth == 0 => {
+                let s = &s[start..i];
+                if !s.is_empty() {
+                    name = s;
                 }
+                start = i + 1;
             }
             _ => {}
         }

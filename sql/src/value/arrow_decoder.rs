@@ -101,7 +101,13 @@ impl
                     }
                     match array.as_any().downcast_ref::<LargeBinaryArray>() {
                         Some(array) => {
-                            Ok(Value::Variant(RawJsonb::new(array.value(seq)).to_string()))
+                            if settings.arrow_result_version.unwrap_or_default() > 1 {
+                                Ok(Value::Variant(
+                                    String::from_utf8_lossy(array.value(seq)).into_owned(),
+                                ))
+                            } else {
+                                Ok(Value::Variant(RawJsonb::new(array.value(seq)).to_string()))
+                            }
                         }
                         None => Err(ConvertError::new("variant", format!("{array:?}")).into()),
                     }
