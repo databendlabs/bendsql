@@ -138,6 +138,9 @@ jobs:
       - name: Prepare
         working-directory: tests
         run: make up
+        env:
+          DATABEND_META_VERSION: v1.2.898-nightly
+          DATABEND_QUERY_VERSION: v1.2.898-nightly
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:

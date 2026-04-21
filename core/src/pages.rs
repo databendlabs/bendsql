@@ -16,12 +16,11 @@ use crate::client::QueryState;
 use crate::error::Result;
 use crate::response::QueryResponse;
 use crate::schema::Schema;
-use crate::settings::ResultFormatSettings;
+use crate::settings::{QueryResultFormatSettings, ResultFormatSettings};
 use crate::{APIClient, Error, QueryStats, SchemaField};
 use arrow_array::RecordBatch;
 use log::debug;
 use parking_lot::Mutex;
-use std::collections::BTreeMap;
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
@@ -36,7 +35,7 @@ pub struct Page {
     pub data: Vec<Vec<Option<String>>>,
     pub batches: Vec<RecordBatch>,
     pub stats: QueryStats,
-    pub settings: Option<BTreeMap<String, String>>,
+    pub settings: Option<QueryResultFormatSettings>,
 }
 
 impl Page {
@@ -51,6 +50,9 @@ impl Page {
     }
 
     pub fn update(&mut self, p: Page) {
+        if self.settings.is_none() {
+            self.settings = p.settings.clone();
+        }
         self.raw_schema = p.raw_schema;
         if self.data.is_empty() {
             self.data = p.data
@@ -130,7 +132,7 @@ impl Pages {
                     s.try_into()
                         .map_err(|e| Error::Decode(format!("fail to decode string schema: {e}")))?
                 };
-                let settings = ResultFormatSettings::from_map(&page.settings)?;
+                let settings = ResultFormatSettings::try_from(&page.settings)?;
 
                 self.add_back(page);
                 let last_access_time = self.last_access_time.clone();

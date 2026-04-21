@@ -78,7 +78,7 @@ impl PlaceholderVisitor {
 
     pub fn replace_sql(&mut self, params: &Params, stmt: &Statement, sql: &str) -> String {
         stmt.drive(self);
-        self.placeholders.sort_by(|l, r| l.start.cmp(&r.start));
+        self.placeholders.sort_by_key(|l| l.start);
 
         let mut results = vec![];
 
@@ -96,7 +96,7 @@ impl PlaceholderVisitor {
 
         let mut sql = sql.to_string();
         if !results.is_empty() {
-            results.sort_by(|a, b| a.1.start.cmp(&b.1.start));
+            results.sort_by_key(|a| a.1.start);
             for (value, r) in results.iter().rev() {
                 let start = r.start as usize;
                 let end = r.end as usize;
@@ -105,8 +105,7 @@ impl PlaceholderVisitor {
         }
 
         if !self.column_positions.is_empty() {
-            self.column_positions
-                .sort_by(|a, b| a.1.start.cmp(&b.1.start));
+            self.column_positions.sort_by_key(|a| a.1.start);
 
             for (index, r) in self.column_positions.iter().rev() {
                 if let Some(value) = params.get_by_index(*index) {

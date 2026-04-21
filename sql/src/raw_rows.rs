@@ -76,7 +76,7 @@ impl TryFrom<(SchemaRef, Vec<Option<String>>, &ResultFormatSettings)> for RawRow
         (schema, data, settings): (SchemaRef, Vec<Option<String>>, &ResultFormatSettings),
     ) -> Result<Self> {
         let mut values: Vec<Value> = Vec::with_capacity(data.len());
-        for (field, val) in schema.fields().iter().zip(data.clone().into_iter()) {
+        for (field, val) in schema.fields().iter().zip(data.clone()) {
             values.push(Value::try_from((&field.data_type, val, settings))?);
         }
 
