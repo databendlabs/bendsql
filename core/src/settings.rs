@@ -16,7 +16,6 @@ use crate::error::Result;
 use crate::Error;
 use jiff::tz::TimeZone;
 use serde::Deserialize;
-use std::collections::BTreeMap;
 use std::str::FromStr;
 
 #[derive(Debug, Clone)]
@@ -38,49 +37,44 @@ impl Default for ResultFormatSettings {
     }
 }
 
-impl ResultFormatSettings {
-    pub fn from_map(settings: &Option<BTreeMap<String, String>>) -> Result<Self> {
-        match settings {
-            None => Ok(Default::default()),
-            Some(settings) => {
-                let timezone = match settings.get("timezone") {
-                    None => TimeZone::UTC,
-                    Some(t) => TimeZone::get(t).map_err(|e| Error::Decode(e.to_string()))?,
-                };
+impl TryFrom<&Option<QueryResultFormatSettings>> for ResultFormatSettings {
+    type Error = Error;
 
-                let geometry_output_format = match settings.get("geometry_output_format") {
-                    None => GeometryDataType::default(),
-                    Some(t) => {
-                        GeometryDataType::from_str(t).map_err(|e| Error::Decode(e.to_string()))?
-                    }
-                };
+    fn try_from(settings: &Option<QueryResultFormatSettings>) -> Result<Self> {
+        let settings = settings.clone().unwrap_or_default();
+        let timezone = match settings.timezone {
+            None => TimeZone::UTC,
+            Some(t) => TimeZone::get(&t).map_err(|e| Error::Decode(e.to_string()))?,
+        };
 
-                let binary_output_format = match settings.get("binary_output_format") {
-                    None => BinaryFormat::default(),
-                    Some(t) => {
-                        BinaryFormat::from_str(t).map_err(|e| Error::Decode(e.to_string()))?
-                    }
-                };
+        let geometry_output_format = match settings.geometry_output_format {
+            None => GeometryDataType::default(),
+            Some(t) => GeometryDataType::from_str(&t).map_err(|e| Error::Decode(e.to_string()))?,
+        };
 
-                let arrow_result_version = match settings.get("arrow_result_version") {
-                    None => None,
-                    Some(t) => Some(t.parse().map_err(|_| {
-                        Error::Decode(format!("invalid arrow result version '{t}"))
-                    })?),
-                };
+        let binary_output_format = match settings.binary_output_format {
+            None => BinaryFormat::default(),
+            Some(t) => BinaryFormat::from_str(&t).map_err(|e| Error::Decode(e.to_string()))?,
+        };
 
-                Ok(Self {
-                    timezone,
-                    arrow_result_version,
-                    geometry_output_format,
-                    binary_output_format,
-                })
-            }
-        }
+        Ok(Self {
+            geometry_output_format,
+            timezone,
+            arrow_result_version: settings.arrow_result_version,
+            binary_output_format,
+        })
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct QueryResultFormatSettings {
+    pub timezone: Option<String>,
+    pub geometry_output_format: Option<String>,
+    pub arrow_result_version: Option<i64>,
+    pub binary_output_format: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 pub enum GeometryDataType {
     WKB,
     WKT,
@@ -127,5 +121,49 @@ impl FromStr for BinaryFormat {
                 "Invalid binary format '{other}', valid values: HEX | BASE64 | UTF-8 | UTF-8-LOSSY"
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_query_result_format_settings_from_strings() {
+        let settings: QueryResultFormatSettings = serde_json::from_str(
+            r#"{
+                "timezone": "Asia/Shanghai",
+                "geometry_output_format": "wkt",
+                "arrow_result_version": 2,
+                "binary_output_format": "utf-8"
+            }"#,
+        )
+        .unwrap();
+
+        let settings = ResultFormatSettings::try_from(&Some(settings)).unwrap();
+        assert_eq!(settings.geometry_output_format, GeometryDataType::WKT);
+        assert_eq!(settings.arrow_result_version, Some(2));
+        assert_eq!(settings.binary_output_format, BinaryFormat::Utf8);
+        assert_eq!(settings.timezone.iana_name(), Some("Asia/Shanghai"));
+    }
+
+    #[test]
+    fn deserialize_query_result_format_settings_with_defaults() {
+        let settings: QueryResultFormatSettings = serde_json::from_str(r#"{}"#).unwrap();
+
+        let settings = ResultFormatSettings::try_from(&Some(settings)).unwrap();
+        assert_eq!(settings.geometry_output_format, GeometryDataType::default());
+        assert_eq!(settings.arrow_result_version, None);
+        assert_eq!(settings.binary_output_format, BinaryFormat::default());
+        assert_eq!(settings.timezone.iana_name(), Some("UTC"));
+    }
+
+    #[test]
+    fn deserialize_query_result_format_settings_accepts_numeric_arrow_version() {
+        let settings: QueryResultFormatSettings =
+            serde_json::from_str(r#"{"arrow_result_version": 2}"#).unwrap();
+
+        let settings = ResultFormatSettings::try_from(&Some(settings)).unwrap();
+        assert_eq!(settings.arrow_result_version, Some(2));
     }
 }
