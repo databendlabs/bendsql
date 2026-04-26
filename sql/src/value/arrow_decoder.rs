@@ -99,17 +99,38 @@ impl
                     if field.is_nullable() && array.is_null(seq) {
                         return Ok(Value::Null);
                     }
-                    match array.as_any().downcast_ref::<LargeBinaryArray>() {
-                        Some(array) => {
-                            if settings.arrow_result_version.unwrap_or_default() > 1 {
-                                Ok(Value::Variant(
-                                    String::from_utf8_lossy(array.value(seq)).into_owned(),
-                                ))
-                            } else {
-                                Ok(Value::Variant(RawJsonb::new(array.value(seq)).to_string()))
+                    match array.data_type() {
+                        ArrowDataType::Utf8 => match array.as_any().downcast_ref::<StringArray>() {
+                            Some(array) => Ok(Value::Variant(array.value(seq).to_string())),
+                            None => Err(ConvertError::new("variant", format!("{array:?}")).into()),
+                        },
+                        ArrowDataType::LargeUtf8 => {
+                            match array.as_any().downcast_ref::<LargeStringArray>() {
+                                Some(array) => Ok(Value::Variant(array.value(seq).to_string())),
+                                None => {
+                                    Err(ConvertError::new("variant", format!("{array:?}")).into())
+                                }
                             }
                         }
-                        None => Err(ConvertError::new("variant", format!("{array:?}")).into()),
+                        ArrowDataType::LargeBinary => {
+                            match array.as_any().downcast_ref::<LargeBinaryArray>() {
+                                Some(array) => {
+                                    if settings.arrow_result_version.unwrap_or_default() > 1 {
+                                        Ok(Value::Variant(
+                                            String::from_utf8_lossy(array.value(seq)).into_owned(),
+                                        ))
+                                    } else {
+                                        Ok(Value::Variant(
+                                            RawJsonb::new(array.value(seq)).to_string(),
+                                        ))
+                                    }
+                                }
+                                None => {
+                                    Err(ConvertError::new("variant", format!("{array:?}")).into())
+                                }
+                            }
+                        }
+                        _ => Err(ConvertError::new("variant", format!("{array:?}")).into()),
                     }
                 }
                 ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE => {
@@ -454,5 +475,53 @@ impl
             },
             _ => Err(ConvertError::new("unsupported data type", format!("{array:?}")).into()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::ArrayRef;
+    use std::collections::HashMap;
+
+    fn variant_field(data_type: ArrowDataType) -> ArrowField {
+        ArrowField::new("v", data_type, false).with_metadata(HashMap::from([(
+            EXTENSION_KEY.to_string(),
+            ARROW_EXT_TYPE_VARIANT.to_string(),
+        )]))
+    }
+
+    #[test]
+    fn decode_variant_from_utf8_array() {
+        let field = variant_field(ArrowDataType::Utf8);
+        let array: ArrayRef = Arc::new(StringArray::from(vec!["{\"a\":1}"]));
+
+        let value = Value::try_from((&field, &array, 0, &ResultFormatSettings::default())).unwrap();
+
+        assert_eq!(value, Value::Variant("{\"a\":1}".to_string()));
+    }
+
+    #[test]
+    fn decode_variant_from_large_utf8_array() {
+        let field = variant_field(ArrowDataType::LargeUtf8);
+        let array: ArrayRef = Arc::new(LargeStringArray::from(vec!["{\"b\":2}"]));
+
+        let value = Value::try_from((&field, &array, 0, &ResultFormatSettings::default())).unwrap();
+
+        assert_eq!(value, Value::Variant("{\"b\":2}".to_string()));
+    }
+
+    #[test]
+    fn decode_variant_from_large_binary_array_for_v2() {
+        let field = variant_field(ArrowDataType::LargeBinary);
+        let array: ArrayRef = Arc::new(LargeBinaryArray::from(vec![b"{\"c\":3}".as_slice()]));
+        let settings = ResultFormatSettings {
+            arrow_result_version: Some(2),
+            ..ResultFormatSettings::default()
+        };
+
+        let value = Value::try_from((&field, &array, 0, &settings)).unwrap();
+
+        assert_eq!(value, Value::Variant("{\"c\":3}".to_string()));
     }
 }
