@@ -319,6 +319,38 @@ async fn select_array() {
 }
 
 #[tokio::test]
+async fn select_binary_respects_server_binary_output_format_for_json_results() {
+    let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
+    if dsn.starts_with("databend+flight://") {
+        return;
+    }
+
+    let client = Client::new(dsn.to_string());
+    let conn = client.get_conn().await.unwrap();
+
+    conn.exec("SET binary_output_format='base64'")
+        .await
+        .unwrap();
+    let row1 = conn
+        .query_row("select to_binary('xyz'), [to_binary('xyz')]")
+        .await
+        .unwrap()
+        .unwrap();
+    let (val1, val2): (Vec<u8>, Vec<Vec<u8>>) = row1.try_into().unwrap();
+    assert_eq!(val1, b"xyz".to_vec());
+    assert_eq!(val2, vec![b"xyz".to_vec()]);
+
+    conn.exec("SET binary_output_format='utf-8'").await.unwrap();
+    let row2 = conn
+        .query_row("select (to_binary('xyz'), to_binary('ab'))")
+        .await
+        .unwrap()
+        .unwrap();
+    let (val3,): ((Vec<u8>, Vec<u8>),) = row2.try_into().unwrap();
+    assert_eq!(val3, (b"xyz".to_vec(), b"ab".to_vec()));
+}
+
+#[tokio::test]
 async fn select_map() {
     let conn = prepare().await;
 
