@@ -154,13 +154,25 @@ class LocalConnection:
             return sql
 
         if isinstance(params, dict):
-            rendered = sql
-            for key, value in params.items():
-                rendered = rendered.replace(f":{key}", _sql_literal(value))
-            return rendered
+            import re
+
+            def _replace_named(m: re.Match) -> str:
+                key = m.group(1)
+                if key not in params:
+                    return m.group(0)
+                return _sql_literal(params[key])
+
+            return re.sub(r":([A-Za-z_][A-Za-z0-9_]*)", _replace_named, sql)
 
         if not isinstance(params, (list, tuple)):
             params = [params]
+
+        placeholder_count = sql.count("?")
+        if placeholder_count != len(params):
+            raise ValueError(
+                f"Parameter count mismatch: SQL has {placeholder_count} placeholder(s) "
+                f"but {len(params)} value(s) were provided."
+            )
 
         rendered = sql
         for value in params:
@@ -410,6 +422,10 @@ def _parse_local_target(
         raw_path = parsed.path or ""
         if raw_path == "/:memory:":
             raw_path = ":memory:"
+        elif raw_path.startswith("/./") or raw_path.startswith("/../"):
+            # Strip the leading slash so relative paths like /./local-state
+            # are preserved as ./local-state rather than forced absolute.
+            raw_path = raw_path[1:]
         data_path = raw_path if raw_path not in {"", "/"} else None
 
     if "database" in query and query["database"]:
