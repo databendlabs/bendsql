@@ -575,7 +575,7 @@ uv python install 3.12
 uv venv --python 3.12
 uv sync --extra local
 source .venv/bin/activate
-maturin develop -- --uv
+maturin develop
 
 behave tests/asyncio
 behave tests/blocking
