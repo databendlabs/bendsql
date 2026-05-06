@@ -360,11 +360,11 @@ pub async fn main() -> Result<()> {
                         println!("Authenticate failed wrong password user {user}");
                         return Ok(());
                     }
-                    databend_driver::Error::Arrow(arrow::error::ArrowError::IpcError(ipc_err)) => {
-                        if ipc_err.contains("Unauthenticated") {
-                            println!("Authenticate failed wrong password user {user}");
-                            return Ok(());
-                        }
+                    databend_driver::Error::Arrow(arrow::error::ArrowError::IpcError(ipc_err))
+                        if ipc_err.contains("Unauthenticated") =>
+                    {
+                        println!("Authenticate failed wrong password user {user}");
+                        return Ok(());
                     }
                     _ => {}
                 }

@@ -598,7 +598,7 @@ impl APIClient {
         // body
         let session_state = self.session_state();
         let need_sticky = session_state.need_sticky.unwrap_or(false);
-        let req = QueryRequest::new(sql)
+        let mut req = QueryRequest::new(sql)
             .with_pagination(self.make_pagination())
             .with_session(Some(session_state))
             .with_stage_attachment(stage_attachment_config);
@@ -609,6 +609,7 @@ impl APIClient {
         if self.capability.arrow_data && self.query_result_format == "arrow" && !force_json_body {
             debug!("accept arrow data");
             headers.insert(ACCEPT, HeaderValue::from_static(CONTENT_TYPE_ARROW_OR_JSON));
+            req = req.with_arrow();
         }
 
         if need_sticky {

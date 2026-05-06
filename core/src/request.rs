@@ -26,6 +26,8 @@ pub struct QueryRequest<'a> {
     pagination: Option<PaginationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stage_attachment: Option<StageAttachmentConfig<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arrow_result_version_max: Option<i64>,
 }
 
 #[derive(Serialize, Debug)]
@@ -54,6 +56,7 @@ impl<'r, 't: 'r> QueryRequest<'r> {
             sql,
             pagination: None,
             stage_attachment: None,
+            arrow_result_version_max: None,
         }
     }
 
@@ -72,6 +75,11 @@ impl<'r, 't: 'r> QueryRequest<'r> {
         stage_attachment: Option<StageAttachmentConfig<'t>>,
     ) -> Self {
         self.stage_attachment = stage_attachment;
+        self
+    }
+
+    pub fn with_arrow(mut self) -> Self {
+        self.arrow_result_version_max = Some(2);
         self
     }
 }

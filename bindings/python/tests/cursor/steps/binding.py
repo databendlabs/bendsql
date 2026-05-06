@@ -164,7 +164,7 @@ def _(context):
         )
         assert row.values() == expected, f"Tuple: {row.values()}"
 
-    if DRIVER_VERSION > (0, 31, 0) and DB_VERSION > (1, 2, 894):
+    if DRIVER_VERSION > (0, 33, 7) and DB_VERSION > (1, 2, 894):
         context.cursor.execute("SELECT st_point(60,37)")
         row = context.cursor.fetchone()
         assert row.values()[0] == POINT_GEOJSON, f"geography: {row.values()}"

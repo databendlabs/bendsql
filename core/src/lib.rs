@@ -44,5 +44,6 @@ pub use presign::PresignedResponse;
 pub use response::QueryStats;
 pub use response::SchemaField;
 pub use settings::GeometryDataType;
+pub use settings::QueryResultFormatSettings;
 pub use settings::ResultFormatSettings;
 pub use stage::StageLocation;
