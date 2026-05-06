@@ -34,7 +34,9 @@ MIN_DATABEND_VERSION = (1, 2, 895)
 
 
 def load_local_module():
-    spec = importlib.util.spec_from_file_location("databend_driver.local", LOCAL_MODULE_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "databend_driver.local", LOCAL_MODULE_PATH
+    )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -187,7 +189,9 @@ def _(context):
 @then("Local parquet query should return expected rows")
 def _(context):
     assert context.conn.query_row("select count(*) from books").values() == (2,)
-    assert context.conn.query_row("select max(name), min(name) from books").values() == (
+    assert context.conn.query_row(
+        "select max(name), min(name) from books"
+    ).values() == (
         "databend",
         "bendsql",
     )

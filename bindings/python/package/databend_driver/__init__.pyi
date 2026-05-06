@@ -231,7 +231,6 @@ def connect_local(
     data_path: str | None = None,
     tenant: str | None = None,
 ) -> LocalConnection: ...
-
 def connect(
     target: str = ":memory:", **kwargs: Any
 ) -> BlockingDatabendConnection | LocalConnection: ...

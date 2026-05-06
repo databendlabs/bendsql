@@ -35,8 +35,7 @@ def _load_embedded_module():
         raise ImportError(
             "Local embedded mode requires the optional `databend` package. "
             "Install databend-driver with the `local` extra or provide the "
-            "internal databend binding in the environment."
-            + version_hint
+            "internal databend binding in the environment." + version_hint
         ) from exc
     return embedded
 
@@ -70,7 +69,9 @@ class LocalRelation:
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         table = self.arrow()
-        columns = [table.column(index).to_pylist() for index in range(table.num_columns)]
+        columns = [
+            table.column(index).to_pylist() for index in range(table.num_columns)
+        ]
         return [
             tuple(column[row_index] for column in columns)
             for row_index in range(table.num_rows)
@@ -117,7 +118,9 @@ class LocalRowIterator:
         self._idx = 0
 
     def schema(self):
-        raise NotImplementedError("schema() is not available for local embedded queries yet.")
+        raise NotImplementedError(
+            "schema() is not available for local embedded queries yet."
+        )
 
     def close(self) -> None:
         self._idx = len(self._rows)
@@ -236,7 +239,9 @@ class LocalConnection:
             return self
 
         parquet_path = self._materialize_relation_source(name, source)
-        self._impl.register_parquet(name, parquet_path, pattern=pattern, connection=connection)
+        self._impl.register_parquet(
+            name, parquet_path, pattern=pattern, connection=connection
+        )
         return self
 
     def from_df(self, source: Any, *, name: str | None = None) -> LocalRelation:
@@ -253,7 +258,9 @@ class LocalConnection:
         name: str | None = None,
     ) -> LocalRelation:
         target = name or _random_name("parquet")
-        self._impl.register_parquet(target, str(path), pattern=pattern, connection=connection)
+        self._impl.register_parquet(
+            target, str(path), pattern=pattern, connection=connection
+        )
         return self.table(target)
 
     def read_csv(
@@ -265,7 +272,9 @@ class LocalConnection:
         name: str | None = None,
     ) -> LocalRelation:
         target = name or _random_name("csv")
-        self._impl.register_csv(target, str(path), pattern=pattern, connection=connection)
+        self._impl.register_csv(
+            target, str(path), pattern=pattern, connection=connection
+        )
         return self.table(target)
 
     def read_json(
@@ -277,7 +286,9 @@ class LocalConnection:
         name: str | None = None,
     ) -> LocalRelation:
         target = name or _random_name("json")
-        self._impl.register_ndjson(target, str(path), pattern=pattern, connection=connection)
+        self._impl.register_ndjson(
+            target, str(path), pattern=pattern, connection=connection
+        )
         return self.table(target)
 
     def read_text(
@@ -289,7 +300,9 @@ class LocalConnection:
         name: str | None = None,
     ) -> LocalRelation:
         target = name or _random_name("text")
-        self._impl.register_text(target, str(path), pattern=pattern, connection=connection)
+        self._impl.register_text(
+            target, str(path), pattern=pattern, connection=connection
+        )
         return self.table(target)
 
     def _materialize_relation_source(self, name: str, source: Any) -> str:
@@ -339,7 +352,9 @@ def connect_local(
 ) -> LocalConnection:
     embedded = _load_embedded_module()
     memory_target = database == ":memory:"
-    explicit_data_path = None if memory_target and data_path == ":memory:" else data_path
+    explicit_data_path = (
+        None if memory_target and data_path == ":memory:" else data_path
+    )
 
     if tenant is None and hasattr(embedded, "connect"):
         if explicit_data_path is not None:
@@ -347,13 +362,16 @@ def connect_local(
                 embedded.connect(database=database, data_path=explicit_data_path)
             )
         if memory_target:
-            conn = LocalConnection(embedded.connect(data_path=mkdtemp(prefix="databend-embedded-")))
+            conn = LocalConnection(
+                embedded.connect(data_path=mkdtemp(prefix="databend-embedded-"))
+            )
             conn._ephemeral = True
             return conn
         return LocalConnection(embedded.connect(data_path=database))
 
     target_path = explicit_data_path or (".databend" if memory_target else database)
     return LocalConnection(embedded.SessionContext(tenant, data_path=target_path))
+
 
 def connect(target: str = ":memory:", **kwargs: Any):
     if _is_local_target(target):
