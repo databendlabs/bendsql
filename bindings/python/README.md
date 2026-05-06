@@ -574,9 +574,8 @@ cd bindings/python
 uv python install 3.12
 uv venv --python 3.12
 uv sync --extra local
-uv pip install pip   # ensure pip is available inside the venv
 source .venv/bin/activate
-maturin develop
+maturin develop -- --uv
 
 behave tests/asyncio
 behave tests/blocking
