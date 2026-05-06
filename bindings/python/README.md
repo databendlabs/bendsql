@@ -8,6 +8,106 @@ Databend Python Client
 
 ## Usage
 
+### Local Embedded Connection
+
+The local embedded mode runs a full Databend engine in-process without any
+server. It is useful for local analytics, testing, and offline workflows.
+
+Install the `local` extra to pull in the embedded engine:
+
+```bash
+pip install "databend-driver[local]"
+```
+
+The embedded dependency currently requires Python 3.12 or later.
+
+```python
+from databend_driver import connect
+
+# Persistent state stored under ./local-state
+conn = connect("databend+local:///./local-state")
+conn.exec("CREATE TABLE books(id INT, title STRING)")
+conn.exec("INSERT INTO books VALUES (1, 'Databend')")
+
+row = conn.query_row("SELECT title FROM books ORDER BY id LIMIT 1")
+print(row.values())  # ('Databend',)
+
+rows = [row.values() for row in conn.query_iter("SELECT * FROM books ORDER BY id")]
+```
+
+Supported local targets:
+
+- `connect(":memory:")` — temporary in-memory instance (discarded on close)
+- `connect("databend+local:///:memory:")` — explicit in-memory instance
+- `connect("databend+local:///./local-state")` — persistent state under `./local-state`
+- `connect("databend+local:///./local-state?tenant=default")` — persistent state with an explicit tenant
+- `connect("databend+local:///./local-state?database=mydb")` — open a specific database
+
+You can also use `connect_local()` directly for more control:
+
+```python
+from databend_driver import connect_local
+
+conn = connect_local(database=":memory:")
+conn = connect_local(data_path="./local-state", tenant="default")
+```
+
+If the optional `databend` package is not installed, `connect()` raises an
+`ImportError` with guidance about enabling the `local` extra and the Python
+version requirement.
+
+For remote Databend, the same `connect()` entrypoint accepts standard DSNs:
+
+```python
+from databend_driver import connect
+
+conn = connect("databend://root:@localhost:8000/?sslmode=disable")
+row = conn.query_row("SELECT 1")
+```
+
+#### Relation API
+
+The local connection exposes an embedded-specific relation API for working
+with query results as DataFrames or Arrow tables:
+
+```python
+relation = conn.sql("SELECT * FROM books")
+
+df = relation.df()       # pandas DataFrame
+pl = relation.pl()       # polars DataFrame
+tbl = relation.arrow()   # pyarrow Table
+
+rows = relation.fetchall()   # list[tuple]
+row = relation.fetchone()    # tuple | None
+```
+
+#### Registering External Data
+
+You can register files or in-memory data as virtual tables:
+
+```python
+# Register a Parquet file
+conn.register("sales", "./data/sales.parquet")
+conn.sql("SELECT * FROM sales LIMIT 10").df()
+
+# Register a CSV file
+conn.register("events", "./data/events.csv")
+
+# Register a pandas or polars DataFrame
+import pandas as pd
+df = pd.DataFrame({"id": [1, 2], "name": ["Alice", "Bob"]})
+conn.register("users", df)
+
+# Shorthand: register a DataFrame and return a relation immediately
+relation = conn.from_df(df)
+
+# Read helpers (register and return relation in one call)
+relation = conn.read_parquet("./data/sales.parquet")
+relation = conn.read_csv("./data/events.csv")
+relation = conn.read_json("./data/logs.ndjson")
+relation = conn.read_text("./data/raw.txt")
+```
+
 ### PEP 249 Cursor Object
 
 ```python
@@ -96,16 +196,24 @@ asyncio.run(main())
 ### Parameter bindings
 
 ```python
-# Test with positional parameters
+# Positional parameters using ?
 row = await context.conn.query_row("SELECT ?, ?, ?, ?", (3, False, 4, "55"))
+
+# Named parameters using :name
 row = await context.conn.query_row(
     "SELECT :a, :b, :c, :d", {"a": 3, "b": False, "c": 4, "d": "55"}
 )
-row = await context.conn.query_row(
-    "SELECT ?", 3
-)
-row = await context.conn.query_row("SELECT ?, ?, ?, ?", params = (3, False, 4, "55"))
+
+# Single value (no tuple needed)
+row = await context.conn.query_row("SELECT ?", 3)
+
+# Keyword argument form
+row = await context.conn.query_row("SELECT ?, ?, ?, ?", params=(3, False, 4, "55"))
 ```
+
+Named parameters use token-aware matching, so `:a` will not corrupt `:ab`.
+For local embedded connections, passing a mismatched number of `?` placeholders
+and values raises a `ValueError` immediately.
 
 ### Query ID tracking and query management
 
@@ -368,6 +476,92 @@ class ConnectionInfo:
     def warehouse(self) -> str | None: ...
 ```
 
+### connect_local
+
+```python
+def connect_local(
+    database: str = ":memory:",
+    *,
+    data_path: str | None = None,
+    tenant: str | None = None,
+) -> LocalConnection: ...
+```
+
+### LocalConnection
+
+```python
+class LocalConnection:
+    def sql(self, query: str) -> LocalRelation: ...
+    def table(self, name: str) -> LocalRelation: ...
+    def format_sql(self, sql: str, params: Any = None) -> str: ...
+    def execute(self, query: str, params: Any = None) -> None: ...
+    def exec(self, sql: str, params: Any = None) -> None: ...
+    def query_row(self, sql: str, params: Any = None) -> LocalRow | None: ...
+    def query_all(self, sql: str, params: Any = None) -> list[LocalRow]: ...
+    def query_iter(self, sql: str, params: Any = None) -> LocalRowIterator: ...
+    def close(self) -> None: ...
+    def last_query_id(self) -> None: ...  # always None for local mode
+    def kill_query(self, query_id: str) -> None: ...  # raises NotImplementedError
+    def register(
+        self,
+        name: str,
+        source: Any,           # path str/Path, pandas/polars DataFrame, or pyarrow Table
+        *,
+        format: str | None = None,
+        pattern: str | None = None,
+        connection: str | None = None,
+    ) -> LocalConnection: ...
+    def from_df(self, source: Any, *, name: str | None = None) -> LocalRelation: ...
+    def read_parquet(
+        self, path: str | Path, *, pattern: str | None = None,
+        connection: str | None = None, name: str | None = None,
+    ) -> LocalRelation: ...
+    def read_csv(
+        self, path: str | Path, *, pattern: str | None = None,
+        connection: str | None = None, name: str | None = None,
+    ) -> LocalRelation: ...
+    def read_json(
+        self, path: str | Path, *, pattern: str | None = None,
+        connection: str | None = None, name: str | None = None,
+    ) -> LocalRelation: ...
+    def read_text(
+        self, path: str | Path, *, pattern: str | None = None,
+        connection: str | None = None, name: str | None = None,
+    ) -> LocalRelation: ...
+```
+
+### LocalRelation
+
+```python
+class LocalRelation:
+    def df(self) -> Any: ...          # pandas DataFrame
+    def pl(self) -> Any: ...          # polars DataFrame
+    def arrow(self) -> Any: ...       # pyarrow Table
+    def fetchall(self) -> list[tuple]: ...
+    def fetchone(self) -> tuple | None: ...
+```
+
+### LocalRow
+
+```python
+class LocalRow:
+    def values(self) -> tuple[Any, ...]: ...
+    def __len__(self) -> int: ...
+    def __iter__(self) -> LocalRow: ...
+    def __next__(self) -> Any: ...
+    def __getitem__(self, key: int) -> Any: ...
+```
+
+### LocalRowIterator
+
+```python
+class LocalRowIterator:
+    def schema(self) -> Any: ...  # not yet implemented for local mode
+    def close(self) -> None: ...
+    def __iter__(self) -> LocalRowIterator: ...
+    def __next__(self) -> LocalRow: ...
+```
+
 ## Development
 
 ```
@@ -377,11 +571,14 @@ make up
 
 ```shell
 cd bindings/python
-uv sync
+uv python install 3.12
+uv venv --python 3.12
+uv sync --extra local
 source .venv/bin/activate
-maturin develop --uv
+maturin develop
 
 behave tests/asyncio
 behave tests/blocking
 behave tests/cursor
+behave tests/local
 ```
