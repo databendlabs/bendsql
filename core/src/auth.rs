@@ -12,7 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use reqwest::RequestBuilder;
+use serde::Serialize;
 
 use crate::error::{Error, Result};
 
@@ -104,6 +109,244 @@ impl Auth for AccessTokenFileAuth {
     }
 }
 
+const HEADER_AUTH_METHOD: &str = "X-DATABEND-AUTH-METHOD";
+const KEYPAIR_TOKEN_TTL_SECS: u64 = 60;
+
+#[derive(Serialize)]
+struct KeyPairClaims {
+    sub: String,
+    iat: u64,
+    exp: u64,
+}
+
+#[derive(Clone)]
+pub struct KeyPairAuth {
+    username: String,
+    encoding_key: Arc<EncodingKey>,
+    algorithm: Algorithm,
+}
+
+impl KeyPairAuth {
+    pub fn new(
+        username: impl ToString,
+        private_key_file: &str,
+        passphrase_file: Option<&str>,
+    ) -> Result<Self> {
+        let pem_data = std::fs::read(private_key_file).map_err(|e| {
+            Error::IO(format!(
+                "cannot read private key from file {}: {}",
+                private_key_file, e
+            ))
+        })?;
+
+        let passphrase = match passphrase_file {
+            Some(path) => {
+                let p = std::fs::read_to_string(path).map_err(|e| {
+                    Error::IO(format!("cannot read passphrase from file {}: {}", path, e))
+                })?;
+                Some(p.trim().to_string())
+            }
+            None => None,
+        };
+
+        let (encoding_key, algorithm) = Self::parse_private_key(&pem_data, passphrase.as_deref())?;
+
+        Ok(Self {
+            username: username.to_string(),
+            encoding_key: Arc::new(encoding_key),
+            algorithm,
+        })
+    }
+
+    fn parse_private_key(
+        pem_data: &[u8],
+        passphrase: Option<&str>,
+    ) -> Result<(EncodingKey, Algorithm)> {
+        let pem_str = std::str::from_utf8(pem_data)
+            .map_err(|e| Error::IO(format!("private key is not valid UTF-8: {e}")))?;
+
+        if let Some(passphrase) = passphrase {
+            // Encrypted PKCS#8 key — decrypt using pkcs8 crate to get DER
+            Self::parse_encrypted_key(pem_str, passphrase)
+        } else {
+            // Unencrypted key — detect type and use jsonwebtoken's PEM methods
+            Self::parse_unencrypted_key(pem_data, pem_str)
+        }
+    }
+
+    fn parse_encrypted_key(pem_str: &str, passphrase: &str) -> Result<(EncodingKey, Algorithm)> {
+        use pkcs8::DecodePrivateKey;
+
+        let doc = pkcs8::SecretDocument::from_pkcs8_encrypted_pem(pem_str, passphrase.as_bytes())
+            .map_err(|e| Error::IO(format!("failed to decrypt private key: {e}")))?;
+
+        let der_bytes = doc.as_bytes();
+
+        // Try each key type with DER
+        // from_*_der returns EncodingKey directly (infallible for the struct construction),
+        // but the underlying parsing may still fail at sign time.
+        // We try RSA first, then EC, then Ed25519 by attempting to parse the key info.
+        // Since from_*_der doesn't validate, we use the OID from the PKCS#8 structure.
+        let private_key_info = pkcs8::PrivateKeyInfoRef::try_from(der_bytes)
+            .map_err(|e| Error::IO(format!("failed to parse PKCS#8 DER: {e}")))?;
+
+        let algorithm_oid = private_key_info.algorithm.oid;
+
+        // RSA: 1.2.840.113549.1.1.1
+        const RSA_OID: pkcs8::ObjectIdentifier =
+            pkcs8::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
+        // EC: 1.2.840.10045.2.1
+        const EC_OID: pkcs8::ObjectIdentifier =
+            pkcs8::ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+        // Ed25519: 1.3.101.112
+        const ED25519_OID: pkcs8::ObjectIdentifier =
+            pkcs8::ObjectIdentifier::new_unwrap("1.3.101.112");
+
+        if algorithm_oid == RSA_OID {
+            // Ring's from_der expects PKCS#1 RSAPrivateKey DER, not full PKCS#8.
+            // Extract the inner private key bytes from PKCS#8 PrivateKeyInfo.
+            let rsa_der = private_key_info.private_key.as_bytes();
+            Ok((EncodingKey::from_rsa_der(rsa_der), Algorithm::RS256))
+        } else if algorithm_oid == EC_OID {
+            // Ring requires named curve PKCS#8 format for EC keys.
+            // If the key uses explicit parameters (common with openssl genpkey),
+            // we rebuild a named curve PKCS#8 from the inner SEC1 private key.
+            let ec_der = Self::rebuild_ec_pkcs8_named_curve(private_key_info)?;
+            Ok((EncodingKey::from_ec_der(&ec_der), Algorithm::ES256))
+        } else if algorithm_oid == ED25519_OID {
+            Ok((EncodingKey::from_ed_der(der_bytes), Algorithm::EdDSA))
+        } else {
+            Err(Error::IO(format!(
+                "unsupported key algorithm OID: {algorithm_oid}"
+            )))
+        }
+    }
+
+    /// Rebuild a named-curve PKCS#8 DER for EC keys.
+    /// Ring only accepts PKCS#8 with named curve OID (not explicit parameters).
+    /// This extracts the SEC1 private key from PrivateKeyInfo and wraps it
+    /// in a minimal named-curve PKCS#8 structure.
+    fn rebuild_ec_pkcs8_named_curve(pki: pkcs8::PrivateKeyInfoRef) -> Result<Vec<u8>> {
+        use pkcs8::der::Encode;
+
+        // Detect curve from AlgorithmIdentifier parameters
+        // For EC keys, parameters contain the curve OID (named) or explicit params
+        const P256_OID: pkcs8::ObjectIdentifier =
+            pkcs8::ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
+
+        // Try to extract named curve OID from parameters
+        let curve_oid = if let Some(params) = pki.algorithm.parameters {
+            // Try decoding as OID (named curve case)
+            params
+                .decode_as::<pkcs8::ObjectIdentifier>()
+                .unwrap_or(P256_OID)
+        } else {
+            // Default to P-256 if no parameters (shouldn't happen for EC)
+            P256_OID
+        };
+
+        // Build AlgorithmIdentifier with named curve OID
+        let alg_id = pkcs8::AlgorithmIdentifierRef {
+            oid: pkcs8::ObjectIdentifier::new_unwrap("1.2.840.10045.2.1"),
+            parameters: Some(pkcs8::der::asn1::AnyRef::from(&curve_oid)),
+        };
+
+        // Rebuild PrivateKeyInfo with the named curve AlgorithmIdentifier
+        let new_pki = pkcs8::PrivateKeyInfo {
+            algorithm: alg_id,
+            private_key: pki.private_key,
+            public_key: pki.public_key,
+        };
+
+        new_pki
+            .to_der()
+            .map_err(|e| Error::IO(format!("failed to re-encode EC PKCS#8: {e}")))
+    }
+
+    fn parse_unencrypted_key(pem_data: &[u8], pem_str: &str) -> Result<(EncodingKey, Algorithm)> {
+        if pem_str.contains("RSA PRIVATE KEY") {
+            // PKCS#1 RSA key
+            let key = EncodingKey::from_rsa_pem(pem_data)
+                .map_err(|e| Error::IO(format!("failed to parse RSA private key: {e}")))?;
+            return Ok((key, Algorithm::RS256));
+        }
+
+        if pem_str.contains("EC PRIVATE KEY") {
+            // SEC1 EC key
+            let key = EncodingKey::from_ec_pem(pem_data)
+                .map_err(|e| Error::IO(format!("failed to parse EC private key: {e}")))?;
+            return Ok((key, Algorithm::ES256));
+        }
+
+        // PKCS#8 "BEGIN PRIVATE KEY" — parse OID to determine key type,
+        // then use from_*_der with full PKCS#8 DER (from_ec_pem has issues with PKCS#8 EC keys)
+        let pem_parsed =
+            pem::parse(pem_data).map_err(|e| Error::IO(format!("failed to parse PEM: {e}")))?;
+        let der_bytes = pem_parsed.contents();
+
+        let private_key_info = pkcs8::PrivateKeyInfoRef::try_from(der_bytes)
+            .map_err(|e| Error::IO(format!("failed to parse PKCS#8 DER: {e}")))?;
+
+        let algorithm_oid = private_key_info.algorithm.oid;
+
+        const RSA_OID: pkcs8::ObjectIdentifier =
+            pkcs8::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
+        const EC_OID: pkcs8::ObjectIdentifier =
+            pkcs8::ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
+        const ED25519_OID: pkcs8::ObjectIdentifier =
+            pkcs8::ObjectIdentifier::new_unwrap("1.3.101.112");
+
+        if algorithm_oid == RSA_OID {
+            // Ring's from_der expects PKCS#1 RSAPrivateKey DER, not full PKCS#8.
+            // Extract the inner private key bytes from PKCS#8 PrivateKeyInfo.
+            let rsa_der = private_key_info.private_key.as_bytes();
+            Ok((EncodingKey::from_rsa_der(rsa_der), Algorithm::RS256))
+        } else if algorithm_oid == EC_OID {
+            // Ring requires named curve PKCS#8 format for EC keys.
+            // If the key uses explicit parameters (common with openssl genpkey),
+            // we rebuild a named curve PKCS#8 from the inner SEC1 private key.
+            let ec_der = Self::rebuild_ec_pkcs8_named_curve(private_key_info)?;
+            Ok((EncodingKey::from_ec_der(&ec_der), Algorithm::ES256))
+        } else if algorithm_oid == ED25519_OID {
+            Ok((EncodingKey::from_ed_der(der_bytes), Algorithm::EdDSA))
+        } else {
+            Err(Error::IO(format!(
+                "unsupported key algorithm OID: {algorithm_oid}"
+            )))
+        }
+    }
+
+    fn generate_jwt(&self) -> Result<String> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| Error::IO(format!("system time error: {e}")))?
+            .as_secs();
+
+        let claims = KeyPairClaims {
+            sub: self.username.clone(),
+            iat: now,
+            exp: now + KEYPAIR_TOKEN_TTL_SECS,
+        };
+
+        let header = Header::new(self.algorithm);
+        encode(&header, &claims, &self.encoding_key)
+            .map_err(|e| Error::IO(format!("failed to sign JWT: {e}")))
+    }
+}
+
+impl Auth for KeyPairAuth {
+    fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
+        let token = self.generate_jwt()?;
+        Ok(builder
+            .bearer_auth(token)
+            .header(HEADER_AUTH_METHOD, "keypair"))
+    }
+
+    fn username(&self) -> String {
+        self.username.clone()
+    }
+}
+
 #[derive(::serde::Deserialize, ::serde::Serialize)]
 #[serde(from = "String", into = "String")]
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -166,5 +409,183 @@ mod tests {
         assert_eq!(display, "**REDACTED**");
         let debug = format!("{value:?}");
         assert_eq!(debug, "\"**REDACTED**\"");
+    }
+
+    #[test]
+    fn keypair_auth_rsa() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Generate a test RSA private key in PKCS#8 format using openssl command
+        // Note: `openssl genrsa` outputs PKCS#1 which may have compatibility issues
+        // with some versions of ring. Using genpkey ensures PKCS#8 format.
+        let output = std::process::Command::new("openssl")
+            .args([
+                "genpkey",
+                "-algorithm",
+                "RSA",
+                "-pkeyopt",
+                "rsa_keygen_bits:2048",
+            ])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => {
+                // Skip test if openssl is not available
+                return;
+            }
+        };
+
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&output.stdout).unwrap();
+
+        let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
+        assert_eq!(auth.username(), "testuser");
+        assert_eq!(auth.algorithm, Algorithm::RS256);
+
+        // Verify JWT can be generated
+        let token = auth.generate_jwt().unwrap();
+        assert!(!token.is_empty());
+
+        // Verify JWT structure (header.payload.signature)
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn keypair_auth_rsa_pkcs1() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Generate a PKCS#1 RSA key (BEGIN RSA PRIVATE KEY)
+        let output = std::process::Command::new("openssl")
+            .args(["genrsa", "2048"])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return,
+        };
+
+        let pem_str = String::from_utf8_lossy(&output.stdout);
+        if !pem_str.contains("RSA PRIVATE KEY") {
+            // Skip if openssl outputs PKCS#8 format instead
+            return;
+        }
+
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&output.stdout).unwrap();
+
+        let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
+        assert_eq!(auth.algorithm, Algorithm::RS256);
+
+        let token = auth.generate_jwt().unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn keypair_auth_ec() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Generate a test EC private key in PKCS#8 format
+        let output = std::process::Command::new("openssl")
+            .args([
+                "genpkey",
+                "-algorithm",
+                "EC",
+                "-pkeyopt",
+                "ec_paramgen_curve:P-256",
+            ])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return,
+        };
+
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&output.stdout).unwrap();
+
+        let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
+        assert_eq!(auth.algorithm, Algorithm::ES256);
+
+        let token = auth.generate_jwt().unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn keypair_auth_ed25519() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Generate a test Ed25519 private key
+        let output = std::process::Command::new("openssl")
+            .args(["genpkey", "-algorithm", "ed25519"])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return,
+        };
+
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&output.stdout).unwrap();
+
+        let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
+        assert_eq!(auth.algorithm, Algorithm::EdDSA);
+
+        let token = auth.generate_jwt().unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn keypair_auth_encrypted_key() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Generate an encrypted RSA private key with scrypt KDF (supported by pkcs8 crate)
+        let output = std::process::Command::new("openssl")
+            .args([
+                "genpkey",
+                "-algorithm",
+                "RSA",
+                "-pkeyopt",
+                "rsa_keygen_bits:2048",
+                "-aes-256-cbc",
+                "-pass",
+                "pass:testpass",
+                "-v2prf",
+                "hmacWithSHA256",
+            ])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return,
+        };
+
+        // Check if the generated key is actually encrypted
+        let pem_str = String::from_utf8_lossy(&output.stdout);
+        if !pem_str.contains("ENCRYPTED") {
+            return;
+        }
+
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&output.stdout).unwrap();
+
+        let mut pass_file = NamedTempFile::new().unwrap();
+        pass_file.write_all(b"testpass\n").unwrap();
+
+        let auth = KeyPairAuth::new(
+            "testuser",
+            key_file.path().to_str().unwrap(),
+            Some(pass_file.path().to_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(auth.algorithm, Algorithm::RS256);
+
+        let token = auth.generate_jwt().unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
     }
 }

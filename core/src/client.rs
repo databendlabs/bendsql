@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth};
+use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth};
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
@@ -260,10 +260,11 @@ impl APIClient {
             client.host = host.to_string();
         }
 
-        if u.username() != "" {
+        let username = u.username().to_string();
+        if !username.is_empty() {
             let password = u.password().unwrap_or_default();
             let password = percent_decode_str(password).decode_utf8()?;
-            client.auth = Arc::new(BasicAuth::new(u.username(), password));
+            client.auth = Arc::new(BasicAuth::new(&username, password));
         }
 
         let mut session_state = SessionState::default();
@@ -272,6 +273,9 @@ impl APIClient {
         if !database.is_empty() {
             session_state.set_database(database);
         }
+
+        let mut private_key_file: Option<String> = None;
+        let mut private_key_passphrase_file: Option<String> = None;
 
         let mut scheme = "https";
         for (k, v) in u.query_pairs() {
@@ -331,6 +335,12 @@ impl APIClient {
                 "access_token_file" => {
                     client.auth = Arc::new(AccessTokenFileAuth::new(v));
                 }
+                "private_key_file" => {
+                    private_key_file = Some(v.to_string());
+                }
+                "private_key_passphrase_file" => {
+                    private_key_passphrase_file = Some(v.to_string());
+                }
                 "login" => {
                     client.disable_login = match v.as_ref() {
                         "disable" => true,
@@ -372,6 +382,14 @@ impl APIClient {
                     session_state.set(k, v);
                 }
             }
+        }
+        // If private_key_file is specified, use KeyPairAuth
+        if let Some(key_file) = private_key_file {
+            client.auth = Arc::new(KeyPairAuth::new(
+                &username,
+                &key_file,
+                private_key_passphrase_file.as_deref(),
+            )?);
         }
         client.port = match u.port() {
             Some(p) => p,

@@ -25,3 +25,4 @@ frontend/.next/
 # Frontend build artifacts now use fixed filenames, included in git
 # cli/frontend/build/ will be committed to ensure cargo install has full UI
 
+.alma-snapshots

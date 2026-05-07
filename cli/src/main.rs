@@ -89,6 +89,15 @@ struct Args {
     )]
     password: Option<SensitiveString>,
 
+    #[clap(
+        long,
+        help = "Private key file for key-pair authentication, overrides password in DSN"
+    )]
+    private_key_file: Option<String>,
+
+    #[clap(long, help = "Passphrase file for encrypted private key")]
+    private_key_passphrase_file: Option<String>,
+
     #[clap(short = 'r', long, help = "Downgrade role name, overrides role in DSN")]
     role: Option<String>,
 
@@ -291,6 +300,19 @@ pub async fn main() -> Result<()> {
         // override role if specified in command line
         if let Some(role) = args.role {
             conn_args.args.insert("role".to_string(), role);
+        }
+
+        // override private key file if specified in command line
+        if let Some(private_key_file) = args.private_key_file {
+            conn_args
+                .args
+                .insert("private_key_file".to_string(), private_key_file);
+        }
+        if let Some(private_key_passphrase_file) = args.private_key_passphrase_file {
+            conn_args.args.insert(
+                "private_key_passphrase_file".to_string(),
+                private_key_passphrase_file,
+            );
         }
     }
 
