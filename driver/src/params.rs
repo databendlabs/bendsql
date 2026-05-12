@@ -51,7 +51,7 @@ pub fn json_value_to_sql_string(v: &serde_json::Value) -> String {
             }
         }
         serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => format!("'{s}'"),
+        serde_json::Value::String(s) => format!("'{}'", s.replace('\'', "''")),
         serde_json::Value::Array(arr) => {
             let items: Vec<String> = arr.iter().map(json_value_to_sql_string).collect();
             format!("[{}]", items.join(", "))

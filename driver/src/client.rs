@@ -530,27 +530,9 @@ impl<'a> QueryBuilder<'a> {
         Ok(QueryCursor::new(row_iter))
     }
 
-    /// Check if we should use server-side parameter binding.
-    /// Returns true when the server supports it AND the SQL does not contain `$N` placeholders.
     fn should_use_server_side_params(&self) -> bool {
-        if !self.connection.inner.supports_server_side_params() {
-            return false;
-        }
-        !self.has_dollar_placeholders()
-    }
-
-    /// Detect if the SQL contains `$N` column position placeholders.
-    fn has_dollar_placeholders(&self) -> bool {
-        let tokens = match databend_common_ast::parser::tokenize_sql(&self.sql) {
-            Ok(t) => t,
-            Err(_) => return false,
-        };
-        if let Ok((stmt, _)) = databend_common_ast::parser::parse_sql(&tokens, Dialect::PostgreSQL)
-        {
-            let mut visitor = PlaceholderVisitor::new();
-            return visitor.has_dollar_positions(&stmt);
-        }
-        false
+        self.connection.inner.supports_server_side_params()
+            && !sql_has_dollar_placeholders(&self.sql)
     }
 
     fn get_final_sql(&self) -> String {
@@ -601,23 +583,8 @@ impl<'a> ExecBuilder<'a> {
     }
 
     fn should_use_server_side_params(&self) -> bool {
-        if !self.connection.inner.supports_server_side_params() {
-            return false;
-        }
-        !self.has_dollar_placeholders()
-    }
-
-    fn has_dollar_placeholders(&self) -> bool {
-        let tokens = match databend_common_ast::parser::tokenize_sql(&self.sql) {
-            Ok(t) => t,
-            Err(_) => return false,
-        };
-        if let Ok((stmt, _)) = databend_common_ast::parser::parse_sql(&tokens, Dialect::PostgreSQL)
-        {
-            let mut visitor = PlaceholderVisitor::new();
-            return visitor.has_dollar_positions(&stmt);
-        }
-        false
+        self.connection.inner.supports_server_side_params()
+            && !sql_has_dollar_placeholders(&self.sql)
     }
 }
 
@@ -629,6 +596,18 @@ impl<'a> std::future::IntoFuture for ExecBuilder<'a> {
     fn into_future(self) -> Self::IntoFuture {
         Box::pin(self.execute())
     }
+}
+
+fn sql_has_dollar_placeholders(sql: &str) -> bool {
+    let tokens = match databend_common_ast::parser::tokenize_sql(sql) {
+        Ok(t) => t,
+        Err(_) => return false,
+    };
+    if let Ok((stmt, _)) = databend_common_ast::parser::parse_sql(&tokens, Dialect::PostgreSQL) {
+        let mut visitor = PlaceholderVisitor::new();
+        return visitor.has_dollar_positions(&stmt);
+    }
+    false
 }
 
 // Add trait bounds for ORM functionality

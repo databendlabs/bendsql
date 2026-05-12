@@ -67,7 +67,7 @@ impl Value {
                     .map(|(k, v)| {
                         let key = match k {
                             Value::String(s) => s.clone(),
-                            other => format!("{:?}", other),
+                            other => other.to_sql_string(),
                         };
                         (key, v.to_json_value())
                     })
@@ -79,8 +79,8 @@ impl Value {
             }
             Value::Bitmap(b) => serde_json::Value::String(b.clone()),
             Value::Variant(v) => serde_json::Value::String(v.clone()),
-            Value::Geometry(g) => serde_json::Value::String(g.clone()),
-            Value::Geography(g) => serde_json::Value::String(g.clone()),
+            Value::Geometry(g) => serde_json::Value::String(g.to_string().into_owned()),
+            Value::Geography(g) => serde_json::Value::String(g.to_string().into_owned()),
             Value::Interval(i) => serde_json::Value::String(i.clone()),
             Value::Vector(v) => {
                 serde_json::Value::Array(v.iter().map(|f| serde_json::json!(f)).collect())
