@@ -135,9 +135,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.pyver }}
+      - name: Resolve Databend version
+        id: databend-version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(gh api repos/databendlabs/databend/releases --jq '[.[] | select(.draft | not) | select(.tag_name | endswith("-nightly"))][0].tag_name')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Running integration tests with Databend version: **$version**" >> "$GITHUB_STEP_SUMMARY"
       - name: Prepare
         working-directory: tests
-        run: make up
+        run: make up DATABEND_META_VERSION=${{ steps.databend-version.outputs.version }} DATABEND_QUERY_VERSION=${{ steps.databend-version.outputs.version }}
 #        env:
 #          DATABEND_META_VERSION: v1.2.898-nightly
 #          DATABEND_QUERY_VERSION: v1.2.898-nightly
