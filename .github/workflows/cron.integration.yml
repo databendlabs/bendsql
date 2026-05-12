@@ -26,7 +26,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version=$(gh api repos/databendlabs/databend/releases --jq '.[0].tag_name')
+          version=$(gh api repos/databendlabs/databend/releases --jq '[.[] | select(.draft | not) | select(.tag_name | endswith("-nightly"))][0].tag_name')
           echo "version=$version" >> $GITHUB_OUTPUT
           echo "Running integration tests with Databend version: **$version**" >> $GITHUB_STEP_SUMMARY
 
@@ -39,11 +39,11 @@ jobs:
         with:
           cache-key: integration
       - name: Run Core Integration Tests
-        run: make -C tests test-core DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
+        run: make -C tests test-core DATABEND_META_VERSION=${{ needs.version.outputs.version }} DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
       - name: Run Driver Integration Tests
-        run: make -C tests test-driver DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
+        run: make -C tests test-driver DATABEND_META_VERSION=${{ needs.version.outputs.version }} DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
       - name: Run BendSQL Integration Tests
-        run: make -C tests test-bendsql DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
+        run: make -C tests test-bendsql DATABEND_META_VERSION=${{ needs.version.outputs.version }} DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
 
   build-python:
     name: build-python-${{ matrix.wheel }}
@@ -130,7 +130,7 @@ jobs:
           python-version: ${{ matrix.pyver }}
       - name: Prepare
         working-directory: tests
-        run: make up DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
+        run: make up DATABEND_META_VERSION=${{ needs.version.outputs.version }} DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
@@ -176,7 +176,7 @@ jobs:
         run: pnpm install
       - name: Prepare
         working-directory: tests
-        run: make up DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
+        run: make up DATABEND_META_VERSION=${{ needs.version.outputs.version }} DATABEND_QUERY_VERSION=${{ needs.version.outputs.version }}
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:

@@ -111,4 +111,12 @@ jobs:
         with:
           name: bindings-nodejs-x86_64-unknown-linux-gnu
           path: bindings/nodejs
-      - run: make -C tests test-bindings-nodejs
+      - name: Resolve Databend version
+        id: databend-version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(gh api repos/databendlabs/databend/releases --jq '[.[] | select(.draft | not) | select(.tag_name | endswith("-nightly"))][0].tag_name')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Running integration tests with Databend version: **$version**" >> "$GITHUB_STEP_SUMMARY"
+      - run: make -C tests test-bindings-nodejs DATABEND_META_VERSION=${{ steps.databend-version.outputs.version }} DATABEND_QUERY_VERSION=${{ steps.databend-version.outputs.version }}

@@ -86,9 +86,17 @@ jobs:
       #   run: |
       #     echo "::add-mask::${{ vars.DATABEND_LICENSE_TRIAL }}"
       #     echo "QUERY_DATABEND_ENTERPRISE_LICENSE=${{ vars.DATABEND_LICENSE_TRIAL }}" >> $GITHUB_ENV
-      - run: make -C tests test-core
-      - run: make -C tests test-driver
-      - run: make -C tests test-bendsql
+      - name: Resolve Databend version
+        id: databend-version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(gh api repos/databendlabs/databend/releases --jq '[.[] | select(.draft | not) | select(.tag_name | endswith("-nightly"))][0].tag_name')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Running integration tests with Databend version: **$version**" >> "$GITHUB_STEP_SUMMARY"
+      - run: make -C tests test-core DATABEND_META_VERSION=${{ steps.databend-version.outputs.version }} DATABEND_QUERY_VERSION=${{ steps.databend-version.outputs.version }}
+      - run: make -C tests test-driver DATABEND_META_VERSION=${{ steps.databend-version.outputs.version }} DATABEND_QUERY_VERSION=${{ steps.databend-version.outputs.version }}
+      - run: make -C tests test-bendsql DATABEND_META_VERSION=${{ steps.databend-version.outputs.version }} DATABEND_QUERY_VERSION=${{ steps.databend-version.outputs.version }}
 
   bindings_python:
     needs: check
