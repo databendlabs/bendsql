@@ -14,6 +14,7 @@
 
 use crate::_macro_internal::Value;
 use crate::value::base::{NumberValue, DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
+use crate::value::format::display::{display_decimal_128, display_decimal_256};
 use chrono::NaiveDate;
 
 impl Value {
@@ -36,9 +37,15 @@ impl Value {
                 NumberValue::UInt64(v) => serde_json::json!(v),
                 NumberValue::Float32(v) => serde_json::json!(v),
                 NumberValue::Float64(v) => serde_json::json!(v),
-                NumberValue::Decimal64(v, _) => serde_json::Value::String(v.to_string()),
-                NumberValue::Decimal128(v, _) => serde_json::Value::String(v.to_string()),
-                NumberValue::Decimal256(v, _) => serde_json::Value::String(v.to_string()),
+                NumberValue::Decimal64(v, s) => {
+                    serde_json::Value::String(display_decimal_128(*v as i128, s.scale))
+                }
+                NumberValue::Decimal128(v, s) => {
+                    serde_json::Value::String(display_decimal_128(*v, s.scale))
+                }
+                NumberValue::Decimal256(v, s) => {
+                    serde_json::Value::String(display_decimal_256(*v, s.scale))
+                }
             },
             Value::Timestamp(dt) => {
                 serde_json::Value::String(dt.strftime(TIMESTAMP_FORMAT).to_string())
@@ -134,5 +141,34 @@ impl Value {
             Value::EmptyArray => "[]".to_string(),
             Value::EmptyMap => "{}".to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use databend_client::schema::DecimalSize;
+    use ethnum::i256;
+
+    use crate::value::{NumberValue, Value};
+
+    #[test]
+    fn to_json_value_preserves_decimal_scale() {
+        let size = DecimalSize {
+            precision: 10,
+            scale: 2,
+        };
+
+        assert_eq!(
+            Value::Number(NumberValue::Decimal64(12345, size)).to_json_value(),
+            serde_json::json!("123.45")
+        );
+        assert_eq!(
+            Value::Number(NumberValue::Decimal128(-12345, size)).to_json_value(),
+            serde_json::json!("-123.45")
+        );
+        assert_eq!(
+            Value::Number(NumberValue::Decimal256(i256::from(12345), size)).to_json_value(),
+            serde_json::json!("123.45")
+        );
     }
 }
