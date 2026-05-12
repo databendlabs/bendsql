@@ -13,10 +13,81 @@
 // limitations under the License.
 
 use crate::_macro_internal::Value;
-use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
+use crate::value::base::{NumberValue, DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
+use crate::value::format::display::{display_decimal_128, display_decimal_256};
 use chrono::NaiveDate;
 
 impl Value {
+    /// Convert a Value to a serde_json::Value for use in Params.
+    pub fn to_json_value(&self) -> serde_json::Value {
+        match self {
+            Value::Null => serde_json::Value::Null,
+            Value::EmptyArray => serde_json::json!([]),
+            Value::EmptyMap => serde_json::json!({}),
+            Value::Boolean(b) => serde_json::Value::Bool(*b),
+            Value::String(s) => serde_json::Value::String(s.clone()),
+            Value::Number(n) => match n {
+                NumberValue::Int8(v) => serde_json::json!(v),
+                NumberValue::Int16(v) => serde_json::json!(v),
+                NumberValue::Int32(v) => serde_json::json!(v),
+                NumberValue::Int64(v) => serde_json::json!(v),
+                NumberValue::UInt8(v) => serde_json::json!(v),
+                NumberValue::UInt16(v) => serde_json::json!(v),
+                NumberValue::UInt32(v) => serde_json::json!(v),
+                NumberValue::UInt64(v) => serde_json::json!(v),
+                NumberValue::Float32(v) => serde_json::json!(v),
+                NumberValue::Float64(v) => serde_json::json!(v),
+                NumberValue::Decimal64(v, s) => {
+                    serde_json::Value::String(display_decimal_128(*v as i128, s.scale))
+                }
+                NumberValue::Decimal128(v, s) => {
+                    serde_json::Value::String(display_decimal_128(*v, s.scale))
+                }
+                NumberValue::Decimal256(v, s) => {
+                    serde_json::Value::String(display_decimal_256(*v, s.scale))
+                }
+            },
+            Value::Timestamp(dt) => {
+                serde_json::Value::String(dt.strftime(TIMESTAMP_FORMAT).to_string())
+            }
+            Value::TimestampTz(dt) => {
+                serde_json::Value::String(dt.strftime(TIMESTAMP_TIMEZONE_FORMAT).to_string())
+            }
+            Value::Date(d) => {
+                let date = NaiveDate::from_num_days_from_ce_opt(*d + DAYS_FROM_CE).unwrap();
+                serde_json::Value::String(date.format("%Y-%m-%d").to_string())
+            }
+            Value::Binary(b) => serde_json::Value::String(hex::encode(b)),
+            Value::Array(arr) => {
+                serde_json::Value::Array(arr.iter().map(|v| v.to_json_value()).collect())
+            }
+            Value::Map(map) => {
+                let obj: serde_json::Map<String, serde_json::Value> = map
+                    .iter()
+                    .map(|(k, v)| {
+                        let key = match k {
+                            Value::String(s) => s.clone(),
+                            other => other.to_sql_string(),
+                        };
+                        (key, v.to_json_value())
+                    })
+                    .collect();
+                serde_json::Value::Object(obj)
+            }
+            Value::Tuple(tuple) => {
+                serde_json::Value::Array(tuple.iter().map(|v| v.to_json_value()).collect())
+            }
+            Value::Bitmap(b) => serde_json::Value::String(b.clone()),
+            Value::Variant(v) => serde_json::Value::String(v.clone()),
+            Value::Geometry(g) => serde_json::Value::String(g.to_string().into_owned()),
+            Value::Geography(g) => serde_json::Value::String(g.to_string().into_owned()),
+            Value::Interval(i) => serde_json::Value::String(i.clone()),
+            Value::Vector(v) => {
+                serde_json::Value::Array(v.iter().map(|f| serde_json::json!(f)).collect())
+            }
+        }
+    }
+
     // for now only used in ORM to fmt values to insert,
     // for Params, rust use Param::as_sql_string, and py/js bindings are handled in binding code
     pub fn to_sql_string(&self) -> String {
@@ -70,5 +141,34 @@ impl Value {
             Value::EmptyArray => "[]".to_string(),
             Value::EmptyMap => "{}".to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use databend_client::schema::DecimalSize;
+    use ethnum::i256;
+
+    use crate::value::{NumberValue, Value};
+
+    #[test]
+    fn to_json_value_preserves_decimal_scale() {
+        let size = DecimalSize {
+            precision: 10,
+            scale: 2,
+        };
+
+        assert_eq!(
+            Value::Number(NumberValue::Decimal64(12345, size)).to_json_value(),
+            serde_json::json!("123.45")
+        );
+        assert_eq!(
+            Value::Number(NumberValue::Decimal128(-12345, size)).to_json_value(),
+            serde_json::json!("-123.45")
+        );
+        assert_eq!(
+            Value::Number(NumberValue::Decimal256(i256::from(12345), size)).to_json_value(),
+            serde_json::json!("123.45")
+        );
     }
 }

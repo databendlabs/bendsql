@@ -262,7 +262,7 @@ async fn retry_503_then_success() {
 
     let dsn = build_dsn(port, 2, "");
     let client = APIClient::new(&dsn, None).await.unwrap();
-    let result = client.query_all("select 42").await.unwrap();
+    let result = client.query_all("select 42", None).await.unwrap();
 
     assert_eq!(result.data, vec![vec![Some("42".to_string())]]);
     assert_eq!(requests.lock().unwrap().len(), 2);
@@ -303,7 +303,7 @@ async fn retry_401_with_access_token_file_reload_then_success() {
         &format!("access_token_file={}", token_file.to_string_lossy()),
     );
     let client = APIClient::new(&dsn, None).await.unwrap();
-    let result = client.query_all("select 'reloaded'").await.unwrap();
+    let result = client.query_all("select 'reloaded'", None).await.unwrap();
 
     assert_eq!(result.data, vec![vec![Some("reloaded".to_string())]]);
     assert_eq!(requests.lock().unwrap().len(), 2);
@@ -329,7 +329,7 @@ async fn retry_401_auth_reload_stops_at_max_retries() {
         &format!("access_token_file={}", token_file.to_string_lossy()),
     );
     let client = APIClient::new(&dsn, None).await.unwrap();
-    let err = match client.query_all("select 1").await {
+    let err = match client.query_all("select 1", None).await {
         Ok(_) => panic!("expected unauthorized error"),
         Err(err) => err,
     };
@@ -360,7 +360,7 @@ async fn start_query_404_keeps_logic_error() {
 
     let dsn = build_dsn(port, 2, "");
     let client = APIClient::new(&dsn, None).await.unwrap();
-    let err = match client.query_all("select 1").await {
+    let err = match client.query_all("select 1", None).await {
         Ok(_) => panic!("expected logic error"),
         Err(err) => err,
     };
@@ -403,7 +403,7 @@ async fn query_page_404_maps_to_query_not_found() {
 
     let dsn = build_dsn(port, 2, "");
     let client = APIClient::new(&dsn, None).await.unwrap();
-    let err = match client.query_all("select 1").await {
+    let err = match client.query_all("select 1", None).await {
         Ok(_) => panic!("expected QueryNotFound"),
         Err(err) => err,
     };
