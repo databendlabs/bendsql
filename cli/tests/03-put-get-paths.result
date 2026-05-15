@@ -1,0 +1,16 @@
+---- put no match ----
+Error: BadArgument: No local files matched: <workdir>/src/missing*.csv
+---- put stage dir ----
+<workdir>/src/c.csv	SUCCESS	10
+---- get prefix ----
+<workdir>/dst/c.csv	SUCCESS	10
+---- get single file ----
+<workdir>/dst/c.csv	SUCCESS	10
+---- get local file ----
+Error: BadArgument: Local destination is not a directory: <workdir>/file-dst
+---- get no match ----
+Error: BadArgument: No stage files matched: @ss_03_put_get_paths/missing
+---- duplicate basename ----
+<workdir>/src/nested/a/same.csv	SUCCESS	7
+<workdir>/src/nested/b/same.csv	SUCCESS	7
+Error: BadArgument: Duplicate local file basename in GET results: same.csv

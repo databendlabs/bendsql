@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -181,30 +183,45 @@ pub trait IConnection: Send + Sync {
         let mut total_size: usize = 0;
         let local_dsn = url::Url::parse(local_file)?;
         validate_local_scheme(local_dsn.scheme())?;
+        let entries = expand_local_glob(local_dsn.path())?;
         let mut results = Vec::new();
         let stage_location = StageLocation::try_from(stage)?;
         let schema = Arc::new(put_get_schema());
-        for entry in glob::glob(local_dsn.path())? {
-            let entry = entry?;
+        for entry in entries {
             let filename = entry
                 .file_name()
                 .ok_or_else(|| Error::BadArgument(format!("Invalid local file path: {entry:?}")))?
                 .to_str()
                 .ok_or_else(|| Error::BadArgument(format!("Invalid local file path: {entry:?}")))?;
             let stage_file = stage_location.file_path(filename);
-            let file = File::open(&entry).await?;
-            let size = file.metadata().await?.len();
-            let data = BufReader::new(file);
-            let (fname, status) = match self
-                .upload_to_stage(&stage_file, Box::new(data), size)
-                .await
-            {
-                Ok(_) => {
-                    total_count += 1;
-                    total_size += size as usize;
-                    (entry.to_string_lossy().to_string(), "SUCCESS".to_owned())
+            let (fname, status, size) = if entry.is_dir() {
+                (
+                    entry.to_string_lossy().to_string(),
+                    format!(
+                        "BadArgument: Local path is a directory: {}",
+                        entry.display()
+                    ),
+                    0,
+                )
+            } else {
+                let file = File::open(&entry).await?;
+                let size = file.metadata().await?.len();
+                let data = BufReader::new(file);
+                match self
+                    .upload_to_stage(&stage_file, Box::new(data), size)
+                    .await
+                {
+                    Ok(_) => {
+                        total_count += 1;
+                        total_size += size as usize;
+                        (
+                            entry.to_string_lossy().to_string(),
+                            "SUCCESS".to_owned(),
+                            size,
+                        )
+                    }
+                    Err(e) => (entry.to_string_lossy().to_string(), e.to_string(), size),
                 }
-                Err(e) => (entry.to_string_lossy().to_string(), e.to_string()),
             };
             let ss = ServerStats {
                 write_rows: total_count,
@@ -233,30 +250,37 @@ pub trait IConnection: Send + Sync {
         let mut total_size: usize = 0;
         let local_dsn = url::Url::parse(local_file)?;
         validate_local_scheme(local_dsn.scheme())?;
-        let mut location = StageLocation::try_from(stage)?;
-        if !location.path.ends_with('/') {
-            location.path.push('/');
-        }
+        ensure_local_destination_dir(local_dsn.path())?;
+        let location = StageLocation::try_from(stage)?;
         let list_sql = format!("LIST {location}");
         let mut response = self.query_iter(&list_sql).await?;
+        let mut files = Vec::new();
         let mut results = Vec::new();
         let schema = Arc::new(put_get_schema());
         while let Some(row) = response.next().await {
-            let (mut name, _, _, _, _): (String, u64, Option<String>, String, Option<String>) =
+            let (name, _, _, _, _): (String, u64, Option<String>, String, Option<String>) =
                 row?.try_into().map_err(Error::Parsing)?;
-            if !location.path.is_empty() && name.starts_with(&location.path) {
-                name = name[location.path.len()..].to_string();
+            if let Some(file) = normalize_stage_list_entry(&location, &name)? {
+                files.push(file);
             }
-            let stage_file = format!("{location}/{name}");
-            let presign = self.get_presigned_url("DOWNLOAD", &stage_file).await?;
-            let local_file = Path::new(local_dsn.path()).join(&name);
-            let status = presign_download_from_stage(presign, &local_file).await;
-            let (status, size) = match status {
-                Ok(size) => {
-                    total_count += 1;
-                    total_size += size as usize;
-                    ("SUCCESS".to_owned(), size)
-                }
+        }
+        if files.is_empty() {
+            return Err(Error::BadArgument(format!(
+                "No stage files matched: {stage}"
+            )));
+        }
+        ensure_unique_basenames(&files)?;
+        for file in files {
+            let local_file = Path::new(local_dsn.path()).join(&file.basename);
+            let (status, size) = match self.get_presigned_url("DOWNLOAD", &file.stage_file).await {
+                Ok(presign) => match presign_download_from_stage(presign, &local_file).await {
+                    Ok(size) => {
+                        total_count += 1;
+                        total_size += size as usize;
+                        ("SUCCESS".to_owned(), size)
+                    }
+                    Err(e) => (e.to_string(), 0),
+                },
                 Err(e) => (e.to_string(), 0),
             };
             let ss = ServerStats {
@@ -279,6 +303,78 @@ pub trait IConnection: Send + Sync {
             Box::pin(tokio_stream::iter(results)),
         ))
     }
+}
+
+#[derive(Debug, Clone)]
+struct StageFile {
+    stage_file: String,
+    basename: String,
+}
+
+fn expand_local_glob(pattern: &str) -> Result<Vec<PathBuf>> {
+    let entries = glob::glob(pattern)?.collect::<std::result::Result<Vec<_>, _>>()?;
+    if entries.is_empty() {
+        return Err(Error::BadArgument(format!(
+            "No local files matched: {pattern}"
+        )));
+    }
+    Ok(entries)
+}
+
+fn ensure_local_destination_dir(path: &str) -> Result<()> {
+    let local_path = Path::new(path);
+    if local_path.exists() && !local_path.is_dir() {
+        return Err(Error::BadArgument(format!(
+            "Local destination is not a directory: {path}"
+        )));
+    }
+    Ok(())
+}
+
+fn normalize_stage_list_entry(
+    location: &StageLocation,
+    listed_name: &str,
+) -> Result<Option<StageFile>> {
+    let stage_prefix = format!("{}/", location.name);
+    let relative = if let Some(path) = listed_name.strip_prefix(&stage_prefix) {
+        if !location.path.is_empty() && !path.starts_with(&location.path) {
+            return Ok(None);
+        }
+        path
+    } else if location.path.is_empty() || listed_name.starts_with(&location.path) {
+        listed_name
+    } else {
+        return Ok(None);
+    };
+
+    let basename = Path::new(relative)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| Error::BadArgument(format!("Invalid stage file path: {listed_name}")))?
+        .to_string();
+    let stage_file = if listed_name.starts_with(&stage_prefix) {
+        format!("@{listed_name}")
+    } else {
+        format!("@{}/{}", location.name, relative)
+    };
+
+    Ok(Some(StageFile {
+        stage_file,
+        basename,
+    }))
+}
+
+fn ensure_unique_basenames(files: &[StageFile]) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for file in files {
+        if !seen.insert(file.basename.clone()) {
+            return Err(Error::BadArgument(format!(
+                "Duplicate local file basename in GET results: {}",
+                file.basename
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn put_get_schema() -> Schema {

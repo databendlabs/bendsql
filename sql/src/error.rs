@@ -12,6 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::LazyLock;
+
+static ERROR_VERSION_SUFFIX: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("BENDSQL_ERROR_NO_VERSION").is_err());
+
 #[derive(Debug)]
 pub struct ConvertError {
     target: &'static str,
@@ -82,12 +87,12 @@ impl Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} [v{}]",
-            self.formatted_message(),
-            env!("CARGO_PKG_VERSION")
-        )
+        let msg = self.formatted_message();
+        if *ERROR_VERSION_SUFFIX {
+            write!(f, "{msg} [v{}]", env!("CARGO_PKG_VERSION"))
+        } else {
+            write!(f, "{msg}")
+        }
     }
 }
 
