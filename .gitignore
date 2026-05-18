@@ -12,6 +12,8 @@ venv/
 
 **/.DS_Store
 
+.alma-snapshots/
+
 tmp
 CLAUDE.md
 pnpm-lock.yaml
