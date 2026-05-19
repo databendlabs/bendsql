@@ -275,11 +275,10 @@ impl KeyPairAuth {
         }
     }
 
-    fn parse_sec1_ec_algorithm(pem_data: &[u8]) -> Result<Algorithm> {
+    fn parse_sec1_ec_pem(pem_data: &[u8]) -> Result<(Vec<u8>, Algorithm)> {
         use sec1::der::Decode;
 
-        let pem =
-            pem::parse(pem_data).map_err(|e| Error::IO(format!("failed to parse PEM: {e}")))?;
+        let pem = Self::parse_pem_block(pem_data, "EC PRIVATE KEY")?;
         let ec_key = sec1::EcPrivateKey::from_der(pem.contents())
             .map_err(|e| Error::IO(format!("failed to parse EC private key: {e}")))?;
 
@@ -293,13 +292,23 @@ impl KeyPairAuth {
                 )
             })?;
 
-        match curve_oid.to_string().as_str() {
+        let algorithm = match curve_oid.to_string().as_str() {
             "1.2.840.10045.3.1.7" => Ok(Algorithm::ES256),
             "1.3.132.0.34" => Ok(Algorithm::ES384),
             _ => Err(Error::IO(format!(
                 "unsupported EC private key curve OID: {curve_oid}; supported curves are P-256 and P-384"
             ))),
-        }
+        }?;
+
+        Ok((pem.contents().to_vec(), algorithm))
+    }
+
+    fn parse_pem_block(pem_data: &[u8], tag: &str) -> Result<pem::Pem> {
+        pem::parse_many(pem_data)
+            .map_err(|e| Error::IO(format!("failed to parse PEM: {e}")))?
+            .into_iter()
+            .find(|pem| pem.tag() == tag)
+            .ok_or_else(|| Error::IO(format!("failed to find {tag} PEM block")))
     }
 
     fn parse_unencrypted_key(pem_data: &[u8], pem_str: &str) -> Result<(EncodingKey, Algorithm)> {
@@ -315,9 +324,7 @@ impl KeyPairAuth {
 
             // SEC1 EC key. Choose the JWT alg from the curve instead of
             // advertising the wrong alg for non-P-256 keys.
-            let algorithm = Self::parse_sec1_ec_algorithm(pem_data)?;
-            let pem_parsed =
-                pem::parse(pem_data).map_err(|e| Error::IO(format!("failed to parse PEM: {e}")))?;
+            let (ec_private_key_der, algorithm) = Self::parse_sec1_ec_pem(pem_data)?;
             let pkcs8_der = pkcs8::PrivateKeyInfo {
                 algorithm: pkcs8::AlgorithmIdentifierRef {
                     oid: pkcs8::ObjectIdentifier::new_unwrap("1.2.840.10045.2.1"),
@@ -329,7 +336,7 @@ impl KeyPairAuth {
                         _ => unreachable!(),
                     })),
                 },
-                private_key: pkcs8::der::asn1::OctetStringRef::new(pem_parsed.contents())
+                private_key: pkcs8::der::asn1::OctetStringRef::new(&ec_private_key_der)
                     .map_err(|e| Error::IO(format!("failed to wrap EC private key: {e}")))?,
                 public_key: None::<pkcs8::der::asn1::BitStringRef<'_>>,
             }
@@ -546,8 +553,16 @@ mod tests {
     }
 
     fn gen_sec1_ec_private_key(curve: &str) -> Option<Vec<u8>> {
+        gen_sec1_ec_private_key_with_params(curve, false)
+    }
+
+    fn gen_sec1_ec_private_key_with_params(curve: &str, include_params: bool) -> Option<Vec<u8>> {
+        let mut args = vec!["ecparam", "-name", curve, "-genkey"];
+        if !include_params {
+            args.push("-noout");
+        }
         let output = std::process::Command::new("openssl")
-            .args(["ecparam", "-name", curve, "-genkey", "-noout"])
+            .args(args)
             .output()
             .ok()?;
         output.status.success().then_some(output.stdout)
@@ -614,6 +629,26 @@ mod tests {
 
         let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
         assert_eq!(auth.algorithm, Algorithm::ES384);
+
+        let token = auth.generate_jwt().unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn keypair_auth_sec1_ec_with_parameters_block() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let Some(key) = gen_sec1_ec_private_key_with_params("prime256v1", true) else {
+            return;
+        };
+
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&key).unwrap();
+
+        let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
+        assert_eq!(auth.algorithm, Algorithm::ES256);
 
         let token = auth.generate_jwt().unwrap();
         let parts: Vec<&str> = token.split('.').collect();

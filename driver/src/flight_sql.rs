@@ -302,6 +302,11 @@ impl Args {
                     }
                 },
                 "tls_ca_file" => args.tls_ca_file = Some(v.to_string()),
+                "private_key_file" | "private_key_passphrase_file" => {
+                    return Err(Error::BadArgument(
+                        "key-pair authentication is not supported with FlightSQL".to_string(),
+                    ));
+                }
                 "connect_timeout" => args.connect_timeout = Duration::from_secs(v.parse()?),
                 "query_timeout" => args.query_timeout = Duration::from_secs(v.parse()?),
                 "tcp_nodelay" => args.tcp_nodelay = v.parse()?,
@@ -407,5 +412,22 @@ impl Stream for FlightSQLRows {
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reject_keypair_flight_dsn() {
+        let url =
+            Url::parse("databend+flight://user:@localhost:8900/?private_key_file=key.pem").unwrap();
+        let err = Args::from_url(&url).expect_err("key-pair auth should be rejected");
+        assert!(
+            err.to_string()
+                .contains("key-pair authentication is not supported with FlightSQL"),
+            "unexpected error: {err}"
+        );
     }
 }
