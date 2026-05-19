@@ -1528,6 +1528,8 @@ impl RouteHintGenerator {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[tokio::test]
     async fn parse_dsn() -> Result<()> {
@@ -1543,6 +1545,55 @@ mod test {
             *client.warehouse.try_lock().unwrap(),
             Some("wh".to_string())
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_dsn_with_private_key_uses_keypair_auth() -> Result<()> {
+        let output = std::process::Command::new("openssl")
+            .args([
+                "genpkey",
+                "-algorithm",
+                "RSA",
+                "-pkeyopt",
+                "rsa_keygen_bits:2048",
+            ])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return Ok(()),
+        };
+
+        let mut key_file = NamedTempFile::new()?;
+        key_file.write_all(&output.stdout)?;
+
+        let dsn = format!(
+            "databend://username:password@app.databend.com/test?private_key_file={}&sslmode=disable",
+            url::form_urlencoded::byte_serialize(key_file.path().to_string_lossy().as_bytes())
+                .collect::<String>()
+        );
+        let client = APIClient::from_dsn(&dsn).await?;
+        assert_eq!(client.auth.username(), "username");
+        assert!(client.auth.can_reload());
+
+        let request = client
+            .auth
+            .wrap(client.cli.get(client.endpoint.join("v1/query")?))?
+            .build()?;
+        assert_eq!(
+            request
+                .headers()
+                .get("X-DATABEND-AUTH-METHOD")
+                .and_then(|value| value.to_str().ok()),
+            Some("keypair")
+        );
+        let authorization = request
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(authorization.starts_with("Bearer "));
+        assert_eq!(authorization["Bearer ".len()..].split('.').count(), 3);
         Ok(())
     }
 

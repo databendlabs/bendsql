@@ -342,6 +342,10 @@ impl Auth for KeyPairAuth {
             .header(HEADER_AUTH_METHOD, "keypair"))
     }
 
+    fn can_reload(&self) -> bool {
+        true
+    }
+
     fn username(&self) -> String {
         self.username.clone()
     }
@@ -441,6 +445,7 @@ mod tests {
 
         let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
         assert_eq!(auth.username(), "testuser");
+        assert!(auth.can_reload());
         assert_eq!(auth.algorithm, Algorithm::RS256);
 
         // Verify JWT can be generated
