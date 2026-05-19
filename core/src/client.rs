@@ -74,6 +74,7 @@ const HEADER_QUERY_CONTEXT: &str = "X-DATABEND-QUERY-CONTEXT";
 const HEADER_SESSION_ID: &str = "X-DATABEND-SESSION-ID";
 const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 const CONTENT_TYPE_ARROW_OR_JSON: &str = "application/vnd.apache.arrow.stream";
+const DEFAULT_USERNAME: &str = "root";
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -385,8 +386,13 @@ impl APIClient {
         }
         // If private_key_file is specified, use KeyPairAuth
         if let Some(key_file) = private_key_file {
+            let username = if username.is_empty() {
+                DEFAULT_USERNAME
+            } else {
+                username.as_str()
+            };
             client.auth = Arc::new(KeyPairAuth::new(
-                &username,
+                username,
                 &key_file,
                 private_key_passphrase_file.as_deref(),
             )?);
@@ -1464,7 +1470,7 @@ impl Default for APIClient {
             port: 8000,
             tenant: None,
             warehouse: Mutex::new(None),
-            auth: Arc::new(BasicAuth::new("root", "")) as Arc<dyn Auth>,
+            auth: Arc::new(BasicAuth::new(DEFAULT_USERNAME, "")) as Arc<dyn Auth>,
             session_state: Mutex::new(SessionState::default()),
             wait_time_secs: None,
             max_rows_in_buffer: None,
@@ -1594,6 +1600,58 @@ mod test {
             .unwrap_or_default();
         assert!(authorization.starts_with("Bearer "));
         assert_eq!(authorization["Bearer ".len()..].split('.').count(), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_dsn_with_private_key_uses_default_user() -> Result<()> {
+        let output = std::process::Command::new("openssl")
+            .args([
+                "genpkey",
+                "-algorithm",
+                "RSA",
+                "-pkeyopt",
+                "rsa_keygen_bits:2048",
+            ])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return Ok(()),
+        };
+
+        let mut key_file = NamedTempFile::new()?;
+        key_file.write_all(&output.stdout)?;
+
+        let dsn = format!(
+            "databend://app.databend.com/test?private_key_file={}&sslmode=disable",
+            url::form_urlencoded::byte_serialize(key_file.path().to_string_lossy().as_bytes())
+                .collect::<String>()
+        );
+        let client = APIClient::from_dsn(&dsn).await?;
+        assert_eq!(client.auth.username(), DEFAULT_USERNAME);
+
+        let request = client
+            .auth
+            .wrap(client.cli.get(client.endpoint.join("v1/query")?))?
+            .build()?;
+        let authorization = request
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(authorization.starts_with("Bearer "));
+        let token = &authorization["Bearer ".len()..];
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        let claims = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(parts[1])
+            .map_err(|e| Error::Decode(format!("failed to decode JWT claims: {e}")))?;
+        let claims: serde_json::Value = serde_json::from_slice(&claims)?;
+        assert_eq!(
+            claims.get("sub").and_then(|value| value.as_str()),
+            Some("root")
+        );
+
         Ok(())
     }
 

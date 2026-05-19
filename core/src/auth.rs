@@ -208,10 +208,7 @@ impl KeyPairAuth {
             let rsa_der = private_key_info.private_key.as_bytes();
             Ok((EncodingKey::from_rsa_der(rsa_der), Algorithm::RS256))
         } else if algorithm_oid == EC_OID {
-            // Ring requires named curve PKCS#8 format for EC keys.
-            // If the key uses explicit parameters (common with openssl genpkey),
-            // we rebuild a named curve PKCS#8 from the inner SEC1 private key.
-            let ec_der = Self::rebuild_ec_pkcs8_named_curve(private_key_info)?;
+            let ec_der = Self::rebuild_p256_pkcs8_named_curve(private_key_info)?;
             Ok((EncodingKey::from_ec_der(&ec_der), Algorithm::ES256))
         } else if algorithm_oid == ED25519_OID {
             Ok((EncodingKey::from_ed_der(der_bytes), Algorithm::EdDSA))
@@ -222,36 +219,39 @@ impl KeyPairAuth {
         }
     }
 
-    /// Rebuild a named-curve PKCS#8 DER for EC keys.
-    /// Ring only accepts PKCS#8 with named curve OID (not explicit parameters).
-    /// This extracts the SEC1 private key from PrivateKeyInfo and wraps it
-    /// in a minimal named-curve PKCS#8 structure.
-    fn rebuild_ec_pkcs8_named_curve(pki: pkcs8::PrivateKeyInfoRef) -> Result<Vec<u8>> {
+    /// Rebuild a P-256 named-curve PKCS#8 DER for EC keys.
+    ///
+    /// jsonwebtoken/ring in the current dependency set only supports ES256/ES384
+    /// and the existing key-pair protocol only advertised ES256 for EC keys.
+    /// Reject non-P-256 or explicit-parameter EC keys instead of silently
+    /// relabeling them as P-256.
+    fn rebuild_p256_pkcs8_named_curve(pki: pkcs8::PrivateKeyInfoRef) -> Result<Vec<u8>> {
         use pkcs8::der::Encode;
 
-        // Detect curve from AlgorithmIdentifier parameters
-        // For EC keys, parameters contain the curve OID (named) or explicit params
         const P256_OID: pkcs8::ObjectIdentifier =
             pkcs8::ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
 
-        // Try to extract named curve OID from parameters
-        let curve_oid = if let Some(params) = pki.algorithm.parameters {
-            // Try decoding as OID (named curve case)
-            params
-                .decode_as::<pkcs8::ObjectIdentifier>()
-                .unwrap_or(P256_OID)
-        } else {
-            // Default to P-256 if no parameters (shouldn't happen for EC)
-            P256_OID
-        };
+        let curve_oid = pki
+            .algorithm
+            .parameters
+            .and_then(|params| params.decode_as::<pkcs8::ObjectIdentifier>().ok())
+            .ok_or_else(|| {
+                Error::IO(
+                    "unsupported EC private key parameters: expected named P-256 curve".to_string(),
+                )
+            })?;
 
-        // Build AlgorithmIdentifier with named curve OID
+        if curve_oid != P256_OID {
+            return Err(Error::IO(format!(
+                "unsupported EC private key curve OID: {curve_oid}; only P-256 is supported"
+            )));
+        }
+
         let alg_id = pkcs8::AlgorithmIdentifierRef {
             oid: pkcs8::ObjectIdentifier::new_unwrap("1.2.840.10045.2.1"),
             parameters: Some(pkcs8::der::asn1::AnyRef::from(&curve_oid)),
         };
 
-        // Rebuild PrivateKeyInfo with the named curve AlgorithmIdentifier
         let new_pki = pkcs8::PrivateKeyInfo {
             algorithm: alg_id,
             private_key: pki.private_key,
@@ -263,6 +263,35 @@ impl KeyPairAuth {
             .map_err(|e| Error::IO(format!("failed to re-encode EC PKCS#8: {e}")))
     }
 
+    fn ensure_sec1_p256(pem_data: &[u8]) -> Result<()> {
+        use sec1::der::Decode;
+
+        const P256_OID: sec1::pkcs8::ObjectIdentifier =
+            sec1::pkcs8::ObjectIdentifier::new_unwrap("1.2.840.10045.3.1.7");
+
+        let pem =
+            pem::parse(pem_data).map_err(|e| Error::IO(format!("failed to parse PEM: {e}")))?;
+        let ec_key = sec1::EcPrivateKey::from_der(pem.contents())
+            .map_err(|e| Error::IO(format!("failed to parse EC private key: {e}")))?;
+
+        let curve_oid = ec_key
+            .parameters
+            .and_then(|params| params.named_curve())
+            .ok_or_else(|| {
+                Error::IO(
+                    "unsupported EC private key parameters: expected named P-256 curve".to_string(),
+                )
+            })?;
+
+        if curve_oid != P256_OID {
+            return Err(Error::IO(format!(
+                "unsupported EC private key curve OID: {curve_oid}; only P-256 is supported"
+            )));
+        }
+
+        Ok(())
+    }
+
     fn parse_unencrypted_key(pem_data: &[u8], pem_str: &str) -> Result<(EncodingKey, Algorithm)> {
         if pem_str.contains("RSA PRIVATE KEY") {
             // PKCS#1 RSA key
@@ -272,7 +301,9 @@ impl KeyPairAuth {
         }
 
         if pem_str.contains("EC PRIVATE KEY") {
-            // SEC1 EC key
+            // SEC1 EC key. Only P-256 is supported for ES256; reject other curves
+            // instead of advertising the wrong JWT alg.
+            Self::ensure_sec1_p256(pem_data)?;
             let key = EncodingKey::from_ec_pem(pem_data)
                 .map_err(|e| Error::IO(format!("failed to parse EC private key: {e}")))?;
             return Ok((key, Algorithm::ES256));
@@ -302,10 +333,7 @@ impl KeyPairAuth {
             let rsa_der = private_key_info.private_key.as_bytes();
             Ok((EncodingKey::from_rsa_der(rsa_der), Algorithm::RS256))
         } else if algorithm_oid == EC_OID {
-            // Ring requires named curve PKCS#8 format for EC keys.
-            // If the key uses explicit parameters (common with openssl genpkey),
-            // we rebuild a named curve PKCS#8 from the inner SEC1 private key.
-            let ec_der = Self::rebuild_ec_pkcs8_named_curve(private_key_info)?;
+            let ec_der = Self::rebuild_p256_pkcs8_named_curve(private_key_info)?;
             Ok((EncodingKey::from_ec_der(&ec_der), Algorithm::ES256))
         } else if algorithm_oid == ED25519_OID {
             Ok((EncodingKey::from_ed_der(der_bytes), Algorithm::EdDSA))
@@ -488,28 +516,52 @@ mod tests {
         assert_eq!(parts.len(), 3);
     }
 
+    fn gen_sec1_ec_private_key(curve: &str) -> Option<Vec<u8>> {
+        let output = std::process::Command::new("openssl")
+            .args(["ecparam", "-name", curve, "-genkey", "-noout"])
+            .output()
+            .ok()?;
+        output.status.success().then_some(output.stdout)
+    }
+
+    fn gen_ec_private_key(curve: &str, encrypted: bool) -> Option<Vec<u8>> {
+        let mut args = vec![
+            "genpkey",
+            "-algorithm",
+            "EC",
+            "-pkeyopt",
+            curve,
+            "-pkeyopt",
+            "ec_param_enc:named_curve",
+        ];
+        if encrypted {
+            args.extend([
+                "-aes-256-cbc",
+                "-pass",
+                "pass:testpass",
+                "-v2prf",
+                "hmacWithSHA256",
+            ]);
+        }
+
+        let output = std::process::Command::new("openssl")
+            .args(args)
+            .output()
+            .ok()?;
+        output.status.success().then_some(output.stdout)
+    }
+
     #[test]
     fn keypair_auth_ec() {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
-        // Generate a test EC private key in PKCS#8 format
-        let output = std::process::Command::new("openssl")
-            .args([
-                "genpkey",
-                "-algorithm",
-                "EC",
-                "-pkeyopt",
-                "ec_paramgen_curve:P-256",
-            ])
-            .output();
-        let output = match output {
-            Ok(o) if o.status.success() => o,
-            _ => return,
+        let Some(key) = gen_ec_private_key("ec_paramgen_curve:P-256", false) else {
+            return;
         };
 
         let mut key_file = NamedTempFile::new().unwrap();
-        key_file.write_all(&output.stdout).unwrap();
+        key_file.write_all(&key).unwrap();
 
         let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
         assert_eq!(auth.algorithm, Algorithm::ES256);
@@ -517,6 +569,81 @@ mod tests {
         let token = auth.generate_jwt().unwrap();
         let parts: Vec<&str> = token.split('.').collect();
         assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn keypair_auth_rejects_unsupported_ec_curves() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        for curve in ["ec_paramgen_curve:P-384", "ec_paramgen_curve:P-521"] {
+            let Some(key) = gen_ec_private_key(curve, false) else {
+                continue;
+            };
+
+            let mut key_file = NamedTempFile::new().unwrap();
+            key_file.write_all(&key).unwrap();
+
+            let err = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None)
+                .err()
+                .expect("unsupported EC curve should be rejected");
+            assert!(
+                err.to_string()
+                    .contains("unsupported EC private key curve OID"),
+                "unexpected error for {curve}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn keypair_auth_rejects_unsupported_sec1_ec_curves() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let Some(key) = gen_sec1_ec_private_key("secp384r1") else {
+            return;
+        };
+
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&key).unwrap();
+
+        let err = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None)
+            .err()
+            .expect("unsupported SEC1 EC curve should be rejected");
+        assert!(
+            err.to_string()
+                .contains("unsupported EC private key curve OID"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn keypair_auth_rejects_encrypted_unsupported_ec_curves() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let Some(key) = gen_ec_private_key("ec_paramgen_curve:P-384", true) else {
+            return;
+        };
+
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&key).unwrap();
+
+        let mut pass_file = NamedTempFile::new().unwrap();
+        pass_file.write_all(b"testpass\n").unwrap();
+
+        let err = KeyPairAuth::new(
+            "testuser",
+            key_file.path().to_str().unwrap(),
+            Some(pass_file.path().to_str().unwrap()),
+        )
+        .err()
+        .expect("encrypted unsupported EC curve should be rejected");
+        assert!(
+            err.to_string()
+                .contains("unsupported EC private key curve OID"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

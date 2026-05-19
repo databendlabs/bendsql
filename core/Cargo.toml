@@ -44,6 +44,7 @@ uuid = { version = "1.16", features = ["std", "v4", "v7"] }
 jsonwebtoken = "9"
 pem = "3"
 pkcs8 = { version = "0.11", features = ["encryption", "pem"] }
+sec1 = { version = "0.7", features = ["pem"] }
 
 [dev-dependencies]
 chrono = { workspace = true }
