@@ -166,7 +166,12 @@ impl KeyPairAuth {
             .map_err(|e| Error::IO(format!("private key is not valid UTF-8: {e}")))?;
 
         if let Some(passphrase) = passphrase {
-            // Encrypted PKCS#8 key — decrypt using pkcs8 crate to get DER
+            if !pem_str.contains("ENCRYPTED PRIVATE KEY") {
+                return Err(Error::IO(
+                    "encrypted private keys with passphrase must use PKCS#8 PEM (BEGIN ENCRYPTED PRIVATE KEY)".to_string(),
+                ));
+            }
+            // Encrypted PKCS#8 key — decrypt using pkcs8 crate to get DER.
             Self::parse_encrypted_key(pem_str, passphrase)
         } else {
             // Unencrypted key — detect type and use jsonwebtoken's PEM methods

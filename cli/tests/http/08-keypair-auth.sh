@@ -41,3 +41,10 @@ PY
 )
 key_dsn="databend://${user}:@${host}:${port}/?sslmode=disable&presign=on&private_key_file=${private_key_file_encoded}"
 BENDSQL_DSN="${key_dsn}" ${BENDSQL} --output tsv --query="SELECT current_user(), 'dsn'"
+
+env -u BENDSQL_DSN ${BENDSQL} \
+    --dsn="databend://${host}:${port}/?sslmode=disable&presign=on" \
+    --user "${user}" \
+    --private-key-file "${private_key_file}" \
+    --output tsv \
+    --query="SELECT current_user(), 'dsn_user_override'"

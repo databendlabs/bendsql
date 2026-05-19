@@ -95,7 +95,7 @@ struct Args {
     )]
     private_key_file: Option<String>,
 
-    #[clap(long, help = "Passphrase file for encrypted private key")]
+    #[clap(long, help = "Passphrase file for encrypted PKCS#8 private key")]
     private_key_passphrase_file: Option<String>,
 
     #[clap(short = 'r', long, help = "Downgrade role name, overrides role in DSN")]
@@ -243,14 +243,23 @@ pub async fn main() -> Result<()> {
             ConnectionArgs::from_dsn(dsn.inner())?
         }
         None => {
-            let host = args.host.unwrap_or_else(|| config.connection.host.clone());
+            let host = args
+                .host
+                .clone()
+                .unwrap_or_else(|| config.connection.host.clone());
             let mut port = config.connection.port;
             if args.port.is_some() {
                 port = args.port;
             }
 
-            let user = args.user.unwrap_or_else(|| config.connection.user.clone());
-            let password = args.password.unwrap_or_else(|| SensitiveString::from(""));
+            let user = args
+                .user
+                .clone()
+                .unwrap_or_else(|| config.connection.user.clone());
+            let password = args
+                .password
+                .clone()
+                .unwrap_or_else(|| SensitiveString::from(""));
 
             ConnectionArgs {
                 host,
@@ -295,6 +304,11 @@ pub async fn main() -> Result<()> {
             for (k, v) in args.set {
                 conn_args.args.insert(k, v);
             }
+        }
+
+        // override user if specified in command line
+        if let Some(user) = args.user {
+            conn_args.user = user;
         }
 
         // override role if specified in command line
