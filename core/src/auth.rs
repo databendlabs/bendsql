@@ -144,7 +144,7 @@ impl KeyPairAuth {
                 let p = std::fs::read_to_string(path).map_err(|e| {
                     Error::IO(format!("cannot read passphrase from file {}: {}", path, e))
                 })?;
-                Some(p.trim().to_string())
+                Some(Self::strip_line_ending(p))
             }
             None => None,
         };
@@ -158,6 +158,16 @@ impl KeyPairAuth {
         })
     }
 
+    fn strip_line_ending(mut value: String) -> String {
+        if value.ends_with('\n') {
+            value.pop();
+            if value.ends_with('\r') {
+                value.pop();
+            }
+        }
+        value
+    }
+
     fn parse_private_key(
         pem_data: &[u8],
         passphrase: Option<&str>,
@@ -166,23 +176,25 @@ impl KeyPairAuth {
             .map_err(|e| Error::IO(format!("private key is not valid UTF-8: {e}")))?;
 
         if let Some(passphrase) = passphrase {
-            if !pem_str.contains("ENCRYPTED PRIVATE KEY") {
-                return Err(Error::IO(
+            let pem = Self::parse_pem_block(pem_data, "ENCRYPTED PRIVATE KEY").map_err(|_| {
+                Error::IO(
                     "encrypted private keys with passphrase must use PKCS#8 PEM (BEGIN ENCRYPTED PRIVATE KEY)".to_string(),
-                ));
-            }
+                )
+            })?;
             // Encrypted PKCS#8 key — decrypt using pkcs8 crate to get DER.
-            Self::parse_encrypted_key(pem_str, passphrase)
+            Self::parse_encrypted_key(pem.contents(), passphrase)
         } else {
             // Unencrypted key — detect type and use jsonwebtoken's PEM methods
             Self::parse_unencrypted_key(pem_data, pem_str)
         }
     }
 
-    fn parse_encrypted_key(pem_str: &str, passphrase: &str) -> Result<(EncodingKey, Algorithm)> {
-        use pkcs8::DecodePrivateKey;
-
-        let doc = pkcs8::SecretDocument::from_pkcs8_encrypted_pem(pem_str, passphrase.as_bytes())
+    fn parse_encrypted_key(
+        encrypted_der: &[u8],
+        passphrase: &str,
+    ) -> Result<(EncodingKey, Algorithm)> {
+        let doc = pkcs8::EncryptedPrivateKeyInfoRef::try_from(encrypted_der)
+            .and_then(|encrypted| encrypted.decrypt(passphrase.as_bytes()))
             .map_err(|e| Error::IO(format!("failed to decrypt private key: {e}")))?;
 
         let der_bytes = doc.as_bytes();
@@ -347,8 +359,7 @@ impl KeyPairAuth {
 
         // PKCS#8 "BEGIN PRIVATE KEY" — parse OID to determine key type,
         // then use from_*_der with full PKCS#8 DER (from_ec_pem has issues with PKCS#8 EC keys)
-        let pem_parsed =
-            pem::parse(pem_data).map_err(|e| Error::IO(format!("failed to parse PEM: {e}")))?;
+        let pem_parsed = Self::parse_pem_block(pem_data, "PRIVATE KEY")?;
         let der_bytes = pem_parsed.contents();
 
         let private_key_info = pkcs8::PrivateKeyInfoRef::try_from(der_bytes)
@@ -552,6 +563,12 @@ mod tests {
         assert_eq!(parts.len(), 3);
     }
 
+    fn prepend_dummy_public_key_pem(key: &[u8]) -> Vec<u8> {
+        let mut bundle = pem::encode(&pem::Pem::new("PUBLIC KEY", vec![1, 2, 3])).into_bytes();
+        bundle.extend_from_slice(key);
+        bundle
+    }
+
     fn gen_sec1_ec_private_key(curve: &str) -> Option<Vec<u8>> {
         gen_sec1_ec_private_key_with_params(curve, false)
     }
@@ -593,6 +610,27 @@ mod tests {
             .output()
             .ok()?;
         output.status.success().then_some(output.stdout)
+    }
+
+    #[test]
+    fn keypair_auth_pkcs8_bundle_selects_private_key_block() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let Some(key) = gen_ec_private_key("ec_paramgen_curve:P-256", false) else {
+            return;
+        };
+        let key = prepend_dummy_public_key_pem(&key);
+
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&key).unwrap();
+
+        let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
+        assert_eq!(auth.algorithm, Algorithm::ES256);
+
+        let token = auth.generate_jwt().unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
     }
 
     #[test]
@@ -744,6 +782,50 @@ mod tests {
 
         let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
         assert_eq!(auth.algorithm, Algorithm::EdDSA);
+
+        let token = auth.generate_jwt().unwrap();
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn keypair_auth_encrypted_pkcs8_bundle_selects_private_key_block() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let output = std::process::Command::new("openssl")
+            .args([
+                "genpkey",
+                "-algorithm",
+                "RSA",
+                "-pkeyopt",
+                "rsa_keygen_bits:2048",
+                "-aes-256-cbc",
+                "-pass",
+                "pass: testpass ",
+                "-v2prf",
+                "hmacWithSHA256",
+            ])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return,
+        };
+
+        let key = prepend_dummy_public_key_pem(&output.stdout);
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&key).unwrap();
+
+        let mut pass_file = NamedTempFile::new().unwrap();
+        pass_file.write_all(b" testpass \n").unwrap();
+
+        let auth = KeyPairAuth::new(
+            "testuser",
+            key_file.path().to_str().unwrap(),
+            Some(pass_file.path().to_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(auth.algorithm, Algorithm::RS256);
 
         let token = auth.generate_jwt().unwrap();
         let parts: Vec<&str> = token.split('.').collect();
