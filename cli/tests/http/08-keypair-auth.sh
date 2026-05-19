@@ -48,3 +48,9 @@ env -u BENDSQL_DSN ${BENDSQL} \
     --private-key-file "${private_key_file}" \
     --output tsv \
     --query="SELECT current_user(), 'dsn_user_override'"
+
+env -u BENDSQL_DSN ${BENDSQL} \
+    --dsn="databend://${user}:@${host}:${port}/?sslmode=disable&presign=on&private_key_passphrase_file=stale-passphrase.txt" \
+    --private-key-file "${private_key_file}" \
+    --output tsv \
+    --query="SELECT current_user(), 'stale_passphrase_cleared'"

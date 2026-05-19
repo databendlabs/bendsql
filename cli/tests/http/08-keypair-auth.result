@@ -1,3 +1,4 @@
 'bendsql_keypair_ci'@'%'	2
 'bendsql_keypair_ci'@'%'	dsn
 'bendsql_keypair_ci'@'%'	dsn_user_override
+'bendsql_keypair_ci'@'%'	stale_passphrase_cleared

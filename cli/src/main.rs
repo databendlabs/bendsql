@@ -321,6 +321,9 @@ pub async fn main() -> Result<()> {
             conn_args
                 .args
                 .insert("private_key_file".to_string(), private_key_file);
+            if args.private_key_passphrase_file.is_none() {
+                conn_args.args.remove("private_key_passphrase_file");
+            }
         }
         if let Some(private_key_passphrase_file) = args.private_key_passphrase_file {
             conn_args.args.insert(
