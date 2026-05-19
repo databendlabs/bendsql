@@ -31,6 +31,12 @@ pub struct ConnectionArgs {
 
 impl ConnectionArgs {
     pub fn get_dsn(self) -> Result<String> {
+        if self.flight && self.args.contains_key("private_key_file") {
+            return Err(anyhow!(
+                "key-pair authentication is not supported with FlightSQL"
+            ));
+        }
+
         let mut dsn = url::Url::parse("databend://")?;
         dsn.set_host(Some(&self.host))?;
         _ = dsn.set_port(self.port);
@@ -110,6 +116,32 @@ mod test {
         };
         assert_eq!(args, expected);
         Ok(())
+    }
+
+    #[test]
+    fn reject_keypair_flight_dsn() {
+        let args = ConnectionArgs {
+            host: "app.databend.com".to_string(),
+            port: Some(443),
+            user: "username".to_string(),
+            password: SensitiveString::from(""),
+            database: None,
+            flight: true,
+            args: {
+                let mut args = BTreeMap::new();
+                args.insert("private_key_file".to_string(), "key.pem".to_string());
+                args
+            },
+        };
+
+        let err = args
+            .get_dsn()
+            .expect_err("key-pair auth with FlightSQL should be rejected");
+        assert!(
+            err.to_string()
+                .contains("key-pair authentication is not supported with FlightSQL"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

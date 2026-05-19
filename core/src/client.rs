@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth};
+use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth};
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
@@ -74,6 +74,7 @@ const HEADER_QUERY_CONTEXT: &str = "X-DATABEND-QUERY-CONTEXT";
 const HEADER_SESSION_ID: &str = "X-DATABEND-SESSION-ID";
 const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 const CONTENT_TYPE_ARROW_OR_JSON: &str = "application/vnd.apache.arrow.stream";
+const DEFAULT_USERNAME: &str = "root";
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -260,10 +261,11 @@ impl APIClient {
             client.host = host.to_string();
         }
 
-        if u.username() != "" {
+        let username = u.username().to_string();
+        if !username.is_empty() {
             let password = u.password().unwrap_or_default();
             let password = percent_decode_str(password).decode_utf8()?;
-            client.auth = Arc::new(BasicAuth::new(u.username(), password));
+            client.auth = Arc::new(BasicAuth::new(&username, password));
         }
 
         let mut session_state = SessionState::default();
@@ -272,6 +274,9 @@ impl APIClient {
         if !database.is_empty() {
             session_state.set_database(database);
         }
+
+        let mut private_key_file: Option<String> = None;
+        let mut private_key_passphrase_file: Option<String> = None;
 
         let mut scheme = "https";
         for (k, v) in u.query_pairs() {
@@ -331,6 +336,12 @@ impl APIClient {
                 "access_token_file" => {
                     client.auth = Arc::new(AccessTokenFileAuth::new(v));
                 }
+                "private_key_file" => {
+                    private_key_file = Some(v.to_string());
+                }
+                "private_key_passphrase_file" => {
+                    private_key_passphrase_file = Some(v.to_string());
+                }
                 "login" => {
                     client.disable_login = match v.as_ref() {
                         "disable" => true,
@@ -372,6 +383,19 @@ impl APIClient {
                     session_state.set(k, v);
                 }
             }
+        }
+        // If private_key_file is specified, use KeyPairAuth.
+        if let Some(key_file) = private_key_file {
+            if username.is_empty() {
+                return Err(Error::BadArgument(
+                    "username is required for key-pair authentication".to_string(),
+                ));
+            }
+            client.auth = Arc::new(KeyPairAuth::new(
+                &username,
+                &key_file,
+                private_key_passphrase_file.as_deref(),
+            )?);
         }
         client.port = match u.port() {
             Some(p) => p,
@@ -1446,7 +1470,7 @@ impl Default for APIClient {
             port: 8000,
             tenant: None,
             warehouse: Mutex::new(None),
-            auth: Arc::new(BasicAuth::new("root", "")) as Arc<dyn Auth>,
+            auth: Arc::new(BasicAuth::new(DEFAULT_USERNAME, "")) as Arc<dyn Auth>,
             session_state: Mutex::new(SessionState::default()),
             wait_time_secs: None,
             max_rows_in_buffer: None,
@@ -1510,6 +1534,8 @@ impl RouteHintGenerator {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[tokio::test]
     async fn parse_dsn() -> Result<()> {
@@ -1525,6 +1551,92 @@ mod test {
             *client.warehouse.try_lock().unwrap(),
             Some("wh".to_string())
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_dsn_with_private_key_uses_keypair_auth() -> Result<()> {
+        let output = std::process::Command::new("openssl")
+            .args([
+                "genpkey",
+                "-algorithm",
+                "RSA",
+                "-pkeyopt",
+                "rsa_keygen_bits:2048",
+            ])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return Ok(()),
+        };
+
+        let mut key_file = NamedTempFile::new()?;
+        key_file.write_all(&output.stdout)?;
+
+        let dsn = format!(
+            "databend://username:password@app.databend.com/test?private_key_file={}&sslmode=disable",
+            url::form_urlencoded::byte_serialize(key_file.path().to_string_lossy().as_bytes())
+                .collect::<String>()
+        );
+        let client = APIClient::from_dsn(&dsn).await?;
+        assert_eq!(client.auth.username(), "username");
+        assert!(client.auth.can_reload());
+
+        let request = client
+            .auth
+            .wrap(client.cli.get(client.endpoint.join("v1/query")?))?
+            .build()?;
+        assert_eq!(
+            request
+                .headers()
+                .get("X-DATABEND-AUTH-METHOD")
+                .and_then(|value| value.to_str().ok()),
+            Some("keypair")
+        );
+        let authorization = request
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default();
+        assert!(authorization.starts_with("Bearer "));
+        assert_eq!(authorization["Bearer ".len()..].split('.').count(), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_dsn_with_private_key_requires_user() -> Result<()> {
+        let output = std::process::Command::new("openssl")
+            .args([
+                "genpkey",
+                "-algorithm",
+                "RSA",
+                "-pkeyopt",
+                "rsa_keygen_bits:2048",
+            ])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return Ok(()),
+        };
+
+        let mut key_file = NamedTempFile::new()?;
+        key_file.write_all(&output.stdout)?;
+
+        let dsn = format!(
+            "databend://app.databend.com/test?private_key_file={}&sslmode=disable",
+            url::form_urlencoded::byte_serialize(key_file.path().to_string_lossy().as_bytes())
+                .collect::<String>()
+        );
+        let err = APIClient::from_dsn(&dsn)
+            .await
+            .err()
+            .expect("key-pair authentication should require an explicit username");
+        assert!(
+            err.to_string()
+                .contains("username is required for key-pair authentication"),
+            "unexpected error: {err}"
+        );
+
         Ok(())
     }
 
