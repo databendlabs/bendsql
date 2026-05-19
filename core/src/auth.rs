@@ -325,8 +325,11 @@ impl KeyPairAuth {
 
     fn parse_unencrypted_key(pem_data: &[u8], pem_str: &str) -> Result<(EncodingKey, Algorithm)> {
         if pem_str.contains("RSA PRIVATE KEY") {
-            // PKCS#1 RSA key
-            let key = EncodingKey::from_rsa_pem(pem_data)
+            // PKCS#1 RSA key. Select the key block when PEM bundles include
+            // another block before the private key.
+            let pem = Self::parse_pem_block(pem_data, "RSA PRIVATE KEY")?;
+            let key_pem = pem::encode(&pem);
+            let key = EncodingKey::from_rsa_pem(key_pem.as_bytes())
                 .map_err(|e| Error::IO(format!("failed to parse RSA private key: {e}")))?;
             return Ok((key, Algorithm::RS256));
         }
@@ -528,6 +531,36 @@ mod tests {
         assert!(!token.is_empty());
 
         // Verify JWT structure (header.payload.signature)
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn keypair_auth_rsa_pkcs1_bundle_selects_private_key_block() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let output = std::process::Command::new("openssl")
+            .args(["genrsa", "2048"])
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            _ => return,
+        };
+
+        let pem_str = String::from_utf8_lossy(&output.stdout);
+        if !pem_str.contains("RSA PRIVATE KEY") {
+            return;
+        }
+
+        let key = prepend_dummy_public_key_pem(&output.stdout);
+        let mut key_file = NamedTempFile::new().unwrap();
+        key_file.write_all(&key).unwrap();
+
+        let auth = KeyPairAuth::new("testuser", key_file.path().to_str().unwrap(), None).unwrap();
+        assert_eq!(auth.algorithm, Algorithm::RS256);
+
+        let token = auth.generate_jwt().unwrap();
         let parts: Vec<&str> = token.split('.').collect();
         assert_eq!(parts.len(), 3);
     }

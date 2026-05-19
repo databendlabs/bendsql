@@ -310,6 +310,9 @@ pub async fn main() -> Result<()> {
         if let Some(user) = args.user {
             conn_args.user = user;
         }
+        if let Some(password) = args.password {
+            conn_args.password = password;
+        }
 
         // override role if specified in command line
         if let Some(role) = args.role {
