@@ -240,6 +240,8 @@ struct Args {
     user: String,
     password: SensitiveString,
     database: Option<String>,
+    /// Tenant ID used only in Databend Cloud management mode.
+    /// This is NOT for specifying tenant in normal usage.
     tenant: Option<String>,
     warehouse: Option<String>,
     tls: bool,
@@ -284,6 +286,8 @@ impl Args {
         let mut scheme = "https";
         for (k, v) in u.query_pairs() {
             match k.as_ref() {
+                // NOTE: `tenant` is only used in Databend Cloud management mode.
+                // It is not intended for daily use to specify a tenant.
                 "tenant" => args.tenant = Some(v.to_string()),
                 "warehouse" => args.warehouse = Some(v.to_string()),
                 "sslmode" => match v.as_ref() {
