@@ -210,7 +210,6 @@ Examples:
 
 | Arg               | Description                          |
 | ----------------- | ------------------------------------ |
-| `tenant`          | Tenant ID, Databend Cloud only.      |
 | `warehouse`       | Warehouse name, Databend Cloud only. |
 | `sslmode`         | Set to `disable` if not using tls.   |
 | `tls_ca_file`     | Custom root CA certificate path.     |

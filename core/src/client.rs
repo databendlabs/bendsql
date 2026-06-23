@@ -112,6 +112,8 @@ pub struct APIClient {
 
     auth: Arc<dyn Auth>,
 
+    /// Tenant ID used only in Databend Cloud management mode.
+    /// This is NOT for specifying tenant in normal usage.
     tenant: Option<String>,
     warehouse: Mutex<Option<String>>,
     session_state: Mutex<SessionState>,
@@ -311,6 +313,8 @@ impl APIClient {
                     };
                     client.set_presign_mode(presign_mode);
                 }
+                // NOTE: `tenant` is only used in Databend Cloud management mode.
+                // It is not intended for daily use to specify a tenant.
                 "tenant" => {
                     client.tenant = Some(v.to_string());
                 }
