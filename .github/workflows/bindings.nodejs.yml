@@ -91,6 +91,8 @@ jobs:
     name: integration-${{ matrix.ver }}
     needs: build
     runs-on: ubuntu-latest
+    env:
+      COMPOSE_PARALLEL_LIMIT: "1"
     strategy:
       matrix:
         ver: ["18", "20", "22"]

@@ -125,6 +125,8 @@ jobs:
     name: integration-${{ matrix.pyver }}-${{matrix.body}}
     needs: build
     runs-on: ubuntu-latest
+    env:
+      COMPOSE_PARALLEL_LIMIT: "1"
     strategy:
       matrix:
         pyver: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]

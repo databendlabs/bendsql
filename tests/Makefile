@@ -1,6 +1,7 @@
 DATABEND_META_VERSION ?= nightly
 DATABEND_QUERY_VERSION ?= nightly
 PYTHON ?= python3
+DOCKER_PULL_RETRIES ?= 3
 
 default: run
 
@@ -9,8 +10,25 @@ run: test-core test-driver test-bendsql down
 prepare:
 	mkdir -p data/databend
 
-up: prepare
-	docker compose up --scale query=3 --quiet-pull -d  --wait
+pull-images:
+	@attempt=1; \
+	while [ $$attempt -le $(DOCKER_PULL_RETRIES) ]; do \
+		echo "Pulling Docker images, attempt $$attempt/$(DOCKER_PULL_RETRIES)"; \
+		if docker compose pull --policy always --quiet; then \
+			exit 0; \
+		fi; \
+		if [ $$attempt -eq $(DOCKER_PULL_RETRIES) ]; then \
+			echo "Docker image pull failed after $(DOCKER_PULL_RETRIES) attempts"; \
+			exit 1; \
+		fi; \
+		sleep_seconds=$$((attempt * 10)); \
+		echo "Docker image pull failed; retrying in $${sleep_seconds}s"; \
+		sleep $$sleep_seconds; \
+		attempt=$$((attempt + 1)); \
+	done
+
+up: prepare pull-images
+	docker compose up --scale query=3 --pull never --force-recreate --quiet-pull -d  --wait
 	grep -q '127.0.0.1 minio' /etc/hosts || echo '127.0.0.1 minio' | sudo tee -a /etc/hosts > /dev/null
 	curl  -u root: -XPOST "http://localhost:8000/v1/query" -H 'Content-Type: application/json' -d '{"sql": "select version()",  "pagination": { "wait_time_secs": 10}}'
 

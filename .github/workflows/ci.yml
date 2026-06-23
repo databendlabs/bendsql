@@ -77,6 +77,8 @@ jobs:
   integration:
     needs: check
     runs-on: ubuntu-latest
+    env:
+      COMPOSE_PARALLEL_LIMIT: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
