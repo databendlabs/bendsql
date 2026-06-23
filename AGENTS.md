@@ -25,6 +25,9 @@ This repository is a Rust workspace for BendSQL plus a separate frontend, langua
 - Keep changes inside the owning subsystem unless the task clearly crosses boundaries.
 - Check for uncommitted user changes before editing and do not revert unrelated work.
 - Report the exact verification commands you ran, plus anything you skipped and why.
+- PR title must follow the Conventional Commits format validated by `amannn/action-semantic-pull-request@v5`.
+  Format: `type(scope): description` or `type: description`.
+  Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`.
 
 ## Task Routing
 
