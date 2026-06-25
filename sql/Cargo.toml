@@ -17,6 +17,7 @@ flight-sql = ["dep:tonic"]
 arrow = { workspace = true }
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
+base64 = "0.22.1"
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 ethnum = "1.5.1"

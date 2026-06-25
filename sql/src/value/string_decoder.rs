@@ -20,9 +20,11 @@ use crate::cursor_ext::{
 };
 use crate::error::{ConvertError, Result};
 use crate::value::base::GeoValue;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 use chrono::{Datelike, NaiveDate};
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
-use databend_client::ResultFormatSettings;
+use databend_client::{BinaryFormat, ResultFormatSettings};
 use ethnum::i256;
 use hex;
 use jiff::{civil::DateTime as JiffDateTime, tz::TimeZone, Zoned};
@@ -63,7 +65,7 @@ impl TryFrom<(&DataType, String, &ResultFormatSettings)> for Value {
             DataType::EmptyArray => Ok(Self::EmptyArray),
             DataType::EmptyMap => Ok(Self::EmptyMap),
             DataType::Boolean => Ok(Self::Boolean(v == "1")),
-            DataType::Binary => Ok(Self::Binary(hex::decode(v)?)),
+            DataType::Binary => Ok(Self::Binary(parse_binary_value(v.as_str(), settings)?)),
             DataType::String => Ok(Self::String(v)),
             DataType::Number(NumberDataType::Int8) => {
                 Ok(Self::Number(NumberValue::Int8(v.parse()?)))
@@ -300,11 +302,11 @@ impl ValueDecoder {
     }
 
     fn read_binary<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
-        let buf = reader.fill_buf()?;
-        let n = collect_binary_number(buf);
-        let v = buf[..n].to_vec();
-        reader.consume(n);
-        Ok(Value::Binary(hex::decode(v)?))
+        let v = self.read_binary_text(reader)?;
+        Ok(Value::Binary(parse_binary_value(
+            v.as_str(),
+            &self.settings,
+        )?))
     }
 
     fn read_date<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -500,6 +502,33 @@ impl ValueDecoder {
         reader.set_position((start + raw.get().len()) as u64);
         Ok(raw.to_string())
     }
+
+    fn read_binary_text<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<String> {
+        let pos = reader.checkpoint();
+        let mut buf = Vec::new();
+        if reader.read_quoted_text(&mut buf, b'"').is_ok()
+            || reader.read_quoted_text(&mut buf, b'\'').is_ok()
+        {
+            return Ok(unsafe { String::from_utf8_unchecked(buf) });
+        }
+        reader.rollback(pos);
+
+        let buf = reader.fill_buf()?;
+        let n = match self.settings.binary_output_format {
+            BinaryFormat::Hex => collect_binary_number(buf),
+            BinaryFormat::Base64 | BinaryFormat::Utf8 | BinaryFormat::Utf8Lossy => {
+                collect_binary_token(buf)
+            }
+        };
+        if n == 0 {
+            return Err(
+                ConvertError::new("binary", String::from_utf8_lossy(buf).to_string()).into(),
+            );
+        }
+        let v = std::str::from_utf8(&buf[..n])?.to_string();
+        reader.consume(n);
+        Ok(v)
+    }
 }
 
 fn parse_timestamp(ts_string: &str, tz: &TimeZone) -> Result<Value> {
@@ -578,5 +607,130 @@ fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
         } else {
             Ok(result)
         }
+    }
+}
+
+fn parse_binary_value(v: &str, settings: &ResultFormatSettings) -> Result<Vec<u8>> {
+    match settings.binary_output_format {
+        BinaryFormat::Hex => Ok(hex::decode(v)?),
+        BinaryFormat::Base64 => BASE64_STANDARD
+            .decode(v)
+            .map_err(|e| Error::Parsing(e.to_string())),
+        BinaryFormat::Utf8 | BinaryFormat::Utf8Lossy => Ok(v.as_bytes().to_vec()),
+    }
+}
+
+fn collect_binary_token(buffer: &[u8]) -> usize {
+    let mut index = 0;
+    while index < buffer.len() {
+        match buffer[index] {
+            b',' | b']' | b')' | b'}' | b' ' | b'\t' | b'\r' | b'\n' => break,
+            _ => index += 1,
+        }
+    }
+    index
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use databend_client::schema::DataType;
+
+    fn settings(binary_output_format: BinaryFormat) -> ResultFormatSettings {
+        ResultFormatSettings {
+            binary_output_format,
+            ..ResultFormatSettings::default()
+        }
+    }
+
+    #[test]
+    fn decode_binary_top_level_respects_hex_format() {
+        let value = Value::try_from((
+            &DataType::Binary,
+            "78797A".to_string(),
+            &settings(BinaryFormat::Hex),
+        ))
+        .unwrap();
+        assert_eq!(value, Value::Binary(b"xyz".to_vec()));
+    }
+
+    #[test]
+    fn decode_binary_top_level_respects_base64_format() {
+        let value = Value::try_from((
+            &DataType::Binary,
+            "eHl6".to_string(),
+            &settings(BinaryFormat::Base64),
+        ))
+        .unwrap();
+        assert_eq!(value, Value::Binary(b"xyz".to_vec()));
+    }
+
+    #[test]
+    fn decode_binary_top_level_respects_utf8_format() {
+        let value = Value::try_from((
+            &DataType::Binary,
+            "xyz".to_string(),
+            &settings(BinaryFormat::Utf8),
+        ))
+        .unwrap();
+        assert_eq!(value, Value::Binary(b"xyz".to_vec()));
+    }
+
+    #[test]
+    fn decode_binary_top_level_respects_utf8_lossy_format() {
+        let value = Value::try_from((
+            &DataType::Binary,
+            "xy\u{FFFD}".to_string(),
+            &settings(BinaryFormat::Utf8Lossy),
+        ))
+        .unwrap();
+        assert_eq!(value, Value::Binary("xy\u{FFFD}".as_bytes().to_vec()));
+    }
+
+    #[test]
+    fn decode_nested_binary_array_respects_hex_format() {
+        let decoder = ValueDecoder {
+            settings: settings(BinaryFormat::Hex),
+        };
+        let mut reader = Cursor::new(br#"[78797A]"#);
+
+        let value = decoder
+            .read_field(&DataType::Array(Box::new(DataType::Binary)), &mut reader)
+            .unwrap();
+
+        assert_eq!(value, Value::Array(vec![Value::Binary(b"xyz".to_vec())]));
+    }
+
+    #[test]
+    fn decode_nested_binary_array_respects_base64_format() {
+        let decoder = ValueDecoder {
+            settings: settings(BinaryFormat::Base64),
+        };
+        let mut reader = Cursor::new(br#"["eHl6"]"#);
+
+        let value = decoder
+            .read_field(&DataType::Array(Box::new(DataType::Binary)), &mut reader)
+            .unwrap();
+
+        assert_eq!(value, Value::Array(vec![Value::Binary(b"xyz".to_vec())]));
+    }
+
+    #[test]
+    fn decode_nested_binary_tuple_respects_utf8_format() {
+        let decoder = ValueDecoder {
+            settings: settings(BinaryFormat::Utf8),
+        };
+        let mut reader = Cursor::new(br#"("xyz","2024-10-22 10:11:12.000000")"#);
+
+        let value = decoder
+            .read_field(
+                &DataType::Tuple(vec![DataType::Binary, DataType::Timestamp]),
+                &mut reader,
+            )
+            .unwrap();
+
+        assert!(
+            matches!(value, Value::Tuple(values) if values[0] == Value::Binary(b"xyz".to_vec()))
+        );
     }
 }
