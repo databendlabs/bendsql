@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use cookie::Cookie;
+use cookie::{Cookie, Expiration};
 use reqwest::cookie::CookieStore;
 use reqwest::header::HeaderValue;
 use std::collections::HashMap;
 use std::sync::RwLock;
+use time::OffsetDateTime;
 use url::Url;
 
 pub(crate) struct GlobalCookieStore {
@@ -31,6 +32,16 @@ impl GlobalCookieStore {
     }
 }
 
+fn is_expired(cookie: &Cookie<'_>) -> bool {
+    cookie
+        .max_age()
+        .is_some_and(|age| age <= time::Duration::ZERO)
+        || matches!(
+            cookie.expires(),
+            Some(Expiration::DateTime(expires)) if expires <= OffsetDateTime::now_utc()
+        )
+}
+
 impl CookieStore for GlobalCookieStore {
     fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, _url: &Url) {
         let iter = cookie_headers
@@ -39,12 +50,18 @@ impl CookieStore for GlobalCookieStore {
 
         let mut guard = self.cookies.write().unwrap();
         for cookie in iter {
-            guard.insert(cookie.name().to_string(), cookie);
+            let name = cookie.name().to_string();
+            if is_expired(&cookie) {
+                guard.remove(&name);
+            } else {
+                guard.insert(name, cookie);
+            }
         }
     }
 
     fn cookies(&self, _url: &Url) -> Option<HeaderValue> {
-        let guard = self.cookies.read().unwrap();
+        let mut guard = self.cookies.write().unwrap();
+        guard.retain(|_, cookie| !is_expired(cookie));
         let s: String = guard
             .values()
             .map(|cookie| cookie.name_value())

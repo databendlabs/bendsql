@@ -32,6 +32,7 @@ tokio-stream = "0.1"
 chrono = { version = "0.4.40", default-features = false, features = ["clock"] }
 chrono-tz = { version = "0.10.4" }
 jiff = { version = "0.2.10", features = ["tzdb-bundle-always"] }
+time = { version = ">=0.3.0, <0.3.52" }
 arrow = { version = "56" }
 arrow-array = { version = "56" }
 arrow-schema = { version = "56" }
