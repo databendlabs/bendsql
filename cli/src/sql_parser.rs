@@ -12,7 +12,114 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use databend_common_ast::parser::token::{TokenKind, Tokenizer};
+use databend_common_ast::parser::token::{Token, TokenKind, Tokenizer};
+
+/// State machine for tracking CREATE/ALTER TASK ... AS BEGIN ... END blocks.
+/// Semicolons inside a task script block should not split the statement.
+#[derive(PartialEq, Clone, Copy)]
+enum TaskBlockState {
+    /// No task-related tokens seen yet.
+    Init,
+    /// Seen CREATE or ALTER.
+    SeenCreateAlter,
+    /// Seen CREATE/ALTER TASK; waiting for AS.
+    SeenTask,
+    /// Inside the BEGIN...END block; skipping inner delimiters.
+    InBlock,
+    /// Saw `; END` inside the block — candidate for block close.
+    SeenBlockEnd,
+}
+
+/// Tracks whether we are inside a CREATE/ALTER TASK ... AS BEGIN ... END
+/// script block, so that inner semicolons are not treated as statement
+/// terminators.
+struct TaskBlockTracker {
+    state: TaskBlockState,
+    paren_depth: u32,
+    previous_token_kind: Option<TokenKind>,
+}
+
+impl TaskBlockTracker {
+    fn new() -> Self {
+        Self {
+            state: TaskBlockState::Init,
+            paren_depth: 0,
+            previous_token_kind: None,
+        }
+    }
+
+    /// Process a token and advance the state machine.
+    fn feed(&mut self, token: &Token, delimiter_str: &str) {
+        // Track parenthesis depth so we can ignore AS inside
+        // expressions like WHEN CAST(... AS BOOLEAN).
+        match token.kind {
+            TokenKind::LParen => self.paren_depth += 1,
+            TokenKind::RParen => self.paren_depth = self.paren_depth.saturating_sub(1),
+            _ => {}
+        }
+
+        match self.state {
+            TaskBlockState::Init => {
+                if token.kind == TokenKind::CREATE || token.kind == TokenKind::ALTER {
+                    self.state = TaskBlockState::SeenCreateAlter;
+                }
+            }
+            TaskBlockState::SeenCreateAlter => {
+                if token.kind == TokenKind::TASK {
+                    self.state = TaskBlockState::SeenTask;
+                } else if token.kind != TokenKind::OR && token.kind != TokenKind::REPLACE {
+                    self.state = TaskBlockState::Init;
+                }
+            }
+            TaskBlockState::SeenTask => {
+                // Only consider top-level AS (paren_depth == 0).
+                // AS inside CAST(... AS type) has paren_depth > 0.
+                if self.previous_token_kind == Some(TokenKind::AS) && self.paren_depth == 0 {
+                    if token.kind == TokenKind::BEGIN {
+                        self.state = TaskBlockState::InBlock;
+                    } else {
+                        // Task body is a single statement, not a block.
+                        // Disable further detection so that AS keywords
+                        // inside the body (e.g. column aliases) are not
+                        // mistaken for the task-level AS.
+                        self.state = TaskBlockState::Init;
+                    }
+                }
+            }
+            TaskBlockState::InBlock => {
+                if token.kind == TokenKind::END
+                    && self.previous_token_kind == Some(TokenKind::SemiColon)
+                {
+                    self.state = TaskBlockState::SeenBlockEnd;
+                }
+            }
+            TaskBlockState::SeenBlockEnd => {
+                // After seeing `; END`, only `;`, the delimiter, `\`
+                // (start of `\G`), or `G` after `\` should keep us in
+                // this state. Anything else means it wasn't the real
+                // block end.
+                let is_backslash_g = token.kind == TokenKind::Ident
+                    && token.text() == "G"
+                    && self.previous_token_kind == Some(TokenKind::Backslash);
+                if token.kind != TokenKind::SemiColon
+                    && token.kind != TokenKind::Backslash
+                    && !is_backslash_g
+                    && token.text() != delimiter_str
+                {
+                    self.state = TaskBlockState::InBlock;
+                }
+            }
+        }
+
+        self.previous_token_kind = Some(token.kind);
+    }
+
+    /// Returns true when the parser should skip delimiters (we are
+    /// inside a task script block and haven't seen the closing END).
+    fn in_block(&self) -> bool {
+        self.state == TaskBlockState::InBlock
+    }
+}
 
 /// SQL parser utility for splitting SQL text into individual statements
 pub struct SqlParser {
@@ -244,16 +351,21 @@ impl SqlParser {
         let mut remaining_query = to_parse.to_string();
         let mut err = String::new();
 
+        let delimiter_str = self.delimiter.to_string();
+
         'Parser: loop {
             let mut is_valid = true;
             let tokenizer = Tokenizer::new(&remaining_query);
             let mut previous_token_backslash = false;
+            let mut tracker = TaskBlockTracker::new();
 
             for token in tokenizer {
                 match token {
                     Ok(token) => {
+                        tracker.feed(&token, &delimiter_str);
+
                         // SQL end with `;` or `\G` in repl
-                        let is_end_query = token.text() == self.delimiter.to_string();
+                        let is_end_query = token.text() == delimiter_str;
                         let is_slash_g = self.is_repl
                             && (previous_token_backslash
                                 && token.kind == TokenKind::Ident
@@ -261,12 +373,15 @@ impl SqlParser {
                             || (token.text().ends_with("\\G"));
 
                         if is_end_query || is_slash_g {
+                            if tracker.in_block() {
+                                // Skip inner delimiters within the block.
+                                previous_token_backslash =
+                                    matches!(token.kind, TokenKind::Backslash);
+                                continue;
+                            }
                             // Extract the statement and continue with remaining text
                             let (sql, remain) = remaining_query.split_at(token.span.end as usize);
-                            if is_valid
-                                && !sql.is_empty()
-                                && sql.trim() != self.delimiter.to_string()
-                            {
+                            if is_valid && !sql.is_empty() && sql.trim() != delimiter_str {
                                 let sql = sql.trim_end_matches(self.delimiter);
                                 statements.push(sql.trim().to_string());
                             }
@@ -309,4 +424,123 @@ struct ParseResult {
 pub fn parse_sql_for_web(sql_text: &str) -> Vec<String> {
     let parser = SqlParser::new(';', true, false);
     parser.parse(sql_text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_task_script_block() {
+        let parser = SqlParser::new(';', true, false);
+        // Block is kept as a single statement, and trailing SQL splits correctly
+        let sql = "CREATE TASK IF NOT EXISTS nightly_refresh\n WAREHOUSE = 'default'\n SCHEDULE = USING CRON '0 0 2 * * *' 'UTC'\nAS\nBEGIN\n    select 1;\n    select 2;\nEND;\nSELECT 3;";
+        let stmts = parser.parse(sql);
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].contains("BEGIN"));
+        assert!(stmts[0].contains("select 1;"));
+        assert!(stmts[0].contains("select 2;"));
+        // The outer ; is the client delimiter and gets trimmed.
+        // Server's task_sql_block expects BEGIN...END without trailing ;.
+        assert!(stmts[0].ends_with("END"), "got: {}", stmts[0]);
+        assert_eq!(stmts[1], "SELECT 3");
+    }
+
+    #[test]
+    fn test_task_script_block_repl_line_by_line() {
+        let parser = SqlParser::new(';', true, true);
+        let mut buf = String::new();
+        let mut err = String::new();
+
+        // Simulate line-by-line REPL input
+        assert!(parser
+            .parse_line("CREATE TASK t1 AS", &mut buf, &mut err)
+            .is_empty());
+        assert!(parser.parse_line("BEGIN", &mut buf, &mut err).is_empty());
+        assert!(parser
+            .parse_line("    select 1;", &mut buf, &mut err)
+            .is_empty());
+        assert!(parser
+            .parse_line("    select 2;", &mut buf, &mut err)
+            .is_empty());
+        let stmts = parser.parse_line("END;", &mut buf, &mut err);
+        assert_eq!(stmts.len(), 1);
+        assert!(stmts[0].contains("BEGIN"));
+        assert!(stmts[0].contains("END"));
+        assert!(stmts[0].contains("select 1;"));
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_task_script_block_with_inner_transaction() {
+        // Task script block containing BEGIN (transaction) inside
+        let parser = SqlParser::new(';', true, false);
+        let sql = "CREATE TASK t1 AS\nBEGIN\n    begin;\n    select 1;\n    commit;\nEND;";
+        let stmts = parser.parse(sql);
+        assert_eq!(stmts.len(), 1, "got: {:?}", stmts);
+        assert!(stmts[0].contains("BEGIN"));
+        assert!(stmts[0].contains("begin;"));
+        assert!(stmts[0].contains("select 1;"));
+        assert!(stmts[0].contains("commit;"));
+        assert!(stmts[0].ends_with("END"));
+    }
+
+    #[test]
+    fn test_task_script_block_with_case_expression() {
+        // CASE...END; inside a task block should not close the block
+        let parser = SqlParser::new(';', true, false);
+        let sql = "CREATE TASK t1 AS\nBEGIN\n    INSERT INTO t SELECT CASE WHEN flag THEN 1 ELSE 0 END;\n    select 2;\nEND;";
+        let stmts = parser.parse(sql);
+        assert_eq!(stmts.len(), 1, "got: {:?}", stmts);
+        assert!(stmts[0].contains("CASE"));
+        assert!(stmts[0].contains("select 2;"));
+        assert!(stmts[0].ends_with("END"));
+    }
+
+    #[test]
+    fn test_task_script_block_no_trailing_semicolon() {
+        // User omits the trailing ; after END
+        let parser = SqlParser::new(';', true, false);
+        let sql = "CREATE TASK t1 AS\nBEGIN\n    select 1;\n    select 2;\nEND";
+        let stmts = parser.parse(sql);
+        assert_eq!(stmts.len(), 1, "got: {:?}", stmts);
+        assert!(stmts[0].contains("BEGIN"));
+        assert!(stmts[0].contains("END"));
+    }
+
+    #[test]
+    fn test_task_single_statement_with_as_begin_alias() {
+        // CREATE TASK with single statement body containing AS begin alias
+        let parser = SqlParser::new(';', true, false);
+        let sql = "CREATE TASK t1 AS SELECT 1 AS begin; SELECT 2;";
+        let stmts = parser.parse(sql);
+        assert_eq!(stmts.len(), 2, "got: {:?}", stmts);
+        assert_eq!(stmts[0], "CREATE TASK t1 AS SELECT 1 AS begin");
+        assert_eq!(stmts[1], "SELECT 2");
+    }
+
+    #[test]
+    fn test_task_script_block_custom_delimiter() {
+        // With a custom delimiter (|), END; is SQL syntax and | is client terminator
+        let parser = SqlParser::new('|', true, false);
+        let sql = "CREATE TASK t1 AS\nBEGIN\n    select 1;\n    select 2;\nEND;\n|\nSELECT 3|";
+        let stmts = parser.parse(sql);
+        assert_eq!(stmts.len(), 2, "got: {:?}", stmts);
+        assert!(stmts[0].contains("BEGIN"));
+        assert!(stmts[0].contains("select 1;"));
+        assert!(stmts[0].contains("END;"));
+        assert_eq!(stmts[1], "SELECT 3");
+    }
+
+    #[test]
+    fn test_task_script_block_backslash_g_terminator() {
+        // \G as statement terminator should close a task block
+        let parser = SqlParser::new(';', true, true);
+        let sql = "CREATE TASK t1 AS\nBEGIN\n    select 1;\n    select 2;\nEND\\G";
+        let stmts = parser.parse(sql);
+        assert_eq!(stmts.len(), 1, "got: {:?}", stmts);
+        assert!(stmts[0].contains("BEGIN"));
+        assert!(stmts[0].contains("select 1;"));
+        assert!(stmts[0].contains("select 2;"));
+    }
 }
