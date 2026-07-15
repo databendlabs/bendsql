@@ -289,14 +289,15 @@ jobs:
       url: https://www.npmjs.com/package/databend-driver
     steps:
       - uses: actions/checkout@v4
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
       - name: Setup node
         uses: actions/setup-node@v4
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
-      - name: Corepack
-        working-directory: bindings/nodejs
-        run: npm i -g --force corepack && corepack enable
       - name: Install dependencies
         working-directory: bindings/nodejs
         run: pnpm install
