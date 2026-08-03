@@ -15,11 +15,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use crate::types::{ConnectionInfo, DriverError, Row, RowIterator, ServerStats, VERSION};
 use crate::utils::{options_as_ref, to_sql_params, wait_for_future};
-use databend_driver::{LoadMethod, SchemaRef};
+use databend_driver::{LoadMethod, RowWithStats, SchemaRef};
 use pyo3::exceptions::{PyAttributeError, PyException, PyStopIteration};
 use pyo3::types::{PyList, PyTuple};
 use pyo3::{prelude::*, IntoPyObjectExt};
@@ -252,6 +252,7 @@ impl BlockingDatabendConnection {
 pub struct BlockingDatabendCursor {
     conn: Arc<databend_driver::Connection>,
     rows: Option<Arc<Mutex<databend_driver::RowIterator>>>,
+    stats: Arc<RwLock<Option<databend_driver::ServerStats>>>,
     // buffer is used to store only the first row after execute
     buffer: Vec<Row>,
     schema: Option<SchemaRef>,
@@ -263,6 +264,7 @@ impl BlockingDatabendCursor {
         Self {
             conn: Arc::new(conn),
             rows: None,
+            stats: Arc::new(RwLock::new(None)),
             buffer: Vec::new(),
             schema: None,
             closed: false,
@@ -273,9 +275,26 @@ impl BlockingDatabendCursor {
 impl BlockingDatabendCursor {
     fn reset(&mut self) {
         self.rows = None;
+        *self.stats.write().unwrap() = None;
         self.buffer.clear();
         self.schema = None;
     }
+}
+
+fn capture_stats(
+    rows: databend_driver::RowStatsIterator,
+    stats: Arc<RwLock<Option<databend_driver::ServerStats>>>,
+) -> databend_driver::RowIterator {
+    let schema = rows.schema();
+    let rows = rows.filter_map(move |result| match result {
+        Ok(RowWithStats::Row(row)) => Some(Ok(row)),
+        Ok(RowWithStats::Stats(value)) => {
+            *stats.write().unwrap() = Some(value);
+            None
+        }
+        Err(error) => Some(Err(error)),
+    });
+    databend_driver::RowIterator::new(schema, Box::pin(rows))
 }
 
 #[pymethods]
@@ -312,10 +331,19 @@ impl BlockingDatabendCursor {
         }
     }
 
-    /// Not supported currently
     #[getter]
     pub fn rowcount(&self, _py: Python) -> i64 {
-        -1
+        self.stats
+            .read()
+            .unwrap()
+            .as_ref()
+            .map(|stats| stats.write_rows as i64)
+            .unwrap_or(-1)
+    }
+
+    #[getter]
+    pub fn stats(&self) -> Option<ServerStats> {
+        self.stats.read().unwrap().clone().map(ServerStats::new)
     }
 
     pub fn close(&mut self, py: Python) -> PyResult<()> {
@@ -348,15 +376,17 @@ impl BlockingDatabendCursor {
 
         self.reset();
         let conn = self.conn.clone();
+        let cursor_stats = self.stats.clone();
         // fetch first row after execute
         // then we could finish the query directly if there's no result
         let params = to_sql_params(params);
         let (first, rows) = wait_for_future(py, async move {
-            let mut rows = if params.is_empty() {
-                conn.query_iter(&operation).await?
+            let rows = if params.is_empty() {
+                conn.query_iter_ext(&operation).await?
             } else {
-                conn.query(&operation).bind(params).iter().await?
+                conn.query(&operation).bind(params).iter_ext().await?
             };
+            let mut rows = capture_stats(rows, cursor_stats);
             let first = rows.next().await.transpose()?;
             Ok::<_, databend_driver::Error>((first, rows))
         })
@@ -392,6 +422,7 @@ impl BlockingDatabendCursor {
                         .map_err(DriverError::new)
                 })?;
                 let result = stats.write_rows.into_pyobject(py)?;
+                *self.stats.write().unwrap() = Some(stats);
                 return Ok(result.into());
             } else {
                 return Err(PyAttributeError::new_err(
@@ -537,5 +568,37 @@ fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
             }
         }
         Err(e) => Err(e.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use databend_driver::{RowStatsIterator, Schema, ServerStats};
+
+    #[tokio::test]
+    async fn test_capture_stats_filters_stats_and_keeps_latest_snapshot() {
+        let schema = Arc::new(Schema::default());
+        let items = vec![
+            Ok(RowWithStats::Stats(ServerStats {
+                write_rows: 1,
+                ..Default::default()
+            })),
+            Ok(RowWithStats::Row(databend_driver::Row::new(
+                schema.clone(),
+                vec![],
+            ))),
+            Ok(RowWithStats::Stats(ServerStats {
+                write_rows: 2,
+                ..Default::default()
+            })),
+        ];
+        let rows = RowStatsIterator::new(schema, Box::pin(tokio_stream::iter(items)));
+        let stats = Arc::new(RwLock::new(None));
+        let mut rows = capture_stats(rows, stats.clone());
+
+        assert!(rows.next().await.transpose().unwrap().is_some());
+        assert!(rows.next().await.transpose().unwrap().is_none());
+        assert_eq!(stats.read().unwrap().as_ref().unwrap().write_rows, 2);
     }
 }
