@@ -115,6 +115,9 @@ impl Pages {
         mut self,
         need_progress: bool,
     ) -> Result<(Self, Schema, ResultFormatSettings)> {
+        // A successful zero-row statement can have neither schema nor non-zero
+        // progress, but its final page still contains meaningful server stats.
+        let mut pending_page: Option<Page> = None;
         while let Some(page) = self.next().await {
             let page = page?;
             if !page.raw_schema.is_empty()
@@ -147,8 +150,72 @@ impl Pages {
                 }
                 return Ok((self, schema, settings));
             }
+            if need_progress {
+                if let Some(pending) = pending_page.as_mut() {
+                    pending.update(page);
+                } else {
+                    pending_page = Some(page);
+                }
+            }
+        }
+        if let Some(page) = pending_page {
+            let settings = ResultFormatSettings::try_from(&page.settings)?;
+            self.add_back(page);
+            return Ok((self, Schema::default(), settings));
         }
         Ok((self, Schema::default(), ResultFormatSettings::default()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn wait_for_schema_preserves_zero_progress_page() {
+        let client = APIClient::new(
+            "databend://root:@localhost:8000/default?sslmode=disable&login=disable",
+            None,
+        )
+        .await
+        .unwrap();
+        let response: QueryResponse = serde_json::from_str(
+            r#"{
+                "id":"query-id",
+                "node_id":null,
+                "session_id":null,
+                "session":null,
+                "schema":[],
+                "data":[],
+                "state":"Succeeded",
+                "settings":null,
+                "error":null,
+                "warnings":null,
+                "stats":{
+                    "scan_progress":{"rows":0,"bytes":0},
+                    "write_progress":{"rows":0,"bytes":0},
+                    "result_progress":{"rows":0,"bytes":0},
+                    "spill_progress":{"file_nums":0,"bytes":0},
+                    "running_time_ms":1.0,
+                    "total_scan":null
+                },
+                "result_timeout_secs":null,
+                "stats_uri":null,
+                "final_uri":null,
+                "next_uri":null,
+                "kill_uri":null
+            }"#,
+        )
+        .unwrap();
+        let pages = Pages::new(client, response, vec![], true).unwrap();
+
+        let (mut pages, schema, _) = pages.wait_for_schema(true).await.unwrap();
+        let page = pages.next().await.unwrap().unwrap();
+
+        assert!(schema.fields().is_empty());
+        assert_eq!(page.stats.progresses.write_progress.rows, 0);
+        assert_eq!(page.stats.running_time_ms, 1.0);
+        assert!(pages.next().await.is_none());
     }
 }
 
