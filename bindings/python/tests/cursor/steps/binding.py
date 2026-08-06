@@ -248,11 +248,12 @@ def _(context):
 
     # fetchall
     context.cursor.execute("SELECT * FROM test")
-    assert context.cursor.rowcount == 0
+    assert context.cursor.rowcount == -1
     assert context.cursor.stats.write_rows == 0
     rows = context.cursor.fetchall()
     ret = [row.values() for row in rows]
     assert ret == expected, f"ret: {ret}"
+    assert context.cursor.rowcount == -1
 
     desc = context.cursor.description
     assert desc is not None
@@ -271,6 +272,10 @@ def _(context):
     context.cursor.execute("UPDATE test SET s = s")
     assert context.cursor.rowcount == 3
     assert context.cursor.stats.write_rows == 3
+
+    context.cursor.execute("UPDATE test SET s = s WHERE false")
+    assert context.cursor.rowcount == 0
+    assert context.cursor.stats.write_rows == 0
 
     context.cursor.execute(
         r"""

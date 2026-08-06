@@ -253,6 +253,7 @@ pub struct BlockingDatabendCursor {
     conn: Arc<databend_driver::Connection>,
     rows: Option<Arc<Mutex<databend_driver::RowIterator>>>,
     stats: Arc<RwLock<Option<databend_driver::ServerStats>>>,
+    rowcount_mode: RowcountMode,
     // buffer is used to store only the first row after execute
     buffer: Vec<Row>,
     schema: Option<SchemaRef>,
@@ -265,6 +266,7 @@ impl BlockingDatabendCursor {
             conn: Arc::new(conn),
             rows: None,
             stats: Arc::new(RwLock::new(None)),
+            rowcount_mode: RowcountMode::Unknown,
             buffer: Vec::new(),
             schema: None,
             closed: false,
@@ -276,8 +278,25 @@ impl BlockingDatabendCursor {
     fn reset(&mut self) {
         self.rows = None;
         *self.stats.write().unwrap() = None;
+        self.rowcount_mode = RowcountMode::Unknown;
         self.buffer.clear();
         self.schema = None;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum RowcountMode {
+    #[default]
+    Unknown,
+    Affected,
+}
+
+impl RowcountMode {
+    fn rowcount(self, stats: Option<&databend_driver::ServerStats>) -> i64 {
+        match self {
+            RowcountMode::Affected => stats.map(|stats| stats.write_rows as i64).unwrap_or(-1),
+            RowcountMode::Unknown => -1,
+        }
     }
 }
 
@@ -333,12 +352,8 @@ impl BlockingDatabendCursor {
 
     #[getter]
     pub fn rowcount(&self, _py: Python) -> i64 {
-        self.stats
-            .read()
-            .unwrap()
-            .as_ref()
-            .map(|stats| stats.write_rows as i64)
-            .unwrap_or(-1)
+        self.rowcount_mode
+            .rowcount(self.stats.read().unwrap().as_ref())
     }
 
     #[getter]
@@ -380,17 +395,24 @@ impl BlockingDatabendCursor {
         // fetch first row after execute
         // then we could finish the query directly if there's no result
         let params = to_sql_params(params);
-        let (first, rows) = wait_for_future(py, async move {
-            let rows = if params.is_empty() {
-                conn.query_iter_ext(&operation).await?
+        let (rowcount_mode, first, rows) = wait_for_future(py, async move {
+            let query = conn.query(&operation);
+            let rowcount_mode = if query.is_dml() {
+                RowcountMode::Affected
             } else {
-                conn.query(&operation).bind(params).iter_ext().await?
+                RowcountMode::Unknown
+            };
+            let rows = if params.is_empty() {
+                query.iter_ext().await?
+            } else {
+                query.bind(params).iter_ext().await?
             };
             let mut rows = capture_stats(rows, cursor_stats);
             let first = rows.next().await.transpose()?;
-            Ok::<_, databend_driver::Error>((first, rows))
+            Ok::<_, databend_driver::Error>((rowcount_mode, first, rows))
         })
         .map_err(DriverError::new)?;
+        self.rowcount_mode = rowcount_mode;
         if let Some(first) = first {
             self.buffer.push(Row::new(first));
         }
@@ -408,6 +430,7 @@ impl BlockingDatabendCursor {
         seq_of_parameters: Vec<Bound<'p, PyAny>>,
     ) -> PyResult<PyObject> {
         self.reset();
+        self.rowcount_mode = RowcountMode::Affected;
         let conn = self.conn.clone();
         if let Some(param) = seq_of_parameters.first() {
             if param.downcast::<PyList>().is_ok() || param.downcast::<PyTuple>().is_ok() {
@@ -600,5 +623,22 @@ mod tests {
         assert!(rows.next().await.transpose().unwrap().is_some());
         assert!(rows.next().await.transpose().unwrap().is_none());
         assert_eq!(stats.read().unwrap().as_ref().unwrap().write_rows, 2);
+    }
+
+    #[test]
+    fn test_rowcount_mode() {
+        let zero = ServerStats {
+            write_rows: 0,
+            ..Default::default()
+        };
+        let positive = ServerStats {
+            write_rows: 3,
+            ..Default::default()
+        };
+
+        assert_eq!(RowcountMode::Unknown.rowcount(Some(&zero)), -1);
+        assert_eq!(RowcountMode::Affected.rowcount(None), -1);
+        assert_eq!(RowcountMode::Affected.rowcount(Some(&zero)), 0);
+        assert_eq!(RowcountMode::Affected.rowcount(Some(&positive)), 3);
     }
 }
