@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+use databend_common_ast::ast::Statement;
 use databend_common_ast::parser::Dialect;
 
 pub trait Param: Debug {
@@ -126,17 +127,34 @@ impl Params {
     }
 
     pub fn replace(&self, sql: &str) -> String {
-        if !self.is_empty() {
-            let tokens = databend_common_ast::parser::tokenize_sql(sql).unwrap();
-            if let Ok((stmt, _)) =
-                databend_common_ast::parser::parse_sql(&tokens, Dialect::PostgreSQL)
-            {
-                let mut v = super::placeholder::PlaceholderVisitor::new();
-                return v.replace_sql(self, &stmt, sql);
-            }
+        if self.is_empty() {
+            return sql.to_string();
         }
-        sql.to_string()
+        let statement = parse_statement(sql);
+        self.replace_with_statement(sql, statement.as_ref())
     }
+
+    pub(crate) fn replace_with_statement(
+        &self,
+        sql: &str,
+        statement: Option<&Statement>,
+    ) -> String {
+        if self.is_empty() {
+            return sql.to_string();
+        }
+        let Some(statement) = statement else {
+            return sql.to_string();
+        };
+        let mut visitor = super::placeholder::PlaceholderVisitor::new();
+        visitor.replace_sql(self, statement, sql)
+    }
+}
+
+pub(crate) fn parse_statement(sql: &str) -> Option<Statement> {
+    let tokens = databend_common_ast::parser::tokenize_sql(sql).ok()?;
+    let (statement, _) =
+        databend_common_ast::parser::parse_sql(&tokens, Dialect::PostgreSQL).ok()?;
+    Some(statement)
 }
 
 // Implement Param for numeric types that fit in serde_json::Number
@@ -475,6 +493,9 @@ mod tests {
         let sql =
             "SELECT * FROM table WHERE a = ? AND '?' = cj AND b = ? AND c = ? AND d = ? AND e = ? AND f = ?";
         let replaced_sql = params.replace(sql);
+        assert_eq!(replaced_sql, "SELECT * FROM table WHERE a = 1 AND '?' = cj AND b = '44' AND c = 2 AND d = 3 AND e = '55' AND f = '66'");
+        let statement = parse_statement(sql);
+        let replaced_sql = params.replace_with_statement(sql, statement.as_ref());
         assert_eq!(replaced_sql, "SELECT * FROM table WHERE a = 1 AND '?' = cj AND b = '44' AND c = 2 AND d = 3 AND e = '55' AND f = '66'");
 
         let params = params! {a => 1, b => "44", c => 2, d => 3, e => "55", f => "66"};

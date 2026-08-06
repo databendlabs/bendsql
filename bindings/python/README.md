@@ -73,12 +73,12 @@ with query results as DataFrames or Arrow tables:
 ```python
 relation = conn.sql("SELECT * FROM books")
 
-df = relation.df()       # pandas DataFrame
-pl = relation.pl()       # polars DataFrame
-tbl = relation.arrow()   # pyarrow Table
+df = relation.df()  # pandas DataFrame
+pl = relation.pl()  # polars DataFrame
+tbl = relation.arrow()  # pyarrow Table
 
-rows = relation.fetchall()   # list[tuple]
-row = relation.fetchone()    # tuple | None
+rows = relation.fetchall()  # list[tuple]
+row = relation.fetchone()  # tuple | None
 ```
 
 #### Registering External Data
@@ -95,6 +95,7 @@ conn.register("events", "./data/events.csv")
 
 # Register a pandas or polars DataFrame
 import pandas as pd
+
 df = pd.DataFrame({"id": [1, 2], "name": ["Alice", "Bob"]})
 conn.register("users", df)
 
@@ -113,7 +114,7 @@ relation = conn.read_text("./data/raw.txt")
 ```python
 from databend_driver import BlockingDatabendClient
 
-client = BlockingDatabendClient('databend://root:root@localhost:8000/?sslmode=disable')
+client = BlockingDatabendClient("databend://root:root@localhost:8000/?sslmode=disable")
 cursor = client.cursor()
 
 cursor.execute(
@@ -129,7 +130,10 @@ cursor.execute(
     )
     """
 )
-cursor.execute("INSERT INTO test VALUES (?, ?, ?, ?, ?, ?, ?)", (1, 1, 1.0, 'hello', 'world', '2021-01-01', '2021-01-01 00:00:00'))
+cursor.execute(
+    "INSERT INTO test VALUES (?, ?, ?, ?, ?, ?, ?)",
+    (1, 1, 1.0, "hello", "world", "2021-01-01", "2021-01-01 00:00:00"),
+)
 cursor.execute("SELECT * FROM test")
 rows = cursor.fetchall()
 for row in rows:
@@ -142,7 +146,7 @@ cursor.close()
 ```python
 from databend_driver import BlockingDatabendClient
 
-client = BlockingDatabendClient('databend://root:root@localhost:8000/?sslmode=disable')
+client = BlockingDatabendClient("databend://root:root@localhost:8000/?sslmode=disable")
 conn = client.get_conn()
 conn.exec(
     """
@@ -169,8 +173,9 @@ conn.close()
 import asyncio
 from databend_driver import AsyncDatabendClient
 
+
 async def main():
-    client = AsyncDatabendClient('databend://root:root@localhost:8000/?sslmode=disable')
+    client = AsyncDatabendClient("databend://root:root@localhost:8000/?sslmode=disable")
     conn = await client.get_conn()
     await conn.exec(
         """
@@ -189,6 +194,7 @@ async def main():
     async for row in rows:
         print(row.values())
     await conn.close()
+
 
 asyncio.run(main())
 ```
@@ -290,7 +296,9 @@ print(value)
 For example:
 
 ```python
-row = await conn.query_row("settings(geometry_output_format='WKB') SELECT st_point(60, 37)")
+row = await conn.query_row(
+    "settings(geometry_output_format='WKB') SELECT st_point(60, 37)"
+)
 assert isinstance(row.values()[0], bytes)
 ```
 
@@ -303,20 +311,35 @@ The driver provides a complete set of exception classes that follow the PEP 249 
 ```python
 # Base exceptions
 class Warning(Exception): ...
+
+
 class Error(Exception): ...
+
 
 # Interface errors
 class InterfaceError(Error): ...
 
+
 # Database errors
 class DatabaseError(Error): ...
 
+
 # Specific database error types
 class DataError(DatabaseError): ...
+
+
 class OperationalError(DatabaseError): ...
+
+
 class IntegrityError(DatabaseError): ...
+
+
 class InternalError(DatabaseError): ...
+
+
 class ProgrammingError(DatabaseError): ...
+
+
 class NotSupportedError(DatabaseError): ...
 ```
 
@@ -343,11 +366,21 @@ class AsyncDatabendConnection:
     async def close(self) -> None: ...
     def last_query_id(self) -> str | None: ...
     async def kill_query(self, query_id: str) -> None: ...
-    async def exec(self, sql: str, params: list[string] | tuple[string] | any = None) -> int: ...
-    async def query_row(self, sql: str, params: list[string] | tuple[string] | any = None) -> Row: ...
-    async def query_iter(self, sql: str, params: list[string] | tuple[string] | any = None) -> RowIterator: ...
-    async def stream_load(self, sql: str, data: list[list[str]], method: str = None) -> ServerStats: ...
-    async def load_file(self, sql: str, file: str, method: str = None) -> ServerStats: ...
+    async def exec(
+        self, sql: str, params: list[string] | tuple[string] | any = None
+    ) -> int: ...
+    async def query_row(
+        self, sql: str, params: list[string] | tuple[string] | any = None
+    ) -> Row: ...
+    async def query_iter(
+        self, sql: str, params: list[string] | tuple[string] | any = None
+    ) -> RowIterator: ...
+    async def stream_load(
+        self, sql: str, data: list[list[str]], method: str = None
+    ) -> ServerStats: ...
+    async def load_file(
+        self, sql: str, file: str, method: str = None
+    ) -> ServerStats: ...
 ```
 
 ### BlockingDatabendClient
@@ -368,11 +401,26 @@ class BlockingDatabendConnection:
     def close(self) -> None: ...
     def last_query_id(self) -> str | None: ...
     def kill_query(self, query_id: str) -> None: ...
-    def exec(self, sql: str, params: list[string] | tuple[string] | any = None) -> int: ...
-    def query_row(self, sql: str, params: list[string] | tuple[string] | any = None) -> Row: ...
-    def query_iter(self, sql: str, params: list[string] | tuple[string] | any = None) -> RowIterator: ...
-    def stream_load(self, sql: str, data: list[list[str]], method: str = None) -> ServerStats: ...
-    def load_file(self, sql: str, file: str, method: str = None, format_option: dict = None, copy_options: dict = None) -> ServerStats: ...
+    def exec(
+        self, sql: str, params: list[string] | tuple[string] | any = None
+    ) -> int: ...
+    def query_row(
+        self, sql: str, params: list[string] | tuple[string] | any = None
+    ) -> Row: ...
+    def query_iter(
+        self, sql: str, params: list[string] | tuple[string] | any = None
+    ) -> RowIterator: ...
+    def stream_load(
+        self, sql: str, data: list[list[str]], method: str = None
+    ) -> ServerStats: ...
+    def load_file(
+        self,
+        sql: str,
+        file: str,
+        method: str = None,
+        format_option: dict = None,
+        copy_options: dict = None,
+    ) -> ServerStats: ...
 ```
 
 ### BlockingDatabendCursor
@@ -383,6 +431,8 @@ class BlockingDatabendCursor:
     def description(self) -> list[tuple[str, str, int | None, int | None, int | None, int | None, bool | None]] | None: ...
     @property
     def rowcount(self) -> int: ...
+    @property
+    def stats(self) -> ServerStats | None: ...
     def close(self) -> None: ...
     def execute(self, operation: str, params: list[string] | tuple[string] = None) -> None | int: ...
     def executemany(self, operation: str, params: list[string] | tuple[string] = None, values: list[list[string] | tuple[string]]) -> None | int: ...
@@ -505,7 +555,7 @@ class LocalConnection:
     def register(
         self,
         name: str,
-        source: Any,           # path str/Path, pandas/polars DataFrame, or pyarrow Table
+        source: Any,  # path str/Path, pandas/polars DataFrame, or pyarrow Table
         *,
         format: str | None = None,
         pattern: str | None = None,
@@ -513,20 +563,36 @@ class LocalConnection:
     ) -> LocalConnection: ...
     def from_df(self, source: Any, *, name: str | None = None) -> LocalRelation: ...
     def read_parquet(
-        self, path: str | Path, *, pattern: str | None = None,
-        connection: str | None = None, name: str | None = None,
+        self,
+        path: str | Path,
+        *,
+        pattern: str | None = None,
+        connection: str | None = None,
+        name: str | None = None,
     ) -> LocalRelation: ...
     def read_csv(
-        self, path: str | Path, *, pattern: str | None = None,
-        connection: str | None = None, name: str | None = None,
+        self,
+        path: str | Path,
+        *,
+        pattern: str | None = None,
+        connection: str | None = None,
+        name: str | None = None,
     ) -> LocalRelation: ...
     def read_json(
-        self, path: str | Path, *, pattern: str | None = None,
-        connection: str | None = None, name: str | None = None,
+        self,
+        path: str | Path,
+        *,
+        pattern: str | None = None,
+        connection: str | None = None,
+        name: str | None = None,
     ) -> LocalRelation: ...
     def read_text(
-        self, path: str | Path, *, pattern: str | None = None,
-        connection: str | None = None, name: str | None = None,
+        self,
+        path: str | Path,
+        *,
+        pattern: str | None = None,
+        connection: str | None = None,
+        name: str | None = None,
     ) -> LocalRelation: ...
 ```
 
@@ -534,9 +600,9 @@ class LocalConnection:
 
 ```python
 class LocalRelation:
-    def df(self) -> Any: ...          # pandas DataFrame
-    def pl(self) -> Any: ...          # polars DataFrame
-    def arrow(self) -> Any: ...       # pyarrow Table
+    def df(self) -> Any: ...  # pandas DataFrame
+    def pl(self) -> Any: ...  # polars DataFrame
+    def arrow(self) -> Any: ...  # pyarrow Table
     def fetchall(self) -> list[tuple]: ...
     def fetchone(self) -> tuple | None: ...
 ```
