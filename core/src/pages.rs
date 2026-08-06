@@ -167,58 +167,6 @@ impl Pages {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn wait_for_schema_preserves_zero_progress_page() {
-        let client = APIClient::new(
-            "databend://root:@localhost:8000/default?sslmode=disable&login=disable",
-            None,
-        )
-        .await
-        .unwrap();
-        let response: QueryResponse = serde_json::from_str(
-            r#"{
-                "id":"query-id",
-                "node_id":null,
-                "session_id":null,
-                "session":null,
-                "schema":[],
-                "data":[],
-                "state":"Succeeded",
-                "settings":null,
-                "error":null,
-                "warnings":null,
-                "stats":{
-                    "scan_progress":{"rows":0,"bytes":0},
-                    "write_progress":{"rows":0,"bytes":0},
-                    "result_progress":{"rows":0,"bytes":0},
-                    "spill_progress":{"file_nums":0,"bytes":0},
-                    "running_time_ms":1.0,
-                    "total_scan":null
-                },
-                "result_timeout_secs":null,
-                "stats_uri":null,
-                "final_uri":null,
-                "next_uri":null,
-                "kill_uri":null
-            }"#,
-        )
-        .unwrap();
-        let pages = Pages::new(client, response, vec![], true).unwrap();
-
-        let (mut pages, schema, _) = pages.wait_for_schema(true).await.unwrap();
-        let page = pages.next().await.unwrap().unwrap();
-
-        assert!(schema.fields().is_empty());
-        assert_eq!(page.stats.progresses.write_progress.rows, 0);
-        assert_eq!(page.stats.running_time_ms, 1.0);
-        assert!(pages.next().await.is_none());
-    }
-}
-
 impl Stream for Pages {
     type Item = Result<Page>;
 
@@ -271,5 +219,57 @@ impl Drop for Pages {
                 self.client.finalize_query(&self.query_id)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn wait_for_schema_preserves_zero_progress_page() {
+        let client = APIClient::new(
+            "databend://root:@localhost:8000/default?sslmode=disable&login=disable",
+            None,
+        )
+        .await
+        .unwrap();
+        let response: QueryResponse = serde_json::from_str(
+            r#"{
+                "id":"query-id",
+                "node_id":null,
+                "session_id":null,
+                "session":null,
+                "schema":[],
+                "data":[],
+                "state":"Succeeded",
+                "settings":null,
+                "error":null,
+                "warnings":null,
+                "stats":{
+                    "scan_progress":{"rows":0,"bytes":0},
+                    "write_progress":{"rows":0,"bytes":0},
+                    "result_progress":{"rows":0,"bytes":0},
+                    "spill_progress":{"file_nums":0,"bytes":0},
+                    "running_time_ms":1.0,
+                    "total_scan":null
+                },
+                "result_timeout_secs":null,
+                "stats_uri":null,
+                "final_uri":null,
+                "next_uri":null,
+                "kill_uri":null
+            }"#,
+        )
+        .unwrap();
+        let pages = Pages::new(client, response, vec![], true).unwrap();
+
+        let (mut pages, schema, _) = pages.wait_for_schema(true).await.unwrap();
+        let page = pages.next().await.unwrap().unwrap();
+
+        assert!(schema.fields().is_empty());
+        assert_eq!(page.stats.progresses.write_progress.rows, 0);
+        assert_eq!(page.stats.running_time_ms, 1.0);
+        assert!(pages.next().await.is_none());
     }
 }
