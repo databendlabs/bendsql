@@ -249,12 +249,16 @@ def _(context):
 
     # fetchall
     context.cursor.execute("SELECT * FROM test")
-    assert context.cursor.rowcount == -1
-    assert context.cursor.stats.write_rows == 0
+    if DRIVER_VERSION > (0, 34, 2):
+        assert context.cursor.rowcount == -1
+        assert context.cursor.stats.write_rows == 0
+
     rows = context.cursor.fetchall()
     ret = [row.values() for row in rows]
     assert ret == expected, f"ret: {ret}"
-    assert context.cursor.rowcount == -1
+
+    if DRIVER_VERSION > (0, 34, 2):
+        assert context.cursor.rowcount == -1
 
     desc = context.cursor.description
     assert desc is not None
@@ -270,22 +274,23 @@ def _(context):
     ret = [row.values() for row in context.cursor]
     assert ret == expected, f"ret: {ret}"
 
-    context.cursor.execute("UPDATE test SET s = s")
-    assert context.cursor.rowcount == 3
-    assert context.cursor.stats.write_rows == 3
+    if DRIVER_VERSION > (0, 34, 2):
+        context.cursor.execute("UPDATE test SET s = s")
+        assert context.cursor.rowcount == 3
+        assert context.cursor.stats.write_rows == 3
 
-    context.cursor.execute("UPDATE test SET s = s WHERE false")
-    assert context.cursor.rowcount == 0
-    assert context.cursor.stats.write_rows == 0
+        context.cursor.execute("UPDATE test SET s = s WHERE false")
+        assert context.cursor.rowcount == 0
+        assert context.cursor.stats.write_rows == 0
 
-    context.cursor.execute(
-        r"""
-        REPLACE INTO test ON (i64) VALUES
-            (-1, 1, 1.0, 'replaced', NULL, '2011-03-06', '2011-03-06 06:20:00', {'a': 1})
-        """
-    )
-    assert context.cursor.rowcount == 1
-    assert context.cursor.stats.write_rows == 1
+        context.cursor.execute(
+            r"""
+            REPLACE INTO test ON (i64) VALUES
+                (-1, 1, 1.0, 'replaced', NULL, '2011-03-06', '2011-03-06 06:20:00', {'a': 1})
+            """
+        )
+        assert context.cursor.rowcount == 1
+        assert context.cursor.stats.write_rows == 1
 
 
 @then("Stream load and Select should be equal")
@@ -313,8 +318,9 @@ def _(context):
         ]
     count = context.cursor.executemany("INSERT INTO test VALUES", values)
     assert count == 3, f"count: {count}"
-    assert context.cursor.rowcount == 3
-    assert context.cursor.stats.write_rows == 3
+    if DRIVER_VERSION > (0, 34, 2):
+        assert context.cursor.rowcount == 3
+        assert context.cursor.stats.write_rows == 3
 
     context.cursor.execute("SELECT * FROM test")
     rows = context.cursor.fetchall()
