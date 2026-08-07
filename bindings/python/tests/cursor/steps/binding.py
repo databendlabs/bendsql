@@ -211,8 +211,9 @@ def _(context):
             (-3, 3, 3.0, '\\', 'NULL', '2016-04-04', '2016-04-04 11:30:00', {'a': 3})
         """
     )
-    assert context.cursor.rowcount == 3
-    assert context.cursor.stats.write_rows == 3
+    if DRIVER_VERSION > (0, 34, 2):
+        assert context.cursor.rowcount == 3
+        assert context.cursor.stats.write_rows == 3
     expected = [
         (
             -1,
