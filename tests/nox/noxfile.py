@@ -15,6 +15,8 @@
 import nox
 import os
 
+LATEST_DRIVER = "latest"
+
 
 def generate_params1():
     for db_version in ["1.2.803", "1.2.791"]:
@@ -49,11 +51,12 @@ def new_driver_with_old_servers(session, db_version, query_result_format):
 
 
 def generate_params2():
-    for driver_version in ["0.27.6", "0.33.6", "0.34.0", "0.34.2"]:
+    for driver_version in ["0.27.6", "0.33.6", "0.34.0", LATEST_DRIVER]:
         for query_result_format in ["arrow", "json"]:
-            v = tuple(map(int, driver_version.split(".")))
-            if query_result_format == "arrow" and v <= (0, 30, 3):
-                continue
+            if driver_version != LATEST_DRIVER:
+                v = tuple(map(int, driver_version.split(".")))
+                if query_result_format == "arrow" and v <= (0, 30, 3):
+                    continue
             yield nox.param(driver_version, query_result_format)
 
 
@@ -61,7 +64,16 @@ def generate_params2():
 @nox.parametrize(["driver_version", "query_result_format"], generate_params2())
 def new_test_with_old_drivers(session, driver_version, query_result_format):
     session.install("behave")
-    session.install(f"databend-driver=={driver_version}")
+    if driver_version == LATEST_DRIVER:
+        session.install("databend-driver")
+        driver_version = session.run(
+            "python",
+            "-c",
+            "from importlib.metadata import version; print(version('databend-driver'))",
+            silent=True,
+        ).strip()
+    else:
+        session.install(f"databend-driver=={driver_version}")
     with session.chdir(".."):
         env = {
             "DRIVER_VERSION": driver_version,
