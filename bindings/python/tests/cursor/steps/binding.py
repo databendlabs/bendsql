@@ -21,7 +21,11 @@ import time
 from behave import given, when, then
 
 os.environ["DATABEND_DRIVER_HEARTBEAT_INTERVAL_SECONDS"] = "1"
-os.environ["RUST_LOG"] = "warn,databend_driver=debug,databend_client=debug"
+os.environ.setdefault(
+    "RUST_LOG",
+    "warn",
+)
+os.environ.setdefault("RUST_BACKTRACE", "1")
 import databend_driver
 
 NOW = int(time.time())

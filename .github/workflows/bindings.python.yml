@@ -193,6 +193,15 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Resolve Databend version
+        id: databend-version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(gh api repos/databendlabs/databend/releases --jq '[.[] | select(.draft | not) | select(.tag_name | endswith("-nightly"))][0].tag_name')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Running compatibility tests with Databend version: **$version**" >> "$GITHUB_STEP_SUMMARY"
+
       - uses: wntrblm/nox@2025.05.01
       - name: Download artifact
         uses: actions/download-artifact@v4
@@ -201,3 +210,6 @@ jobs:
           path: bindings/python/dist
       - name: Run Nox
         run: nox -f tests/nox/noxfile.py
+        env:
+          DATABEND_META_VERSION: ${{ steps.databend-version.outputs.version }}
+          DATABEND_QUERY_VERSION: ${{ steps.databend-version.outputs.version }}

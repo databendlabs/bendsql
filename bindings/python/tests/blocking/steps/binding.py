@@ -25,7 +25,11 @@ tc = unittest.TestCase()
 from behave import given, when, then
 
 os.environ["DATABEND_DRIVER_HEARTBEAT_INTERVAL_SECONDS"] = "1"
-os.environ["RUST_LOG"] = "warn,databend_driver=debug,databend_client=debug"
+os.environ.setdefault(
+    "RUST_LOG",
+    "warn",
+)
+os.environ.setdefault("RUST_BACKTRACE", "1")
 import databend_driver
 
 NOW = int(time.time())
@@ -115,9 +119,11 @@ def _(context):
     row = context.conn.query_row("select to_binary('xyz')")
     assert row.values() == (b"xyz",), f"Binary: {row.values()}"
 
-    # Interval
-    row = context.conn.query_row("select to_interval('1 microseconds')")
-    assert row.values() == (timedelta(microseconds=1),), f"Interval: {row.values()}"
+    # Older drivers decode a one-microsecond interval as one millisecond.
+    if DRIVER_VERSION >= (0, 28, 0):
+        # Interval
+        row = context.conn.query_row("select to_interval('1 microseconds')")
+        assert row.values() == (timedelta(microseconds=1),), f"Interval: {row.values()}"
 
     # Decimal
     row = context.conn.query_row("SELECT 15.7563::Decimal(8,4), 2.0+3.0", params=[8, 4])
@@ -310,6 +316,11 @@ def _(context):
 
 
 def test_load_file(context, load_method):
+    # The load method argument replaced format_options/copy_options in v0.28.0.
+    if DRIVER_VERSION < (0, 28, 0):
+        print("SKIP: load_file method requires driver >= 0.28.0")
+        return
+
     if DRIVER_VERSION >= (0, 28, 3) and DB_VERSION >= (1, 2, 792):
         context.conn.exec("CREATE OR REPLACE DATABASE db1")
         context.conn.exec("use db1")

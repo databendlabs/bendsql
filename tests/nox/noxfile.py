@@ -49,7 +49,7 @@ def new_driver_with_old_servers(session, db_version, query_result_format):
 
 
 def generate_params2():
-    for driver_version in ["0.28.2", "0.28.1"]:
+    for driver_version in ["0.27.6", "0.33.6", "0.34.0", "0.34.2"]:
         for query_result_format in ["arrow", "json"]:
             v = tuple(map(int, driver_version.split(".")))
             if query_result_format == "arrow" and v <= (0, 30, 3):
