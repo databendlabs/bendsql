@@ -24,7 +24,11 @@ import unittest
 tc = unittest.TestCase()
 
 os.environ["DATABEND_DRIVER_HEARTBEAT_INTERVAL_SECONDS"] = "1"
-os.environ["RUST_LOG"] = "warn,databend_driver=debug,databend_client=debug"
+os.environ.setdefault(
+    "RUST_LOG",
+    "warn",
+)
+os.environ.setdefault("RUST_BACKTRACE", "1")
 import databend_driver
 
 NOW = int(time.time())
@@ -265,6 +269,11 @@ async def _(context):
 
 
 async def test_load_file(context, load_method):
+    # The load method argument replaced format_options/copy_options in v0.28.0.
+    if DRIVER_VERSION < (0, 28, 0):
+        print("SKIP: load_file method requires driver >= 0.28.0")
+        return
+
     if DRIVER_VERSION >= (0, 28, 3) and DB_VERSION >= (1, 2, 792):
         await context.conn.exec("CREATE OR REPLACE DATABASE db1")
         await context.conn.exec("use db1")
