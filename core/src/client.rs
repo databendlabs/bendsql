@@ -42,7 +42,7 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use percent_encoding::percent_decode_str;
 use reqwest::cookie::CookieStore;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE, HOST};
 use reqwest::multipart::{Form, Part};
 use reqwest::{
     Body, Client as HttpClient, Error as ReqwestError, Request, RequestBuilder, StatusCode,
@@ -147,6 +147,8 @@ pub struct APIClient {
 
     retry_count: u32,
     retry_delay_secs: u64,
+
+    http_host: Option<HeaderValue>,
 }
 
 impl Drop for APIClient {
@@ -382,6 +384,9 @@ impl APIClient {
                 }
                 "retry_delay_secs" => {
                     client.retry_delay_secs = v.parse()?;
+                }
+                "http_host" => {
+                    client.http_host = Some(HeaderValue::from_str(&v)?);
                 }
                 _ => {
                     session_state.set(k, v);
@@ -857,6 +862,9 @@ impl APIClient {
 
     fn make_headers(&self, query_id: Option<&str>) -> Result<HeaderMap> {
         let mut headers = HeaderMap::new();
+        if let Some(http_host) = &self.http_host {
+            headers.insert(HOST, http_host.clone());
+        }
         if let Some(tenant) = &self.tenant {
             headers.insert(HEADER_TENANT, tenant.parse()?);
         }
@@ -1496,6 +1504,7 @@ impl Default for APIClient {
             queries_need_heartbeat: Default::default(),
             retry_count: 3,
             retry_delay_secs: 10,
+            http_host: None,
         }
     }
 }
@@ -1554,6 +1563,18 @@ mod test {
         assert_eq!(
             *client.warehouse.try_lock().unwrap(),
             Some("wh".to_string())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_dsn_with_http_host() -> Result<()> {
+        let dsn = "databend://username:password@app.databend.com/test?http_host=tenant-a.example.com&sslmode=disable";
+        let client = APIClient::from_dsn(dsn).await?;
+        let headers = client.make_headers(None)?;
+        assert_eq!(
+            headers.get(HOST).and_then(|value| value.to_str().ok()),
+            Some("tenant-a.example.com")
         );
         Ok(())
     }

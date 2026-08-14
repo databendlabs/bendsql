@@ -104,6 +104,9 @@ struct Args {
     #[clap(short = 'D', long, help = "Database name, overrides database in DSN")]
     database: Option<String>,
 
+    #[clap(long, help = "Override HTTP Host header for REST requests")]
+    http_host: Option<String>,
+
     #[clap(long, value_parser = parse_key_val::<String, String>, help = "Settings, overrides settings in DSN")]
     set: Vec<(String, String)>,
 
@@ -317,6 +320,11 @@ pub async fn main() -> Result<()> {
         // override role if specified in command line
         if let Some(role) = args.role {
             conn_args.args.insert("role".to_string(), role);
+        }
+
+        // override HTTP Host header if specified in command line
+        if let Some(http_host) = args.http_host {
+            conn_args.args.insert("http_host".to_string(), http_host);
         }
 
         // override private key file if specified in command line
