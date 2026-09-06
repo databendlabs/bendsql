@@ -48,10 +48,10 @@ impl Value {
                 }
             },
             Value::Timestamp(dt) => {
-                serde_json::Value::String(dt.strftime(TIMESTAMP_FORMAT).to_string())
+                serde_json::Value::String(dt.format(TIMESTAMP_FORMAT).to_string())
             }
             Value::TimestampTz(dt) => {
-                serde_json::Value::String(dt.strftime(TIMESTAMP_TIMEZONE_FORMAT).to_string())
+                serde_json::Value::String(dt.format(TIMESTAMP_TIMEZONE_FORMAT).to_string())
             }
             Value::Date(d) => {
                 let date = NaiveDate::from_num_days_from_ce_opt(*d + DAYS_FROM_CE).unwrap();
@@ -103,10 +103,10 @@ impl Value {
             Value::String(s) => format!("'{}'", s),
             Value::Number(n) => n.to_string(),
             Value::Timestamp(dt) => {
-                format!("'{}'", dt.strftime(TIMESTAMP_FORMAT))
+                format!("'{}'", dt.format(TIMESTAMP_FORMAT))
             }
             Value::TimestampTz(dt) => {
-                let formatted = dt.strftime(TIMESTAMP_TIMEZONE_FORMAT);
+                let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
                 format!("'{formatted}'")
             }
             Value::Date(d) => {

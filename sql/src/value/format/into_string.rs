@@ -14,7 +14,7 @@
 
 use crate::_macro_internal::{Error, Value};
 use crate::error::ConvertError;
-use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT};
+use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
 use crate::value::format::display::{display_decimal_128, display_decimal_256};
 use crate::value::NumberValue;
 use chrono::NaiveDate;
@@ -41,7 +41,8 @@ impl TryFrom<Value> for String {
                     })?;
                 Ok(date.format("%Y-%m-%d").to_string())
             }
-            Value::Timestamp(dt) => Ok(dt.strftime(TIMESTAMP_FORMAT).to_string()),
+            Value::Timestamp(dt) => Ok(dt.format(TIMESTAMP_FORMAT).to_string()),
+            Value::TimestampTz(dt) => Ok(dt.format(TIMESTAMP_TIMEZONE_FORMAT).to_string()),
             _ => Err(ConvertError::new("string", format!("{val:?}")).into()),
         }
     }
