@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
+use std::mem::take;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
@@ -473,7 +474,7 @@ impl BlockingDatabendCursor {
 
     #[pyo3(signature = (size=1))]
     pub fn fetchmany(&mut self, py: Python, size: Option<usize>) -> PyResult<Vec<Row>> {
-        let mut result = self.buffer.drain(..).collect::<Vec<_>>();
+        let mut result = take(&mut self.buffer);
         if let Some(ref rows) = self.rows {
             let size = size.unwrap_or(1);
             while result.len() < size {
@@ -492,7 +493,7 @@ impl BlockingDatabendCursor {
     }
 
     pub fn fetchall(&mut self, py: Python) -> PyResult<Vec<Row>> {
-        let mut result = self.buffer.drain(..).collect::<Vec<_>>();
+        let mut result = take(&mut self.buffer);
         match self.rows.take() {
             Some(rows) => {
                 let fetched = wait_for_future(py, async move {

@@ -285,7 +285,7 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
     if req.kind == 3 {
         return run_python_script(&req.sql, &effective_dsn)
             .await
-            .unwrap_or_else(|err| err);
+            .unwrap_or_else(|err| *err);
     }
 
     let sql = req.to_sql();
@@ -414,13 +414,13 @@ async fn execute_query(req: web::Json<QueryRequest>) -> impl Responder {
     })
 }
 
-async fn run_python_script(code: &str, dsn: &str) -> Result<HttpResponse, HttpResponse> {
+async fn run_python_script(code: &str, dsn: &str) -> Result<HttpResponse, Box<HttpResponse>> {
     match StdCommand::new("docker").arg("--version").output() {
         Ok(output) if output.status.success() => {}
         _ => {
-            return Err(HttpResponse::InternalServerError().json(serde_json::json!({
+            return Err(Box::new(HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": "Docker is required to execute Python scripts. Please install Docker and try again."
-            })));
+            }))));
         }
     }
 
@@ -510,9 +510,11 @@ client = BlockingDatabendClient(_BENDSQL_DSN)
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(HttpResponse::InternalServerError().json(serde_json::json!({
-            "error": format!("Python execution failed: {}", stderr.trim())
-        })));
+        return Err(Box::new(HttpResponse::InternalServerError().json(
+            serde_json::json!({
+                "error": format!("Python execution failed: {}", stderr.trim())
+            }),
+        )));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
