@@ -31,13 +31,21 @@ jobs:
     needs: check
     name: build-${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
+    env:
+      # Override rust-toolchain.toml for the pinned cross-compilation jobs.
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain || 'stable' }}
     strategy:
       matrix:
         include:
           - { target: x86_64-unknown-linux-gnu, runner: ubuntu-22.04 }
-          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-22.04 }
+          # Pin both ARM64 Linux builds: Rust 1.98 adds --fix-cortex-a53-843419,
+          # which zig cc rejects through NAPI CLI 2.x's linker wrapper.
+          # This preserves the previous build behavior, without the new erratum mitigation.
+          # Remove the pins once the linker integration supports the mitigation:
+          # https://codeberg.org/ziglang/zig/issues/36624
+          - { target: aarch64-unknown-linux-gnu, runner: ubuntu-22.04, toolchain: '1.97.1' }
           - { target: x86_64-unknown-linux-musl, runner: ubuntu-latest }
-          - { target: aarch64-unknown-linux-musl, runner: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-latest, toolchain: '1.97.1' }
           - { target: x86_64-pc-windows-msvc, runner: windows-latest }
           - { target: aarch64-pc-windows-msvc, runner: windows-latest }
           - { target: x86_64-apple-darwin, runner: macos-latest }
@@ -49,6 +57,7 @@ jobs:
         with:
           cache-key: bindings-nodejs-${{ matrix.target }}
           target: ${{ matrix.target }}
+          toolchain: ${{ matrix.toolchain || 'stable' }}
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
