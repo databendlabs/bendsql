@@ -9,6 +9,10 @@ inputs:
     description: 'the rust cache key suffix'
     required: false
     default: ''
+  toolchain:
+    description: 'the rust toolchain to install'
+    required: false
+    default: stable
   target:
     description: 'the rust target to build'
     required: false
@@ -20,7 +24,7 @@ runs:
     - uses: dtolnay/rust-toolchain@stable
       id: toolchain
       with:
-        toolchain: stable
+        toolchain: ${{ inputs.toolchain }}
         targets: ${{ inputs.target }}
 
     - name: Setup sccache
