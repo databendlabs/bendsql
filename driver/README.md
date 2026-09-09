@@ -178,31 +178,22 @@ let inserted = insert.end().await?;
 `Value::Timestamp` stores a `chrono::DateTime<chrono_tz::Tz>` in the session
 timezone, and `Value::TimestampTz` stores a `chrono::DateTime<chrono::FixedOffset>`
 with the offset returned by the server. Converting `TIMESTAMP` to
-`chrono::NaiveDateTime` continues to return the **UTC** datetime, not the local
-wall-clock time. Converting a `NaiveDateTime` into `Value` interprets it as UTC.
+`chrono::NaiveDateTime` returns the **UTC** datetime, not the local wall-clock
+time. Converting a `NaiveDateTime` into `Value` interprets it as UTC. Row
+conversion supports `DateTime<Tz>` and `DateTime<FixedOffset>` directly.
 
 Both HTTP and Arrow decoding preserve microseconds at the SQL timestamp bounds,
-including `9999-12-31 23:59:59.999999` UTC. A valid UTC instant may display in local
-year 10000 after timezone conversion. Arrow decoding no longer clamps timestamps
-to Jiff's smaller range. The driver's wider representation does not expand the
-server's accepted UTC timestamp range.
+including `9999-12-31 23:59:59.999999` UTC. A valid UTC instant may display in
+local year 10000 after timezone conversion; the driver's wider representation
+does not expand the server's accepted UTC timestamp range.
 
-**Rust API migration:** the timestamp variants and `ResultFormatSettings::timezone`
-now use Chrono types instead of Jiff. Use `format(...)` instead of `strftime(...)`,
-`timestamp_micros()` instead of `timestamp().as_microsecond()`, and `chrono_tz::Tz`
-for session timezones. The `zoned_to_chrono_datetime` and
-`zoned_to_chrono_fixed_offset` helpers have been removed: the values already are
-Chrono datetimes. Row conversion supports `DateTime<Tz>` and `DateTime<FixedOffset>`
-directly.
+HTTP timestamps carry no offset, so decoding resolves DST by taking the earlier
+instant in a fold and shifting forward by the offset change in a gap. Arrow
+timestamps identify the instant unambiguously.
 
-HTTP timestamps contain no offset, so decoding retains compatible DST
-resolution: the earlier instant in a fold, and shifting forward by the offset
-change in a gap. Arrow timestamps identify the instant unambiguously. Timezone
-calculations now follow `chrono-tz`; far-future DST results may differ from Jiff.
-
-Python's native `datetime` still only supports years 1 through 9999; for extended
-years, select `to_string(value)` when using the Python binding. JavaScript `Date`
-continues to expose timestamps at millisecond precision.
+Python's native `datetime` only supports years 1 through 9999; for extended
+years, select `to_string(value)` when using the Python binding. JavaScript
+`Date` exposes timestamps at millisecond precision.
 
 ### Semi-Structured Data Types
 
