@@ -144,6 +144,18 @@ impl Connection {
         self.inner.close().await
     }
 
+    pub async fn begin(&self) -> Result<()> {
+        self.inner.begin().await
+    }
+
+    pub async fn commit(&self) -> Result<()> {
+        self.inner.commit().await
+    }
+
+    pub async fn rollback(&self) -> Result<()> {
+        self.inner.rollback().await
+    }
+
     pub fn last_query_id(&self) -> Option<String> {
         self.inner.last_query_id()
     }
@@ -669,5 +681,159 @@ mod tests {
         assert!(statement_is_dml(insert.as_ref()));
         assert!(statement_is_dml(update.as_ref()));
         assert!(!statement_is_dml(query.as_ref()));
+    }
+
+    struct MockConnection {
+        executed: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        failed_sql: Option<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl IConnection for MockConnection {
+        async fn info(&self) -> ConnectionInfo {
+            ConnectionInfo {
+                handler: "mock".to_string(),
+                host: "localhost".to_string(),
+                port: 0,
+                user: "root".to_string(),
+                catalog: None,
+                database: None,
+                warehouse: None,
+            }
+        }
+
+        fn last_query_id(&self) -> Option<String> {
+            None
+        }
+
+        async fn exec(&self, sql: &str) -> Result<i64> {
+            self.executed
+                .lock()
+                .map_err(|e| Error::IO(e.to_string()))?
+                .push(sql.to_string());
+            if self.failed_sql.as_deref() == Some(sql) {
+                return Err(Error::BadArgument(format!("failed to execute {sql}")));
+            }
+            Ok(0)
+        }
+
+        async fn kill_query(&self, _query_id: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn query_iter(&self, _sql: &str) -> Result<RowIterator> {
+            Ok(RowIterator::new(
+                std::sync::Arc::new(databend_client::schema::Schema::from_vec(vec![])),
+                Box::pin(tokio_stream::empty()),
+            ))
+        }
+
+        async fn query_iter_ext(&self, _sql: &str) -> Result<RowStatsIterator> {
+            Ok(RowStatsIterator::new(
+                std::sync::Arc::new(databend_client::schema::Schema::from_vec(vec![])),
+                Box::pin(tokio_stream::empty()),
+            ))
+        }
+
+        async fn upload_to_stage(&self, _stage: &str, _data: Reader, _size: u64) -> Result<()> {
+            Ok(())
+        }
+
+        async fn load_data(
+            &self,
+            _sql: &str,
+            _data: Reader,
+            _size: u64,
+            _method: LoadMethod,
+        ) -> Result<ServerStats> {
+            Ok(ServerStats::default())
+        }
+
+        async fn load_file(
+            &self,
+            _sql: &str,
+            _fp: &Path,
+            _method: LoadMethod,
+        ) -> Result<ServerStats> {
+            Ok(ServerStats::default())
+        }
+
+        async fn load_file_with_options(
+            &self,
+            _sql: &str,
+            _fp: &Path,
+            _file_format_options: Option<BTreeMap<&str, &str>>,
+            _copy_options: Option<BTreeMap<&str, &str>>,
+        ) -> Result<ServerStats> {
+            Ok(ServerStats::default())
+        }
+
+        async fn stream_load(
+            &self,
+            _sql: &str,
+            _data: Vec<Vec<&str>>,
+            _method: LoadMethod,
+        ) -> Result<ServerStats> {
+            Ok(ServerStats::default())
+        }
+
+        fn set_warehouse(&self, _warehouse: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn set_database(&self, _database: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn set_role(&self, _role: &str) -> Result<()> {
+            Ok(())
+        }
+
+        fn set_session(&self, _key: &str, _value: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn mock_connection(
+        failed_sql: Option<&str>,
+    ) -> (Connection, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        let executed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let connection = Connection {
+            inner: Box::new(MockConnection {
+                executed: executed.clone(),
+                failed_sql: failed_sql.map(str::to_string),
+            }),
+        };
+        (connection, executed)
+    }
+
+    #[tokio::test]
+    async fn transaction_methods_execute_control_statements() {
+        let (connection, executed) = mock_connection(None);
+
+        assert!(connection.begin().await.is_ok());
+        assert!(connection.commit().await.is_ok());
+        assert!(connection.rollback().await.is_ok());
+
+        let executed = executed
+            .lock()
+            .expect("mock execution log should not be poisoned");
+        assert_eq!(executed.as_slice(), ["BEGIN", "COMMIT", "ROLLBACK"]);
+    }
+
+    #[tokio::test]
+    async fn transaction_methods_propagate_execution_errors() {
+        let (connection, executed) = mock_connection(Some("ROLLBACK"));
+
+        let error = connection.rollback().await;
+        assert!(matches!(
+            error,
+            Err(Error::BadArgument(message)) if message == "failed to execute ROLLBACK"
+        ));
+
+        let executed = executed
+            .lock()
+            .expect("mock execution log should not be poisoned");
+        assert_eq!(executed.as_slice(), ["ROLLBACK"]);
     }
 }
