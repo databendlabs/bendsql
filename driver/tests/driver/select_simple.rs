@@ -211,6 +211,41 @@ async fn select_datetime() {
 }
 
 #[tokio::test]
+async fn select_datetime_boundaries() {
+    let conn = prepare().await;
+    let is_flight = conn.info().await.handler == "FlightSQL";
+    for (tz, expected) in [
+        (Tz::UTC, "9999-12-31 23:59:59.999999"),
+        (Tz::Asia__Shanghai, "+10000-01-01 07:59:59.999999"),
+    ] {
+        // Flight SQL currently decodes with UTC defaults, not session settings.
+        if is_flight && tz != Tz::UTC {
+            continue;
+        }
+        conn.exec(&format!("SET timezone = '{tz}'")).await.unwrap();
+        // The UTC instant stays within SQL bounds, even when its local year is 10000.
+        let row = conn
+            .query_row(
+                "SELECT to_timestamp(253402300799999999), \
+                 to_timestamp_tz('9999-12-31 23:59:59.999999 +0530')",
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let values = row.values();
+        assert_eq!(values[0].to_string(), expected);
+        assert_eq!(values[1].to_string(), "9999-12-31 23:59:59.999999 +0530");
+        let naive = NaiveDateTime::try_from(values[0].clone()).unwrap();
+        assert_eq!(naive.and_utc().timestamp_micros(), 253_402_300_799_999_999);
+        let (ts, z): (DateTime<Tz>, DateTime<chrono::FixedOffset>) = row.try_into().unwrap();
+        assert_eq!(ts.timestamp_micros(), 253_402_300_799_999_999);
+        assert_eq!(ts.timezone(), tz);
+        assert_eq!(z.timestamp_micros(), 253_402_280_999_999_999);
+        assert_eq!(z.offset().local_minus_utc(), 19800);
+    }
+}
+
+#[tokio::test]
 async fn select_decimal() {
     let conn = prepare().await;
     let row = conn

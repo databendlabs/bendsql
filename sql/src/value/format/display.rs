@@ -83,7 +83,7 @@ impl Value {
                 }
             }
             Value::Timestamp(dt) => {
-                let formatted = dt.strftime(TIMESTAMP_FORMAT);
+                let formatted = dt.format(TIMESTAMP_FORMAT);
                 if raw {
                     write!(f, "{formatted}")
                 } else {
@@ -91,7 +91,7 @@ impl Value {
                 }
             }
             Value::TimestampTz(dt) => {
-                let formatted = dt.strftime(TIMESTAMP_TIMEZONE_FORMAT);
+                let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
                 if raw {
                     write!(f, "{formatted}")
                 } else {

@@ -168,9 +168,32 @@ let inserted = insert.end().await?;
 | `DOUBLE`    | `f64`                   |
 | `DECIMAL`   | `String`                |
 | `DATE`      | `chrono::NaiveDate`     |
-| `TIMESTAMP` | `chrono::NaiveDateTime` |
+| `TIMESTAMP` | `chrono::NaiveDateTime`, `chrono::DateTime<chrono_tz::Tz>` |
+| `TIMESTAMP_TZ` | `chrono::DateTime<chrono::FixedOffset>` |
 | `VARCHAR`   | `String`                |
 | `BINARY`    | `Vec<u8>`               |
+
+### Date and timestamp representation
+
+`Value::Timestamp` stores a `chrono::DateTime<chrono_tz::Tz>` in the session
+timezone, and `Value::TimestampTz` stores a `chrono::DateTime<chrono::FixedOffset>`
+with the offset returned by the server. Converting `TIMESTAMP` to
+`chrono::NaiveDateTime` returns the **UTC** datetime, not the local wall-clock
+time. Converting a `NaiveDateTime` into `Value` interprets it as UTC. Row
+conversion supports `DateTime<Tz>` and `DateTime<FixedOffset>` directly.
+
+Both HTTP and Arrow decoding preserve microseconds at the SQL timestamp bounds,
+including `9999-12-31 23:59:59.999999` UTC. A valid UTC instant may display in
+local year 10000 after timezone conversion; the driver's wider representation
+does not expand the server's accepted UTC timestamp range.
+
+HTTP timestamps carry no offset, so decoding resolves DST by taking the earlier
+instant in a fold and shifting forward by the offset change in a gap. Arrow
+timestamps identify the instant unambiguously.
+
+Python's native `datetime` only supports years 1 through 9999; for extended
+years, select `to_string(value)` when using the Python binding. JavaScript
+`Date` exposes timestamps at millisecond precision.
 
 ### Semi-Structured Data Types
 
