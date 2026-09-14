@@ -14,14 +14,14 @@
 
 use crate::error::Result;
 use crate::Error;
-use jiff::tz::TimeZone;
+use chrono_tz::Tz;
 use serde::Deserialize;
 use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub struct ResultFormatSettings {
     pub geometry_output_format: GeometryDataType,
-    pub timezone: TimeZone,
+    pub timezone: Tz,
     pub arrow_result_version: Option<i64>,
     pub binary_output_format: BinaryFormat,
 }
@@ -31,7 +31,7 @@ impl Default for ResultFormatSettings {
         Self {
             geometry_output_format: GeometryDataType::default(),
             binary_output_format: BinaryFormat::default(),
-            timezone: TimeZone::UTC,
+            timezone: Tz::UTC,
             arrow_result_version: None,
         }
     }
@@ -43,8 +43,8 @@ impl TryFrom<&Option<QueryResultFormatSettings>> for ResultFormatSettings {
     fn try_from(settings: &Option<QueryResultFormatSettings>) -> Result<Self> {
         let settings = settings.clone().unwrap_or_default();
         let timezone = match settings.timezone {
-            None => TimeZone::UTC,
-            Some(t) => TimeZone::get(&t).map_err(|e| Error::Decode(e.to_string()))?,
+            None => Tz::UTC,
+            Some(t) => t.parse::<Tz>().map_err(|e| Error::Decode(e.to_string()))?,
         };
 
         let geometry_output_format = match settings.geometry_output_format {
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(settings.geometry_output_format, GeometryDataType::WKT);
         assert_eq!(settings.arrow_result_version, Some(2));
         assert_eq!(settings.binary_output_format, BinaryFormat::Utf8);
-        assert_eq!(settings.timezone.iana_name(), Some("Asia/Shanghai"));
+        assert_eq!(settings.timezone, Tz::Asia__Shanghai);
     }
 
     #[test]
@@ -155,7 +155,7 @@ mod tests {
         assert_eq!(settings.geometry_output_format, GeometryDataType::default());
         assert_eq!(settings.arrow_result_version, None);
         assert_eq!(settings.binary_output_format, BinaryFormat::default());
-        assert_eq!(settings.timezone.iana_name(), Some("UTC"));
+        assert_eq!(settings.timezone, Tz::UTC);
     }
 
     #[test]

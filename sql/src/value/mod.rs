@@ -20,7 +20,6 @@ mod interval;
 mod string_decoder;
 
 pub use base::{GeoValue, NumberValue, Value};
-pub use convert::{zoned_to_chrono_datetime, zoned_to_chrono_fixed_offset};
 pub use interval::Interval;
 
 use base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};

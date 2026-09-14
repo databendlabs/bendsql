@@ -316,19 +316,19 @@ impl ToNapiValue for Value<'_> {
             }
             databend_driver::Value::Timestamp(dt) => {
                 let mut js_date = std::ptr::null_mut();
-                let millis = dt.timestamp().as_millisecond() as f64;
+                let millis = dt.timestamp_millis() as f64;
                 check_status!(
                     unsafe { sys::napi_create_date(env, millis, &mut js_date) },
-                    "Failed to convert jiff timestamp into napi value",
+                    "Failed to convert timestamp into napi value",
                 )?;
                 Ok(js_date)
             }
             databend_driver::Value::TimestampTz(dt) => {
                 let mut js_date = std::ptr::null_mut();
-                let millis = dt.timestamp().as_millisecond() as f64;
+                let millis = dt.timestamp_millis() as f64;
                 check_status!(
                     unsafe { sys::napi_create_date(env, millis, &mut js_date) },
-                    "Failed to convert jiff timestamp into napi value",
+                    "Failed to convert timestamp_tz into napi value",
                 )?;
                 Ok(js_date)
             }

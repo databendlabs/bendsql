@@ -96,11 +96,11 @@ impl Value {
                 }
             }
             Value::Timestamp(dt) => {
-                let s = dt.strftime(TIMESTAMP_FORMAT).to_string();
+                let s = dt.format(TIMESTAMP_FORMAT).to_string();
                 Self::write_string(bytes, &s, raw);
             }
             Value::TimestampTz(dt) => {
-                let s = dt.strftime(TIMESTAMP_TIMEZONE_FORMAT).to_string();
+                let s = dt.format(TIMESTAMP_TIMEZONE_FORMAT).to_string();
                 Self::write_string(bytes, &s, raw);
             }
             Value::Date(i) => {

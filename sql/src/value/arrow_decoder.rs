@@ -25,6 +25,7 @@ use arrow_array::{
     UInt8Array,
 };
 use arrow_schema::{DataType as ArrowDataType, Field as ArrowField, TimeUnit};
+use chrono::{DateTime, FixedOffset};
 use databend_client::schema::{
     DecimalSize, ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
     ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
@@ -33,7 +34,6 @@ use databend_client::schema::{
 };
 use databend_client::ResultFormatSettings;
 use ethnum::i256;
-use jiff::{tz, Timestamp};
 use jsonb::RawJsonb;
 
 /// The in-memory representation of the MonthDayMicros variant of the "Interval" logical type.
@@ -45,17 +45,6 @@ struct months_days_micros(pub i128);
 const MICROS_MASK: i128 = 0xFFFFFFFFFFFFFFFF;
 /// Mask for extracting the middle 32 bits (days or months).
 const DAYS_MONTHS_MASK: i128 = 0xFFFFFFFF;
-
-// 9999-12-30T22:00:00Z
-// note: max for jiff is 253402207200999999, 253402207200000000 if for compatible with old databend-query
-const TIMESTAMP_MAX: i64 = 253402207200000000;
-// -009999-01-02T01:59:59Z
-const TIMESTAMP_MIN: i64 = -377705023201000000;
-
-// required by jiff
-fn clamp_ts(ts: i64) -> i64 {
-    ts.clamp(TIMESTAMP_MIN, TIMESTAMP_MAX)
-}
 
 impl months_days_micros {
     #[inline]
@@ -140,16 +129,16 @@ impl
                     match array.as_any().downcast_ref::<Decimal128Array>() {
                         Some(array) => {
                             let v = array.value(seq);
-                            let unix_ts = clamp_ts(v as u64 as i64);
+                            let unix_ts = v as u64 as i64;
                             let offset = (v >> 64) as i32;
-                            let offset = tz::Offset::from_seconds(offset).map_err(|e| {
-                                Error::Parsing(format!("invalid offset: {offset}, {e}"))
+                            let offset = FixedOffset::east_opt(offset).ok_or_else(|| {
+                                Error::Parsing(format!("invalid offset: {offset}"))
                             })?;
-                            let time_zone = tz::TimeZone::fixed(offset);
-                            let timestamp = Timestamp::from_microsecond(unix_ts).map_err(|e| {
-                                Error::Parsing(format!("Invalid timestamp_micros {unix_ts}: {e}"))
-                            })?;
-                            Ok(Value::TimestampTz(timestamp.to_zoned(time_zone)))
+                            let timestamp =
+                                DateTime::from_timestamp_micros(unix_ts).ok_or_else(|| {
+                                    Error::Parsing(format!("Invalid timestamp_micros {unix_ts}"))
+                                })?;
+                            Ok(Value::TimestampTz(timestamp.with_timezone(&offset)))
                         }
                         None => Err(ConvertError::new("Interval", format!("{array:?}")).into()),
                     }
@@ -387,13 +376,14 @@ impl
                                 ))
                                 .into());
                         }
-                        let ts = clamp_ts(array.value(seq));
+                        let ts = array.value(seq);
                         match tz {
                             None => {
-                                let timestamp = Timestamp::from_microsecond(ts).map_err(|e| {
-                                    Error::Parsing(format!("Invalid timestamp_micros {ts}: {e}"))
-                                })?;
-                                let dt = timestamp.to_zoned(settings.timezone.clone());
+                                let timestamp =
+                                    DateTime::from_timestamp_micros(ts).ok_or_else(|| {
+                                        Error::Parsing(format!("Invalid timestamp_micros {ts}"))
+                                    })?;
+                                let dt = timestamp.with_timezone(&settings.timezone);
                                 Ok(Value::Timestamp(dt))
                             }
                             Some(tz) => Err(ConvertError::new("timestamp", format!("{array:?}"))
