@@ -43,6 +43,7 @@ pub use presign::presign_upload_to_stage;
 pub use presign::PresignedResponse;
 pub use response::QueryStats;
 pub use response::SchemaField;
+pub use settings::BinaryFormat;
 pub use settings::GeometryDataType;
 pub use settings::QueryResultFormatSettings;
 pub use settings::ResultFormatSettings;
