@@ -26,10 +26,14 @@ mod trace;
 mod web;
 
 use std::io::{stdin, IsTerminal};
+#[cfg(unix)]
+use std::slice;
 
 use anyhow::{anyhow, Context, Result};
 use clap::{ArgAction, CommandFactory, Parser};
 use databend_client::SensitiveString;
+#[cfg(unix)]
+use killmyargv::argv_addrs;
 use log::info;
 use once_cell::sync::Lazy;
 
@@ -210,6 +214,22 @@ pub async fn main() -> Result<()> {
     let config = Config::load();
 
     let args = Args::parse();
+
+    // Do not expose command-line credentials through `ps`/`/proc`.
+    #[cfg(unix)]
+    if args.password.is_some() || args.dsn.is_some() {
+        if let Ok((start, end)) = argv_addrs() {
+            // `argv` is a contiguous buffer on the supported Unix platforms.
+            // Only overwrite that buffer, not the adjacent environment strings.
+            unsafe {
+                let len = end.offset_from(start) as usize + 1;
+                let argv = slice::from_raw_parts_mut(start, len);
+                argv.fill(0);
+                argv[..b"bendsql\0".len()].copy_from_slice(b"bendsql\0");
+            }
+        }
+    }
+
     let mut cmd = Args::command();
     if args.help {
         cmd.print_help()?;
