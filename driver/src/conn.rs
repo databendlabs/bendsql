@@ -72,6 +72,7 @@ pub trait IConnection: Send + Sync {
     }
 
     async fn exec(&self, sql: &str) -> Result<i64>;
+
     async fn kill_query(&self, query_id: &str) -> Result<()>;
     async fn query_iter(&self, sql: &str) -> Result<RowIterator>;
     async fn query_iter_ext(&self, sql: &str) -> Result<RowStatsIterator>;
