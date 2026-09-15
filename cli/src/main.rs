@@ -26,13 +26,13 @@ mod trace;
 mod web;
 
 use std::io::{stdin, IsTerminal};
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::slice;
 
 use anyhow::{anyhow, Context, Result};
 use clap::{ArgAction, CommandFactory, Parser};
 use databend_client::SensitiveString;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use killmyargv::argv_addrs;
 use log::info;
 use once_cell::sync::Lazy;
@@ -216,7 +216,7 @@ pub async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Do not expose command-line credentials through `ps`/`/proc`.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     if args.password.is_some() || args.dsn.is_some() {
         if let Ok((start, end)) = argv_addrs() {
             // `argv` is a contiguous buffer on the supported Unix platforms.
