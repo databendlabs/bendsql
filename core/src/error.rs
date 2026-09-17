@@ -16,6 +16,24 @@ use crate::error_code::ErrorCode;
 use reqwest::StatusCode;
 use std::error::Error as StdError;
 
+const SSLMODE_DISABLE_HINT: &str = "the server may be using plain HTTP; if TLS is not enabled on the server, set sslmode=disable in the DSN";
+
+pub(crate) fn suggests_sslmode_disable(e: &reqwest::Error) -> bool {
+    let mut current = e.source();
+    while let Some(source) = current {
+        let message = source.to_string();
+        let rustls_plain_http =
+            message.contains("InvalidContentType") && message.contains("received corrupt message");
+        let native_tls_plain_http = message.contains("ssl3_get_record:wrong version number")
+            || message == "record overflow";
+        if rustls_plain_http || native_tls_plain_http {
+            return true;
+        }
+        current = source.source();
+    }
+    false
+}
+
 #[derive(Debug, Clone)]
 pub enum RequestKind {
     QueryStart,
@@ -265,6 +283,7 @@ impl From<serde_json::Error> for Error {
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
         let e = e.without_url();
+        let add_sslmode_hint = suggests_sslmode_disable(&e);
         let mut source_chain = String::new();
         let mut current = e.source();
         if current.is_some() {
@@ -279,7 +298,12 @@ impl From<reqwest::Error> for Error {
             source_chain.push_str(&source.to_string());
             current = source.source();
         }
-        Error::Request(format!("reqwest::Error: {}{}", e, source_chain))
+        let hint = if add_sslmode_hint {
+            format!(", hint={SSLMODE_DISABLE_HINT}")
+        } else {
+            String::new()
+        };
+        Error::Request(format!("reqwest::Error: {}{}{}", e, source_chain, hint))
     }
 }
 
