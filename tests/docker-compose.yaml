@@ -1,6 +1,10 @@
 services:
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # Official MinIO registries no longer allow anonymous pulls. Pin the
+    # Chainguard image by digest to keep integration tests reproducible.
+    image: cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1
+    # The image defaults to a non-root user that cannot write to ./data.
+    user: "0:0"
     command: server /data
     ports:
       - "9000:9000"
