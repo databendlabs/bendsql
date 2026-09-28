@@ -223,6 +223,34 @@ impl Connection {
         self.inner.load_file(sql, fp, method).await
     }
 
+    /// Execute a query and write its rows to a local CSV or TSV file.
+    pub async fn unload_file(&self, sql: &str, fp: &Path, format: &str) -> Result<()> {
+        let delimiter = match format.to_ascii_lowercase().as_str() {
+            "csv" => b',',
+            "tsv" => b'\t',
+            _ => {
+                return Err(Error::BadArgument(format!(
+                    "unsupported unload format: {format}; expected csv or tsv"
+                )))
+            }
+        };
+
+        let file = std::fs::File::create(fp)?;
+        let mut writer = csv::WriterBuilder::new()
+            .delimiter(delimiter)
+            .from_writer(file);
+        let mut rows = self.query_iter(sql).await?;
+        while let Some(row) = rows.next().await {
+            let row = row?;
+            let record = row.into_iter().map(|value| value.to_string());
+            writer
+                .write_record(record)
+                .map_err(|err| Error::IO(err.to_string()))?
+        }
+        writer.flush()?;
+        Ok(())
+    }
+
     pub async fn load_file_with_options(
         &self,
         sql: &str,

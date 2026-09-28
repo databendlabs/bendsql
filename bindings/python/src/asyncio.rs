@@ -241,4 +241,21 @@ impl AsyncDatabendConnection {
             Ok(ServerStats::new(ss))
         })
     }
+
+    #[pyo3(signature = (sql, fp, format=None))]
+    pub fn unload_file<'p>(
+        &'p self,
+        py: Python<'p>,
+        sql: String,
+        fp: String,
+        format: Option<String>,
+    ) -> PyResult<Bound<'p, PyAny>> {
+        let this = self.0.clone();
+        future_into_py(py, async move {
+            this.unload_file(&sql, Path::new(&fp), format.as_deref().unwrap_or("csv"))
+                .await
+                .map_err(DriverError::new)?;
+            Ok(())
+        })
+    }
 }

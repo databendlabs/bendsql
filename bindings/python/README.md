@@ -381,6 +381,7 @@ class AsyncDatabendConnection:
     async def load_file(
         self, sql: str, file: str, method: str = None
     ) -> ServerStats: ...
+    async def unload_file(self, sql: str, file: str, format: str = "csv") -> None: ...
 ```
 
 ### BlockingDatabendClient
@@ -421,6 +422,7 @@ class BlockingDatabendConnection:
         format_option: dict = None,
         copy_options: dict = None,
     ) -> ServerStats: ...
+    def unload_file(self, sql: str, file: str, format: str = "csv") -> None: ...
 ```
 
 ### BlockingDatabendCursor
