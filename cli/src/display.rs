@@ -187,12 +187,14 @@ impl FormatDisplay<'_> {
             return Ok(());
         }
 
-        if self.kind == QueryKind::Explain {
+        let schema = self.data.schema();
+        // A plan is one text column, other EXPLAIN results such as
+        // `EXPLAIN PERF (format = 'table')` have several columns and are shown as tables.
+        if self.kind == QueryKind::Explain && schema.fields().len() == 1 {
             print_explain(&rows)?;
             return Ok(());
         }
 
-        let schema = self.data.schema();
         if self.kind == QueryKind::ShowCreate {
             print_expanded(schema, &rows)?;
             return Ok(());
