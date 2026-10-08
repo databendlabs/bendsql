@@ -25,7 +25,7 @@ use crate::presign::{presign_upload_to_stage, PresignMode, PresignedResponse, Re
 use crate::response::LoadResponse;
 use crate::stage::StageLocation;
 use crate::{
-    error::{Error, RequestKind, Result},
+    error::{suggests_sslmode_disable, Error, RequestKind, Result},
     request::{PaginationConfig, QueryRequest, StageAttachmentConfig},
     response::QueryResponse,
     session::SessionState,
@@ -177,7 +177,9 @@ impl APIClient {
     }
 
     fn retry_reason_for_reqwest(err: &ReqwestError) -> Option<&'static str> {
-        if err.is_timeout() {
+        if suggests_sslmode_disable(err) {
+            None
+        } else if err.is_timeout() {
             Some("request timeout")
         } else if err.is_connect() {
             Some("connection error")
@@ -1540,6 +1542,40 @@ mod test {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    #[cfg(any(feature = "rustls", feature = "native-tls"))]
+    #[tokio::test]
+    async fn plain_http_endpoint_suggests_disabling_sslmode() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0_u8; 1024];
+                let _ = stream.read(&mut request).await;
+                let _ = stream
+                    .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+                    .await;
+            }
+        });
+
+        let dsn =
+            format!("databend://root:@127.0.0.1:{port}/default?retry_count=3&retry_delay_secs=0");
+        let err = match APIClient::new(&dsn, None).await {
+            Ok(_) => panic!("expected TLS connection to the plain HTTP endpoint to fail"),
+            Err(err) => err,
+        };
+        server.abort();
+        let message = err.to_string();
+
+        assert!(
+            message.contains("set sslmode=disable in the DSN"),
+            "{message}"
+        );
+        assert!(!message.contains("retry_times="), "{message}");
+    }
 
     #[tokio::test]
     async fn parse_dsn() -> Result<()> {
