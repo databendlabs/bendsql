@@ -15,6 +15,8 @@
 #![allow(clippy::upper_case_acronyms)]
 
 mod args;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod argv_mask;
 mod ast;
 mod config;
 mod display;
@@ -210,6 +212,9 @@ pub async fn main() -> Result<()> {
     let config = Config::load();
 
     let args = Args::parse();
+    // Hide command-line credentials from `ps` / `/proc/<pid>/cmdline`.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    argv_mask::mask_credentials(Args::command());
     let mut cmd = Args::command();
     if args.help {
         cmd.print_help()?;
