@@ -226,6 +226,23 @@ impl BlockingDatabendConnection {
         Ok(ServerStats::new(ret))
     }
 
+    #[pyo3(signature = (sql, fp, format=None))]
+    pub fn unload_file(
+        &self,
+        py: Python,
+        sql: String,
+        fp: String,
+        format: Option<String>,
+    ) -> PyResult<()> {
+        let this = self.0.clone();
+        wait_for_future(py, async move {
+            this.unload_file(&sql, Path::new(&fp), format.as_deref().unwrap_or("csv"))
+                .await
+                .map_err(DriverError::new)
+        })?;
+        Ok(())
+    }
+
     pub fn last_query_id(&self) -> Option<String> {
         self.0.last_query_id()
     }
