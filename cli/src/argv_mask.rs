@@ -180,7 +180,26 @@ fn is_sensitive_key(key: &[u8]) -> bool {
 
 /// Byte ranges of the password and sensitive query values in a DSN like
 /// `databend://user:pass@host:8000/db?access_token=xxx`.
+///
+/// The DSN is parsed with `url::Url::parse`, which drops ASCII tab, CR and LF
+/// anywhere in the input, so `access_\ttoken=x` still sets `access_token`.
+/// Match against the DSN with those bytes removed, then map the ranges back
+/// to the original bytes (covering any removed bytes inside them).
 fn dsn_secret_ranges(dsn: &[u8]) -> Vec<Range<usize>> {
+    let (normalized, origin): (Vec<u8>, Vec<usize>) = dsn
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| !matches!(b, b'\t' | b'\r' | b'\n'))
+        .map(|(i, &b)| (b, i))
+        .unzip();
+    normalized_dsn_secret_ranges(&normalized)
+        .into_iter()
+        .filter(|r| !r.is_empty())
+        .map(|r| origin[r.start]..origin[r.end - 1] + 1)
+        .collect()
+}
+
+fn normalized_dsn_secret_ranges(dsn: &[u8]) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let auth_start = find(dsn, b"://").map_or(0, |p| p + 3);
     let head_end = dsn[auth_start..]
@@ -333,6 +352,7 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::*;
+    use crate::args::ConnectionArgs;
     use crate::Args;
 
     /// Applies `plan` to `argv` and returns the resulting arguments. Also
@@ -422,6 +442,31 @@ mod tests {
             ["bendsql", "--dsn", "databend+flight://u@h?access%5Ftoken=*"]
         );
         let argv = ["bendsql", "--dsn", "databend://u@h:8000/db?role=r"];
+        assert_eq!(masked(&argv), argv);
+    }
+
+    #[test]
+    fn masks_dsn_with_url_stripped_whitespace() {
+        // `url::Url::parse` drops tab/CR/LF, so these still set the secrets.
+        for ws in ["\t", "\r", "\n"] {
+            let dsn =
+                format!("databend://u:p{ws}w@h/?access_{ws}token=sec{ws}ret&{ws}session_token=s");
+            let parsed = ConnectionArgs::from_dsn(&dsn).unwrap();
+            assert_eq!(parsed.password.inner(), "pw");
+            assert_eq!(parsed.args["access_token"], "secret");
+            assert_eq!(parsed.args["session_token"], "s");
+            assert_eq!(
+                masked(&["bendsql", "--dsn", &dsn]),
+                [
+                    "bendsql",
+                    "--dsn",
+                    format!("databend://u:***@h/?access_{ws}token=*******&{ws}session_token=*")
+                        .as_str()
+                ]
+            );
+        }
+        // Not a DSN: `--set` keys are taken literally.
+        let argv = ["bendsql", "--set", "access_\ttoken=t"];
         assert_eq!(masked(&argv), argv);
     }
 
