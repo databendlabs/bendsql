@@ -360,11 +360,6 @@ impl Session {
         let mut agent = AgentSession::new(config, backend);
         agent.mode = mode;
         self.agent = Some(agent);
-        println!("{}", crate::agent::HELP);
-        match self.agent.as_ref().unwrap().backend_summary() {
-            Ok(summary) => println!("{summary}"),
-            Err(error) => eprintln!("AI configuration warning: {error}"),
-        }
         let config = Builder::new()
             .max_history_size(100)?
             .completion_prompt_limit(10)
@@ -467,9 +462,6 @@ impl Session {
                                 match agent.select_backend(argument) {
                                     Ok(()) => {
                                         println!("Backend switched. Conversation reset; query memory retained.");
-                                        if let Ok(summary) = agent.backend_summary() {
-                                            println!("{summary}");
-                                        }
                                     }
                                     Err(error) => eprintln!("Backend unchanged: {error}"),
                                 }

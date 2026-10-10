@@ -17,8 +17,8 @@ use async_trait::async_trait;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 use super::acp::AcpBackend;
-use super::cli::CliBackend;
-use super::config::{AgentConfig, BackendConfig, ENV_BACKEND};
+use super::cli::{resolve_executable, CliBackend};
+use super::config::{AgentConfig, AgentSettings, BackendConfig, CliAdapter, ENV_BACKEND};
 use super::llm::{LlmClient, Message};
 
 /// Backends transport messages only. Query evidence and bounded conversation
@@ -27,6 +27,40 @@ use super::llm::{LlmClient, Message};
 #[async_trait]
 pub trait ChatBackend: Send + Sync {
     async fn complete(&self, messages: &[Message]) -> Result<String>;
+}
+
+pub fn detect_local(config: &AgentConfig) -> Result<String> {
+    let settings = config.settings()?;
+    if !cfg!(unix) {
+        bail!("Local coding CLI backends currently require Unix; select a configured HTTP backend. SQL remains available.");
+    }
+    detect_local_with(settings, |command| resolve_executable(command).is_ok())
+        .ok_or_else(|| anyhow!("No local coding CLI found. Install/login codex, Claude Code (claude), or pi, or select a configured backend with --backend or /backend. SQL remains available."))
+}
+
+fn detect_local_with(
+    settings: &AgentSettings,
+    mut available: impl FnMut(&str) -> bool,
+) -> Option<String> {
+    for (name, expected, program) in [
+        ("local-codex", CliAdapter::Codex, "codex"),
+        ("local-claude", CliAdapter::ClaudeCode, "claude"),
+        ("local-pi", CliAdapter::Pi, "pi"),
+    ] {
+        let backend = settings.backend(name)?;
+        if let BackendConfig::Cli {
+            adapter,
+            command,
+            allow_external_agent: true,
+            ..
+        } = backend.as_ref()
+        {
+            if *adapter == expected && available(command.as_deref().unwrap_or(program)) {
+                return Some(name.into());
+            }
+        }
+    }
+    None
 }
 
 pub fn build(config: &AgentConfig, name: &str) -> Result<Box<dyn ChatBackend>> {
@@ -133,6 +167,63 @@ fn insert_header(map: &mut HeaderMap, name: &str, value: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::config::Config;
+
+    #[test]
+    fn local_discovery_is_ordered_and_never_selects_env_or_amp() {
+        let settings = AgentSettings::default();
+        for (present, expected) in [
+            (vec!["codex", "claude", "pi"], Some("local-codex")),
+            (vec!["claude", "pi"], Some("local-claude")),
+            (vec!["pi"], Some("local-pi")),
+            (vec!["amp"], None),
+            (vec![], None),
+        ] {
+            let mut checked = Vec::new();
+            let result = detect_local_with(&settings, |command| {
+                checked.push(command.to_owned());
+                present.contains(&command)
+            });
+            assert_eq!(result.as_deref(), expected);
+            assert_eq!(checked[0], "codex");
+            assert!(!checked.iter().any(|p| p == "amp"));
+        }
+    }
+
+    #[test]
+    fn local_discovery_honors_cli_overrides_but_never_selects_configured_http_implicitly() {
+        let config: Config = toml::from_str(
+            r#"
+[agent.backends.local-codex]
+command = "/custom/codex"
+[agent.backends.local-claude]
+allow_external_agent = false
+"#,
+        )
+        .unwrap();
+        let settings = config.agent.settings().unwrap();
+        assert_eq!(
+            detect_local_with(settings, |p| p == "/custom/codex").as_deref(),
+            Some("local-codex")
+        );
+        assert_eq!(
+            detect_local_with(settings, |p| p == "claude" || p == "pi").as_deref(),
+            Some("local-pi")
+        );
+        let config: Config = toml::from_str(
+            r#"
+[agent.backends.local-codex]
+type = "openai-compatible"
+base_url = "http://localhost/v1"
+model = "m"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            detect_local_with(config.agent.settings().unwrap(), |_| true).as_deref(),
+            Some("local-claude")
+        );
+        assert!(detect_local(&AgentConfig::invalid()).is_err());
+    }
 
     #[test]
     fn validates_headers_without_exposing_values() {

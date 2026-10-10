@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn unrecognized_completed_sql_needs_explicit_routing() {
         for input in [
-            "SELCT 1;",
+            "INVALID SQL;",
             "SELECT * FROM;",
             "GET file://result @stage",
             "PUT file://input @stage",

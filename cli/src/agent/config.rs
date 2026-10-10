@@ -132,8 +132,8 @@ fn builtin_backend(name: &str) -> Option<BackendConfig> {
         command: None,
         model: None,
         env_allowlist: Vec::new(),
-        // Explicit selection of an installed CLI is the opt-in. Never selected
-        // automatically just because an executable exists on PATH.
+        // --agent opts into local CLI discovery when no backend is selected.
+        // Discovery checks executables only; a question starts the process.
         allow_external_agent: true,
     })
 }
@@ -174,15 +174,9 @@ impl AgentConfig {
         Ok(&self.settings)
     }
 
-    pub fn selected(&self) -> String {
-        self.settings.backend.clone().unwrap_or_else(|| {
-            if self.settings.backends.is_empty() {
-                ENV_BACKEND.into()
-            } else {
-                // Do not implicitly send data to an arbitrary named backend or env.
-                String::new()
-            }
-        })
+    pub fn selected(&self) -> Option<String> {
+        // Absence means local CLI discovery, never implicit HTTP/env selection.
+        self.settings.backend.clone()
     }
 }
 
@@ -243,11 +237,11 @@ mod tests {
     use crate::config::Config;
 
     #[test]
-    fn builtin_clis_need_no_configuration_and_are_never_auto_selected() {
+    fn builtin_clis_need_no_configuration_and_selection_defaults_to_discovery() {
         let config = AgentConfig::default();
         let settings = config.settings().unwrap();
         assert!(settings.backends.is_empty());
-        assert_eq!(config.selected(), ENV_BACKEND);
+        assert_eq!(config.selected(), None);
         for (name, expected) in [
             ("local-codex", CliAdapter::Codex),
             ("codex", CliAdapter::Codex),
@@ -371,7 +365,7 @@ max_tokens = 1024
 "#,
         )
         .unwrap();
-        assert_eq!(config.agent.selected(), "private-api");
+        assert_eq!(config.agent.selected().as_deref(), Some("private-api"));
         assert_eq!(config.agent.settings().unwrap().timeout_secs, 30);
         let debug = format!("{config:?}");
         for secret in [
@@ -414,8 +408,8 @@ model = "model"
 "#,
         )
         .unwrap();
-        assert_eq!(config.agent.selected(), "");
-        assert_eq!(AgentConfig::default().selected(), ENV_BACKEND);
+        assert_eq!(config.agent.selected(), None);
+        assert_eq!(AgentConfig::default().selected(), None);
     }
 
     #[test]

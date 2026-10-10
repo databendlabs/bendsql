@@ -181,6 +181,16 @@ prompt = ":) "
 Start the opt-in interactive session with `bendsql --agent`. It requires a terminal
 on both stdin and stdout and cannot be combined with batch execution, `--check`,
 `--time`, data loading flags, or `--ui`. The ordinary SQL REPL is unchanged.
+The session starts directly at its mode prompt; usage is available through `/help`
+and backend details through `/backend`, rather than printed at startup.
+
+Without an explicit backend, BendSQL checks installed executables in order:
+**`codex` → `claude` (Claude Code) → `pi`**. `--backend` takes precedence over
+`agent.backend` in the config file; either explicit selection bypasses discovery.
+No model process starts until a question is submitted. Missing all three CLIs
+produces an actionable error without blocking SQL. Amp remains explicitly selectable,
+not an automatic candidate. Merely defining HTTP profiles or setting legacy model
+environment variables does not select them.
 
 The session has three modes, sharing the same query memory and conversation:
 
@@ -252,22 +262,23 @@ history is cleared while query evidence is retained. Switching back does not
 restore the old conversation. `/clear` clears both kinds of context and drops the
 backend client; the selected name remains unchanged.
 
-The reserved backend `env` uses the original environment-variable configuration.
-When no named backends and no selection are configured, it is the default:
+The reserved backend `env` explicitly uses the original environment-variable
+configuration; it is **not** the default backend:
 
 ```bash
 export BENDSQL_AGENT_BASE_URL='https://your-model-service.example/v1'
 export BENDSQL_AGENT_MODEL='your-model-name'
 # Optional for services that require authentication; do not pass keys in the URL.
 export BENDSQL_AGENT_API_KEY='your-api-key'
-bendsql --agent
+bendsql --agent --backend env
 ```
 
 For a named backend, legacy `BENDSQL_AGENT_*` variables do not override its URL,
-model or credentials. Select `env` explicitly to use them. Declaring named backends
-without selecting one requires an explicit choice; there is no implicit selection
-or fallback. Invalid AI configuration disables AI without resetting valid database
-configuration. Unreadable or syntactically invalid config files use SQL defaults
+model or credentials. Select `env` explicitly to use them. Declaring profiles without
+selecting one leaves local CLI discovery active; it never implicitly selects an HTTP
+profile. Once a backend has been selected, authentication, configuration and request
+failures do not trigger another backend. Invalid AI configuration disables AI without
+resetting valid database configuration. Unreadable or syntactically invalid config files use SQL defaults
 and disable AI; diagnostics do not print source lines that might contain secrets.
 
 The base URL is extended with `/chat/completions`. Remote services require HTTPS;
@@ -289,15 +300,17 @@ text answers without streaming and never exposes a BendSQL query execution tool 
 
 Local CLI invocation means starting an installed program, not local model inference.
 These are trusted external agents, with their own authentication, file access and
-service retention policies. **Explicitly selecting a built-in CLI opts into running
-it under those policies.** Neither the temporary directory nor an environment
+service retention policies. **Entering `--agent` opts into ordered local CLI discovery
+unless overridden; submitting a question runs the selected trusted program under
+those policies.** Neither the temporary directory nor an environment
 allowlist is an OS security sandbox. Codex can still use tools in its read-only sandbox; BendSQL
 does not provide a SQL execution tool or execute SQL generated in an answer.
 
 Codex, Claude Code, Pi and Amp are built in: **no backend configuration tables are needed**.
-Install and authenticate the CLI, then select it:
+Install and authenticate the CLI, then use default discovery or select one:
 
 ```bash
+bendsql --agent  # codex, then claude, then pi
 bendsql --agent --backend local-claude
 bendsql --agent --backend local-codex
 bendsql --agent --backend local-pi
@@ -311,8 +324,11 @@ Inside the session, `/backend` lists built-in and custom names. Use
 `/backend claude`, `/backend codex`, `/backend pi`, or `/backend amp` to select one.
 Selection validates the executable without starting a model request; the program
 starts only when a question is submitted. Missing CLIs produce an error,
-never a switch to another service. Existing HTTP/env defaults remain unchanged:
-BendSQL never automatically selects a CLI just because it is installed.
+never a switch to another service. Default discovery checks configured built-in
+command overrides as well as PATH, skips disabled/non-CLI profiles, and fixes the
+selected backend before making a request. Authentication/request failures and
+`/clear` do not advance to another provider. A brief context-sharing notice is shown
+before the first question to a backend, not a full usage banner at startup.
 
 To set a default, only the selection is needed:
 

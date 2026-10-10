@@ -76,8 +76,9 @@ pub struct AgentSession {
     pub memory: Memory,
     conversation: Conversation,
     config: AgentConfig,
-    selected: String,
+    selected: Option<String>,
     backend: Option<Box<dyn ChatBackend>>,
+    notice_shown: bool,
 }
 
 impl Default for AgentSession {
@@ -88,7 +89,9 @@ impl Default for AgentSession {
 
 impl AgentSession {
     pub fn new(config: AgentConfig, selected: Option<String>) -> Self {
-        let selected = selected.unwrap_or_else(|| config.selected());
+        let selected = selected
+            .or_else(|| config.selected())
+            .or_else(|| backend::detect_local(&config).ok());
         Self {
             mode: InteractionMode::default(),
             memory: Memory::default(),
@@ -96,6 +99,7 @@ impl AgentSession {
             config,
             selected,
             backend: None,
+            notice_shown: false,
         }
     }
 
@@ -107,11 +111,16 @@ impl AgentSession {
 
     pub fn backend_summary(&self) -> Result<String> {
         let settings = self.config.settings()?;
-        let backend = settings.backend(&self.selected);
-        let current = if self.selected == ENV_BACKEND || backend.is_some() {
-            &self.selected
+        let detected = self
+            .selected
+            .clone()
+            .or_else(|| backend::detect_local(&self.config).ok());
+        let name = detected.as_deref().unwrap_or("");
+        let backend = settings.backend(name);
+        let current = if name == ENV_BACKEND || backend.is_some() {
+            name
         } else {
-            "(not configured)"
+            "(no local CLI available; select a backend)"
         };
         let names = settings
             .backends
@@ -142,7 +151,7 @@ impl AgentSession {
         } else {
             ""
         };
-        Ok(format!("Current backend: {current}\nAvailable backends: {names}\nBuilt-in local-claude/local-codex/local-pi/local-amp use installed CLIs (aliases: claude, claude-code, codex, pi, amp). Selecting one explicitly opts into running that external program.\nenv uses BENDSQL_AGENT_BASE_URL, BENDSQL_AGENT_MODEL and optional BENDSQL_AGENT_API_KEY.{notice}{retention}"))
+        Ok(format!("Current backend: {current}\nAvailable backends: {names}\nDefault discovery: codex, then claude, then pi. Explicit --backend/agent.backend selection takes precedence; runtime failures never switch services.\nBuilt-in aliases: claude, claude-code, codex, pi, amp. env explicitly uses BENDSQL_AGENT_BASE_URL, BENDSQL_AGENT_MODEL and optional BENDSQL_AGENT_API_KEY.{notice}{retention}"))
     }
 
     pub fn select_backend(&mut self, name: &str) -> Result<()> {
@@ -150,7 +159,8 @@ impl AgentSession {
         // Building a backend must not contact a service or start a process.
         let backend = backend::build(&self.config, name)?;
         self.backend = Some(backend);
-        self.selected = name.into();
+        self.selected = Some(name.into());
+        self.notice_shown = false;
         self.conversation.clear();
         Ok(())
     }
@@ -162,9 +172,32 @@ impl AgentSession {
         if question.len() > MAX_TEXT_BYTES {
             bail!("Question exceeds the 8 KiB limit; please shorten it");
         }
-        // Initialize lazily: configuration failures must not block SQL.
+        // Discovery inspects executables only. Fix the selected backend before
+        // building/sending a request; never try another service on failure.
+        self.config.settings()?;
+        if self.selected.is_none() {
+            self.selected = Some(backend::detect_local(&self.config)?);
+        }
+        let selected = self.selected.as_deref().unwrap();
         if self.backend.is_none() {
-            self.backend = Some(backend::build(&self.config, &self.selected)?);
+            self.backend = Some(backend::build(&self.config, selected)?);
+        }
+        if !self.notice_shown {
+            match self.config.settings()?.backend(selected).as_deref() {
+                Some(config::BackendConfig::Cli {
+                    adapter: config::CliAdapter::Amp,
+                    ..
+                }) => {
+                    eprintln!("AI backend: {selected}. External agent receives query context and may retain threads; /clear does not erase external history.");
+                }
+                Some(config::BackendConfig::Cli { .. } | config::BackendConfig::Acp { .. }) => {
+                    eprintln!("AI backend: {selected}. Query context is shared with this trusted external agent; file access/retention policies apply.");
+                }
+                _ => eprintln!(
+                    "AI backend: {selected}. Selected query context is sent to the model service."
+                ),
+            }
+            self.notice_shown = true;
         }
         let messages = self.conversation.messages(question, &self.memory);
         let timeout = std::time::Duration::from_secs(self.config.settings()?.timeout_secs);
@@ -251,11 +284,11 @@ model = "second-model"
         session.ask("follow up").await.unwrap();
         assert_eq!(requests.lock().unwrap()[1].as_array().unwrap().len(), 4);
         assert!(session.select_backend("missing").is_err());
-        assert_eq!(session.selected, "first");
+        assert_eq!(session.selected.as_deref(), Some("first"));
         session.ask("still here").await.unwrap();
         assert_eq!(requests.lock().unwrap()[2].as_array().unwrap().len(), 6);
         session.select_backend("second").unwrap();
-        assert_eq!(session.selected, "second");
+        assert_eq!(session.selected.as_deref(), Some("second"));
         assert!(!session.memory.summary().is_empty());
         assert_eq!(
             session.conversation.messages("next", &session.memory).len(),
@@ -264,7 +297,7 @@ model = "second-model"
         session.clear();
         assert!(session.backend.is_none());
         assert!(session.memory.summary().is_empty());
-        assert_eq!(session.selected, "second");
+        assert_eq!(session.selected.as_deref(), Some("second"));
     }
 
     #[tokio::test]
@@ -312,6 +345,18 @@ model = "second-model"
             session.conversation.messages("next", &session.memory).len(),
             2
         );
+    }
+
+    #[test]
+    fn explicit_selection_beats_config_and_never_falls_back_to_discovery() {
+        let config: crate::config::Config =
+            toml::from_str("[agent]\nbackend='configured'").unwrap();
+        let session = AgentSession::new(config.agent.clone(), Some("requested".into()));
+        assert_eq!(session.selected.as_deref(), Some("requested"));
+        let session = AgentSession::new(config.agent, None);
+        assert_eq!(session.selected.as_deref(), Some("configured"));
+        let session = AgentSession::new(AgentConfig::default(), Some(String::new()));
+        assert_eq!(session.selected.as_deref(), Some(""));
     }
 
     #[test]

@@ -156,6 +156,8 @@ class Terminal:
         self.pending = b""
         self.transcript = []
         self.finished = False
+        self.startup_prompt = f"{mode or 'smart'}> "
+        self.startup_checked = False
 
     def expect(self, text):
         deadline = time.monotonic() + 15
@@ -178,6 +180,11 @@ class Terminal:
                     os.write(self.fd, b"\x1b[1;1R")
         end = self.pending.index(needle) + len(needle)
         self.pending = self.pending[end:]
+        if text == self.startup_prompt and not self.startup_checked:
+            output = b"".join(self.transcript)
+            for verbose in [b"Interactive modes (", b"/mode [", b"Available backends:", b"Current backend:"]:
+                assert verbose not in output, "Startup should not print usage or backend lists"
+            self.startup_checked = True
 
     def send(self, line, prompt="smart> "):
         os.write(self.fd, line.encode() + b"\r")
@@ -209,9 +216,8 @@ def last_context():
 
 
 def exercise_modes(executable, env, port):
+    write_config(env, '[agent]\nbackend="env"')
     with Terminal(executable, env, port) as terminal:
-        # Help includes the prompt strings too; wait until the actual REPL starts.
-        terminal.expect("Use /clear before discussing unrelated or sensitive data.")
         terminal.expect("smart> ")
         assert len(MockService.sql_requests) == 1  # Startup version query.
         terminal.send("SELECT 1;")
@@ -262,7 +268,6 @@ def exercise_missing_model(executable, env, port):
     sql_count = len(MockService.sql_requests)
     model_count = len(MockService.model_requests)
     with Terminal(executable, env, port, mode="sql") as terminal:
-        terminal.expect("Use /clear before discussing unrelated or sensitive data.")
         terminal.expect("sql> ")
         terminal.send("/ask Hello", "sql> ")
         assert b"Set BENDSQL_AGENT_BASE_URL" in b"".join(terminal.transcript)
@@ -304,7 +309,6 @@ model = "broken-model"
 """
     write_config(env, config)
     with Terminal(executable, env, port, backend="second") as terminal:
-        terminal.expect("Use /clear before discussing unrelated or sensitive data.")
         terminal.expect("smart> ")
         terminal.send("/backend")
         assert b"Current backend: second" in b"".join(terminal.transcript)
@@ -345,21 +349,18 @@ model = "broken-model"
 
     # Without a CLI override, the selected config wins over legacy environment.
     with Terminal(executable, env, port) as terminal:
-        terminal.expect("Use /clear before discussing unrelated or sensitive data.")
         terminal.expect("smart> ")
         terminal.send("/ask Config default")
         assert MockService.model_requests[-1]["model"] == "first-model"
         terminal.finish()
 
-    # Declaring backends without selecting one must not implicitly use env.
+    # Profile definitions alone never select an HTTP backend. Startup only
+    # discovers executable paths; explicitly select the mock service before asking.
     write_config(env, config.replace('backend = "first"\n', "", 1))
+    count = len(MockService.model_requests)
     with Terminal(executable, env, port) as terminal:
-        terminal.expect("Use /clear before discussing unrelated or sensitive data.")
         terminal.expect("smart> ")
-        count = len(MockService.model_requests)
-        terminal.send("/ask No default selected")
         assert len(MockService.model_requests) == count
-        assert b"Select an AI backend" in b"".join(terminal.transcript)
         terminal.send("/backend second")
         terminal.send("/ask Explicit selection")
         assert MockService.model_requests[-1]["model"] == "second-model"
@@ -372,7 +373,6 @@ model = "broken-model"
     ]:
         write_config(env, invalid)
         with Terminal(executable, env, port) as terminal:
-            terminal.expect("Use /clear before discussing unrelated or sensitive data.")
             terminal.expect("smart> ")
             count = len(MockService.model_requests)
             sql_count = len(MockService.sql_requests)
@@ -476,7 +476,6 @@ allow_external_agent = true
         write_config(cli_env, config)
         api_count = len(MockService.model_requests)
         with Terminal(executable, cli_env, port) as terminal:
-            terminal.expect("Use /clear before discussing unrelated or sensitive data.")
             terminal.expect("smart> ")
             terminal.send("SELECT 1;")
             sql_count = len(MockService.sql_requests)
@@ -577,7 +576,6 @@ def exercise_builtin_clis(executable, env, port):
                 del cli_env[name]
         for name in ["local-claude", "local-codex", "local-pi", "local-amp"]:
             with Terminal(executable, cli_env, port, backend=name) as terminal:
-                terminal.expect("Use /clear before discussing unrelated or sensitive data.")
                 terminal.expect("smart> ")
                 terminal.send("/backend")
                 output = b"".join(terminal.transcript)
@@ -629,7 +627,6 @@ def exercise_builtin_clis(executable, env, port):
         write_config(cli_env, '[agent]\ntimeout_secs=2')
         for name in ["pi", "amp"]:
             with Terminal(executable, cli_env, port, backend=name) as terminal:
-                terminal.expect("Use /clear before discussing unrelated or sensitive data.")
                 terminal.expect("smart> ")
                 terminal.send("SELECT 1;")
                 sql_count = len(MockService.sql_requests)
@@ -668,7 +665,6 @@ def exercise_builtin_clis(executable, env, port):
             write_config(cli_env, f'[agent.backends.local-{name}]\nenv_allowlist=["CLI_TEST_OLD"]')
             old_env = dict(cli_env, CLI_TEST_OLD="1")
             with Terminal(executable, old_env, port, backend=name) as terminal:
-                terminal.expect("Use /clear before discussing unrelated or sensitive data.")
                 terminal.expect("smart> ")
                 count = len(cli_records(record_path))
                 terminal.send("/ask Context must not be delivered")
@@ -682,7 +678,6 @@ def exercise_builtin_clis(executable, env, port):
         # Override just a model on a built-in profile; type/adapter/consent inherit.
         write_config(cli_env, '[agent]\nbackend="local-codex"\n[agent.backends.local-codex]\nmodel="custom-builtin-model"')
         with Terminal(executable, cli_env, port, backend="codex") as terminal:
-            terminal.expect("Use /clear before discussing unrelated or sensitive data.")
             terminal.expect("smart> ")
             terminal.send("/ask Built-in model override")
             args = cli_records(record_path)[-1]["argv"]
@@ -691,7 +686,6 @@ def exercise_builtin_clis(executable, env, port):
         # A disabled canonical profile cannot be bypassed through its alias.
         write_config(cli_env, '[agent.backends.local-codex]\nallow_external_agent=false')
         with Terminal(executable, cli_env, port, backend="codex") as terminal:
-            terminal.expect("Use /clear before discussing unrelated or sensitive data.")
             terminal.expect("smart> ")
             count = len(cli_records(record_path))
             terminal.send("/ask Disabled built-in")
@@ -754,7 +748,6 @@ command = {json.dumps(mock)}
         write_config(acp_env, config)
         api_count = len(MockService.model_requests)
         with Terminal(executable, acp_env, port) as terminal:
-            terminal.expect("Use /clear before discussing unrelated or sensitive data.")
             terminal.expect("smart> ")
             assert not cli_records(path), "Adapter must not start until a question"
             terminal.send("SELECT 1;")
@@ -838,15 +831,14 @@ command = {json.dumps(mock)}
 
 
 def exercise_smart_input_boundaries(executable, env, port):
-    write_config(env, "")
+    write_config(env, '[agent]\nbackend="env"')
     with Terminal(executable, env, port) as terminal:
-        terminal.expect("Use /clear before discussing unrelated or sensitive data.")
         terminal.expect("smart> ")
         sql_count = len(MockService.sql_requests)
         api_count = len(MockService.model_requests)
         for text in ["SELECT 1; Explain the result", "DROP TABLE sensitive; Why would this happen?",
                      "/* example */ SELECT 1; explain", "SELECT 1; SELECT * FROM",
-                     "SELCT 1;", "SELECT * FROM;", "GET file://result @stage"]:
+                     "INVALID SQL;", "SELECT * FROM;", "GET file://result @stage"]:
             terminal.send(text)
         assert len(MockService.sql_requests) == sql_count
         assert len(MockService.model_requests) == api_count
@@ -900,11 +892,10 @@ def wait_http_count(items, count):
 
 
 def exercise_sql_cancellation(executable, env, port):
-    write_config(env, "")
+    write_config(env, '[agent]\nbackend="env"')
     MockService.release_queries.clear()
     try:
         with Terminal(executable, env, port) as terminal:
-            terminal.expect("Use /clear before discussing unrelated or sensitive data.")
             terminal.expect("smart> ")
             terminal.send("SELECT 1;")
             sql_count = len(MockService.sql_requests)
@@ -961,6 +952,88 @@ def exercise_sql_cancellation(executable, env, port):
         MockService.release_queries.set()
 
 
+def exercise_default_backend_discovery(executable, env, port):
+    with tempfile.TemporaryDirectory(prefix="bendsql-default-bin-") as directory:
+        source = os.path.join(os.path.dirname(__file__), "mock_agent_cli.py")
+        with open(source) as file:
+            script = f"#!{sys.executable}\n{file.read()}"
+        # An isolated PATH ensures missing candidates never run real installed CLIs.
+        auto_env = dict(env, PATH=directory)
+        path = os.path.join(env["HOME"], "builtin_cli_requests.jsonl")
+        api_count = len(MockService.model_requests)
+        for programs, expected, marker in [
+            (["codex", "claude", "pi"], "local-codex", "--json"),
+            (["claude", "pi"], "local-claude", "--no-session-persistence"),
+            (["pi"], "local-pi", "--no-tools"),
+            ([], None, None), (["amp"], None, None),
+        ]:
+            for name in ["codex", "claude", "pi", "amp"]:
+                filename = os.path.join(directory, name)
+                if os.path.exists(filename):
+                    os.unlink(filename)
+                if name in programs:
+                    with open(filename, "w") as file:
+                        file.write(script)
+                    os.chmod(filename, 0o700)
+            write_config(auto_env, "")
+            count = len(cli_records(path))
+            with Terminal(executable, auto_env, port) as terminal:
+                terminal.expect("smart> ")
+                assert len(cli_records(path)) == count, "Discovery must not start a model"
+                terminal.send("/backend")
+                if expected:
+                    assert f"Current backend: {expected}".encode() in b"".join(terminal.transcript)
+                terminal.send("/mode agent", "agent> ")
+                terminal.send("hello, how are you", "agent> ")
+                if expected:
+                    assert len(cli_records(path)) == count + 1
+                    assert marker in cli_records(path)[-1]["argv"]
+                    terminal.send("exit-error", "agent> ")
+                    assert len(cli_records(path)) == count + 2, "A failed request must not try another CLI"
+                    assert marker in cli_records(path)[-1]["argv"]
+                    terminal.send("hello again", "agent> ")
+                    assert marker in cli_records(path)[-1]["argv"]
+                    # Explicit selection beats auto detection, even when unavailable.
+                    before = len(cli_records(path))
+                    terminal.send("/backend env", "agent> ")
+                    terminal.send("hello using explicit env", "agent> ")
+                    assert len(cli_records(path)) == before
+                    assert len(MockService.model_requests) == api_count + 1
+                    api_count += 1
+                else:
+                    assert len(cli_records(path)) == count
+                    assert b"No local coding CLI found" in b"".join(terminal.transcript)
+                    assert b"Set BENDSQL_AGENT_BASE_URL" not in b"".join(terminal.transcript)
+                assert len(MockService.model_requests) == api_count
+                os.write(terminal.fd, b"/help\r")
+                terminal.expect("Use /clear before discussing unrelated or sensitive data.")
+                terminal.expect("agent> ")
+                assert b"/mode [smart|sql|agent]" in b"".join(terminal.transcript)
+                terminal.send("/mode sql", "sql> ")
+                terminal.send("SELECT 1;", "sql> ")
+                terminal.finish()
+        # Merely defining profiles does not pick arbitrary HTTP services. An
+        # explicit config selection still wins over installed local executables.
+        with open(os.path.join(directory, "codex"), "w") as file:
+            file.write(script)
+        os.chmod(os.path.join(directory, "codex"), 0o700)
+        write_config(auto_env, '[agent]\nbackend="env"')
+        before = len(cli_records(path))
+        with Terminal(executable, auto_env, port) as terminal:
+            terminal.expect("smart> ")
+            terminal.send("/ask Config explicitly selected env")
+            assert len(cli_records(path)) == before
+            assert len(MockService.model_requests) == api_count + 1
+            api_count += 1
+            terminal.finish()
+        with Terminal(executable, auto_env, port, backend="missing-profile") as terminal:
+            terminal.expect("smart> ")
+            terminal.send("/ask Explicit invalid selection must not discover codex")
+            assert len(cli_records(path)) == before
+            assert len(MockService.model_requests) == api_count
+            terminal.finish()
+
+
 def main():
     executable = os.path.abspath(sys.argv[1])
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockService)
@@ -991,6 +1064,7 @@ def main():
             exercise_acp_backend(executable, env, port)
             exercise_smart_input_boundaries(executable, env, port)
             exercise_sql_cancellation(executable, env, port)
+            exercise_default_backend_discovery(executable, env, port)
             assert not os.path.exists(os.path.join(home, ".bendsql_history"))
             for root, _, files in os.walk(home):
                 for name in files:
@@ -1004,7 +1078,8 @@ def main():
             "zero-config built-ins, aliases, partial overrides and disable controls; "
             "Pi/Amp protocols, safety settings, old-version rejection and process cleanup; "
             "ACP SDK lifecycle, capability denial, bounded transport, cancel handshake and cleanup; "
-            "whole-input smart routing, live parser settings and SQL cancellation boundaries"
+            "whole-input smart routing, live parser settings and SQL cancellation boundaries; "
+            "quiet startup, default CLI priority, explicit selection and no runtime fallback"
         )
     finally:
         server.shutdown()
