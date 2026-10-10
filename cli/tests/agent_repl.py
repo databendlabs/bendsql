@@ -404,12 +404,12 @@ def process_running(pid):
 def wait_stopped(record):
     pids = [pid for pid in [record["pid"], record["child"]] if pid]
     deadline = time.monotonic() + 5
-    while any(process_running(pid) for pid in pids):
+    while any(process_running(pid) for pid in pids) or os.path.exists(record["cwd"]):
         if time.monotonic() >= deadline:
             for pid in pids:
                 if process_running(pid):
                     os.kill(pid, signal.SIGKILL)
-            raise AssertionError("CLI cancellation left a running child or descendant")
+            raise AssertionError("CLI cleanup left a running process or temporary directory")
         time.sleep(0.05)
     assert not os.path.exists(record["cwd"]), "Temporary CLI directory leaked"
 
@@ -491,15 +491,19 @@ allow_external_agent = true
                 assert "SELECT 1" not in " ".join(args)
                 assert not any("dangerously" in arg for arg in args)
                 expected_model = f"configured-{backend}-model"
-                assert args[args.index("--model") + 1] == expected_model
                 if backend == "claude":
+                    assert args[args.index("--model") + 1] == expected_model
                     assert args[args.index("--tools") + 1] == ""
                     assert "--safe-mode" in args and "--no-session-persistence" in args
                     assert record["env"]["ANTHROPIC_API_KEY"] == "private-claude-key"
                     assert "OPENAI_API_KEY" not in record["env"]
                 else:
-                    assert args[args.index("--sandbox") + 1] == "read-only"
-                    assert "--ignore-user-config" in args and "--ephemeral" in args
+                    assert "app-server" in args and "stdio://" in args
+                    assert "--ignore-user-config" not in args and "--strict-config" not in args
+                    assert record["model"] == expected_model
+                    assert record["thread_settings"]["sandbox"] == "read-only"
+                    assert record["thread_settings"]["ephemeral"] is True
+                    assert record["controlling_terminal"] is False
                     assert 'approval_policy="never"' in args
                     assert record["env"]["OPENAI_API_KEY"] == "private-codex-key"
                     assert "ANTHROPIC_API_KEY" not in record["env"]
@@ -528,11 +532,16 @@ allow_external_agent = true
                 terminal.expect("AI request interrupted.")
                 terminal.expect("smart> ")
                 wait_stopped(record)
+                if backend == "codex":
+                    assert cli_records(record_path + ".interrupt")[-1]["pid"] == record["pid"]
                 terminal.send("/ask After cancellation")
                 assert len(cli_records(record_path)[-1]["messages"]) == 2
                 # Also exercise deadline-based cleanup, not only user cancellation.
                 terminal.send("/ask block-cli")
-                wait_stopped(cli_records(record_path)[-1])
+                timed_out = cli_records(record_path)[-1]
+                wait_stopped(timed_out)
+                if backend == "codex":
+                    assert cli_records(record_path + ".interrupt")[-1]["pid"] == timed_out["pid"]
                 terminal.send("/ask After timeout")
                 assert len(cli_records(record_path)[-1]["messages"]) == 4
                 assert len(MockService.sql_requests) == sql_count
@@ -542,7 +551,7 @@ allow_external_agent = true
             terminal.send("/backend not-installed")
             assert len(cli_records(record_path)) == count
             terminal.send("/ask Still on codex")
-            assert "--json" in cli_records(record_path)[-1]["argv"]
+            assert "app-server" in cli_records(record_path)[-1]["argv"]
             terminal.finish()
             output = b"".join(terminal.transcript)
             assert b"allow_external_agent = true" in output
@@ -591,7 +600,7 @@ def exercise_builtin_clis(executable, env, port):
                 assert len(record["messages"]) == 2
                 assert json.loads(record["messages"][-1]["content"])["query_records"][0]["id"] == "Q1"
                 if name == "local-codex":
-                    assert "--json" in record["argv"]
+                    assert "app-server" in record["argv"]
                     terminal.send("/backend claude-code")
                     terminal.send("/ask Switch to built-in Claude")
                     assert "--print" in cli_records(record_path)[-1]["argv"]
@@ -599,7 +608,7 @@ def exercise_builtin_clis(executable, env, port):
                     assert "--print" in record["argv"]
                     terminal.send("/backend codex")
                     terminal.send("/ask Switch to built-in Codex")
-                    assert "--json" in cli_records(record_path)[-1]["argv"]
+                    assert "app-server" in cli_records(record_path)[-1]["argv"]
                 elif name == "local-pi":
                     assert "--no-tools" in record["argv"] and "--no-session" in record["argv"]
                     assert "--no-extensions" in record["argv"] and "--no-mcp" in record["argv"]
@@ -680,8 +689,7 @@ def exercise_builtin_clis(executable, env, port):
         with Terminal(executable, cli_env, port, backend="codex") as terminal:
             terminal.expect("smart> ")
             terminal.send("/ask Built-in model override")
-            args = cli_records(record_path)[-1]["argv"]
-            assert args[args.index("--model") + 1] == "custom-builtin-model"
+            assert cli_records(record_path)[-1]["model"] == "custom-builtin-model"
             terminal.finish()
         # A disabled canonical profile cannot be bypassed through its alias.
         write_config(cli_env, '[agent.backends.local-codex]\nallow_external_agent=false')
@@ -962,7 +970,7 @@ def exercise_default_backend_discovery(executable, env, port):
         path = os.path.join(env["HOME"], "builtin_cli_requests.jsonl")
         api_count = len(MockService.model_requests)
         for programs, expected, marker in [
-            (["codex", "claude", "pi"], "local-codex", "--json"),
+            (["codex", "claude", "pi"], "local-codex", "app-server"),
             (["claude", "pi"], "local-claude", "--no-session-persistence"),
             (["pi"], "local-pi", "--no-tools"),
             ([], None, None), (["amp"], None, None),

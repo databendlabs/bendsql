@@ -15,6 +15,7 @@
 mod acp;
 pub mod backend;
 mod cli;
+mod codex;
 pub mod config;
 pub mod llm;
 pub mod memory;
@@ -201,10 +202,15 @@ impl AgentSession {
         }
         let messages = self.conversation.messages(question, &self.memory);
         let timeout = std::time::Duration::from_secs(self.config.settings()?.timeout_secs);
-        let answer =
-            tokio::time::timeout(timeout, self.backend.as_ref().unwrap().complete(&messages))
-                .await
-                .map_err(|_| anyhow!("AI backend request timed out. SQL remains available."))??;
+        let backend = self.backend.as_ref().unwrap();
+        let answer = tokio::time::timeout(timeout, backend.complete(&messages))
+            .await
+            .map_err(|_| {
+                match backend.diagnostic_context() {
+                    Some(phase) => anyhow!("AI backend request timed out while {phase}. Check native CLI provider/network configuration; SQL remains available."),
+                    None => anyhow!("AI backend request timed out. SQL remains available."),
+                }
+            })??;
         // Failures/cancellation do not enter conversation history.
         self.conversation.remember(question.into(), answer.clone());
         Ok(answer)

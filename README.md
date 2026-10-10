@@ -360,8 +360,8 @@ built-in defaults. Independently named custom CLI profiles still require
 BendSQL starts a fresh process for each question and supplies the bounded
 conversation/query evidence through stdin, not command arguments or context files.
 No CLI session IDs are resumed; switching backends or `/clear` does not recover
-previous remote conversation state. Model selection is optional and is passed as
-`--model` for Codex, Claude Code and Pi. Amp controls its own model routing; setting
+previous remote conversation state. Model selection is optional: Codex uses the
+`thread/start` model field, while Claude Code and Pi receive `--model`. Amp controls its own model routing; setting
 `model` on an Amp backend is rejected instead of passing an unverified flag.
 Install and authenticate the CLI separately; BendSQL never downloads
 an adapter or invokes a shell to interpret `command`. An absolute executable path
@@ -373,14 +373,22 @@ The adapters use distinct structured-output protocols:
 - **Claude Code:** print mode with JSON output, `--tools ""`, `--safe-mode`, disabled
   slash commands, empty strict MCP config, disabled hooks, no Chrome integration
   and `--no-session-persistence`. Only a successful result supplies answer text.
-- **Codex:** `exec --json --ephemeral`, `--ignore-user-config`, `--ignore-rules`,
-  `--strict-config`, read-only sandbox, approval policy `never`, disabled web search,
-  hooks/plugins/apps, the shell feature, multi-agent spawning, memories,
-  project instruction discovery and history persistence. These switches reduce
-  available capabilities but do not disable every tool: for example, the installed
-  Codex still reports unified exec as enabled even when its flag is set to false.
-  Only completed assistant-message text from a successfully completed turn is shown;
-  reasoning/tool events are not included in the answer.
+- **Codex:** `codex app-server --listen stdio://` with `initialize`, an ephemeral
+  `thread/start` and `turn/start`. Each question uses a fresh process/thread; bounded
+  multi-turn context is owned by BendSQL, not an ever-growing Codex thread. Native
+  Codex model/provider/auth configuration is preserved rather than discarded with
+  `--ignore-user-config`. `--strict-config` is not used on native configuration,
+  because legacy non-routing fields may otherwise reject an ordinarily usable CLI.
+  Execution-policy overrides disable notify, configured MCP servers, hooks, plugins,
+  apps, web search, multi-agent spawning, memories and project instruction discovery.
+  Read-only sandbox / approval policy `never` and ephemeral acknowledgement are
+  verified before query context is sent. Approval/client-tool requests are rejected;
+  reported tool use invalidates the answer. Only completed assistant-message text
+  from a successful turn is returned; thinking and partial deltas are not committed.
+  Cancellation attempts `turn/interrupt` before bounded process-group cleanup.
+  A new OS session isolates the headless server from the REPL's controlling terminal.
+  These controls are not an OS security guarantee: Codex may still have native tools
+  not fully disabled by feature flags.
 - **Pi:** one-shot JSON mode with `--no-session`, `--no-tools`, disabled extensions,
   MCP, skills, templates, themes and context-file discovery. `--no-approve` ignores
   project-local resources. `--offline` / `PI_OFFLINE` disable automatic catalog and
@@ -403,13 +411,18 @@ is rebuilt. This is protocol compatibility checking, not a security attestation 
 the executable. Native credential helpers and other installed CLI code are still
 trusted external programs.
 
-Compatibility was checked against the help of Codex `0.154.0` and Claude Code
-`2.1.203`, and Codex's published schema/events. Older releases may lack required
+Codex `0.154.0` was verified with its generated app-server schema and opt-in live
+`hi` checks (no database records), including returning to the interactive prompt.
+Claude Code `2.1.203` was checked through its help and mock print/JSON protocol. Older releases may lack required
 flags. Unsupported versions, failed authentication or invalid structured output
 produce an error, never a downgrade to weaker permissions or another backend.
+Codex emits brief startup/generation progress; timeout messages identify the phase
+rather than treating backend selection as proof of a model request.
 Pi/Amp adapters follow their published CLI/JSON protocols and are tested with mock
 executables; neither executable was installed for live verification. Real model
-execution is not part of the mock test suite.
+execution is not part of the mock test suite. A deliberately ignored live Codex
+smoke test can be run with `cargo test -p bendsql --bin bendsql real_codex_hi -- --ignored --nocapture`;
+it sends only `hi`, requires an authenticated installed CLI and may incur model cost.
 
 The child environment is cleared and rebuilt from basic runtime variables
 (`PATH`, `HOME`, user/locale/temp variables) and CLI-specific auth variables:

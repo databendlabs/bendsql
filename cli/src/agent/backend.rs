@@ -27,6 +27,9 @@ use super::llm::{LlmClient, Message};
 #[async_trait]
 pub trait ChatBackend: Send + Sync {
     async fn complete(&self, messages: &[Message]) -> Result<String>;
+    fn diagnostic_context(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 pub fn detect_local(config: &AgentConfig) -> Result<String> {

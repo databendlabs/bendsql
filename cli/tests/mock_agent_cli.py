@@ -21,7 +21,84 @@ import sys
 import time
 
 
+def codex_app_server():
+    record_path = os.environ.get("CLI_TEST_RECORD", os.path.join(os.environ["HOME"], "builtin_cli_requests.jsonl"))
+    thread = "mock-thread"
+    turn = "mock-turn"
+    settings = {}
+    question = None
+    child = None
+    def send(value):
+        print(json.dumps(value), flush=True)
+    def event(method, **params):
+        send({"method": method, "params": params})
+    for line in sys.stdin:
+        frame = json.loads(line)
+        method = frame.get("method")
+        params = frame.get("params", {})
+        if method == "initialize":
+            send({"id": frame["id"], "result": {"userAgent": "mock"}})
+        elif method == "thread/start":
+            settings = params
+            send({"id": frame["id"], "result": {"thread": {"id": thread, "ephemeral": True},
+                  "approvalPolicy": "never", "sandbox": {"type": "readOnly"}}})
+        elif method == "turn/start":
+            messages = json.loads(params["input"][0]["text"].split("\n", 1)[1])
+            question = json.loads(messages[-1]["content"])["question"]
+            if question == "block-cli":
+                child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            try:
+                terminal = os.open("/dev/tty", os.O_RDWR)
+                os.close(terminal)
+                controlling_terminal = True
+            except OSError:
+                controlling_terminal = False
+            record = {"argv": sys.argv[1:], "env": dict(os.environ), "cwd": os.getcwd(),
+                      "messages": messages, "pid": os.getpid(), "child": child.pid if child else None,
+                      "policy": None, "directory_files": os.listdir(os.getcwd()),
+                      "thread_settings": settings, "model": settings.get("model"),
+                      "controlling_terminal": controlling_terminal}
+            with open(record_path, "a") as file:
+                file.write(json.dumps(record) + "\n")
+            event("turn/started", threadId=thread, turn={"id": turn, "status": "inProgress"})
+            send({"id": frame["id"], "result": {"turn": {"id": turn, "status": "inProgress"}}})
+            if child:
+                continue
+            if question == "exit-error":
+                print("private-cli-secret", file=sys.stderr)
+                sys.exit(2)
+            if question == "bad-json":
+                print("private-cli-secret", flush=True)
+                continue
+            if question == "overflow-stdout":
+                sys.stdout.write("x" * (1024 * 1024 + 1) + "\n")
+                sys.stdout.flush()
+                continue
+            if question == "overflow-stderr":
+                sys.stderr.write("private-cli-secret" * 3000)
+                sys.stderr.flush()
+                continue
+            if question == "failed-turn":
+                event("turn/completed", threadId=thread, turn={"id": turn, "status": "failed", "error": {"message": "private-cli-secret"}, "items": []})
+                continue
+            answer = "\x1b[31mMock CLI answer grounded in query evidence."
+            if question == "long-answer":
+                answer = "中" * 8000
+            item = {"type": "agentMessage", "id": "message", "text": answer, "phase": "final_answer"}
+            event("item/agentMessage/delta", threadId=thread, turnId=turn, itemId="message", delta=answer)
+            event("item/completed", threadId=thread, turnId=turn, item=item)
+            event("turn/completed", threadId=thread, turn={"id": turn, "status": "completed", "error": None, "items": [item]})
+        elif method == "turn/interrupt":
+            with open(record_path + ".interrupt", "a") as file:
+                file.write(json.dumps({"pid": os.getpid(), "params": params}) + "\n")
+            send({"id": frame["id"], "result": {}})
+            event("turn/completed", threadId=thread, turn={"id": turn, "status": "interrupted", "error": None, "items": []})
+
+
 def main():
+    if "app-server" in sys.argv:
+        codex_app_server()
+        return
     codex = "--json" in sys.argv
     pi = "--mode" in sys.argv
     amp = "--stream-json" in sys.argv

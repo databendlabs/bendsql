@@ -34,6 +34,7 @@ pub struct CliBackend {
     model: Option<String>,
     env: BTreeMap<OsString, OsString>,
     capabilities_checked: tokio::sync::OnceCell<()>,
+    codex: Option<super::codex::CodexServer>,
 }
 
 impl CliBackend {
@@ -70,12 +71,20 @@ impl CliBackend {
             CliAdapter::Amp => "amp",
         }))?;
         let env = child_environment(Some(adapter), env_allowlist)?;
+        let codex = (adapter == CliAdapter::Codex).then(|| {
+            super::codex::CodexServer::new(
+                executable.clone(),
+                model.map(str::to_owned),
+                env.clone(),
+            )
+        });
         Ok(Self {
             adapter,
             executable,
             model: model.map(str::to_owned),
             env,
             capabilities_checked: tokio::sync::OnceCell::new(),
+            codex,
         })
     }
 
@@ -98,17 +107,6 @@ impl CliBackend {
         if let Some(model) = &self.model {
             args.extend(["--model".into(), model.into()]);
         }
-        if self.adapter == CliAdapter::Codex {
-            args.extend([
-                "-c".into(),
-                format!(
-                    "developer_instructions={}",
-                    serde_json::to_string(SYSTEM_PROMPT)?
-                )
-                .into(),
-                "-".into(),
-            ]);
-        }
         if self.adapter == CliAdapter::Amp {
             // Static policy only: never write SQL, prompts, secrets or answers.
             let path = directory.path().join("amp-policy.json");
@@ -128,7 +126,7 @@ impl CliBackend {
         }
         let stdout = self.invoke(directory.path(), &args, &input).await?;
         match self.adapter {
-            CliAdapter::Codex => parse_codex(&stdout),
+            CliAdapter::Codex => unreachable!("Codex uses the app-server transport"),
             CliAdapter::ClaudeCode => parse_claude(&stdout),
             CliAdapter::Pi => parse_pi(&stdout),
             CliAdapter::Amp => parse_amp(&stdout),
@@ -198,7 +196,11 @@ impl ChatBackend for CliBackend {
     async fn complete(&self, messages: &[Message]) -> Result<String> {
         #[cfg(unix)]
         {
-            self.run(messages).await
+            if let Some(codex) = &self.codex {
+                codex.complete(messages).await
+            } else {
+                self.run(messages).await
+            }
         }
         #[cfg(not(unix))]
         {
@@ -208,10 +210,17 @@ impl ChatBackend for CliBackend {
                 &self.model,
                 &self.env,
                 &self.capabilities_checked,
+                &self.codex,
                 messages,
             );
             bail!("Local CLI backends are not supported on this platform")
         }
+    }
+
+    fn diagnostic_context(&self) -> Option<&'static str> {
+        self.codex
+            .as_ref()
+            .map(super::codex::CodexServer::diagnostic)
     }
 }
 
@@ -374,53 +383,7 @@ const MAX_EVENT_BYTES: usize = 128 * 1024;
 #[cfg(unix)]
 fn arguments(adapter: CliAdapter) -> Vec<&'static str> {
     match adapter {
-        CliAdapter::Codex => vec![
-            "exec",
-            "--json",
-            "--ephemeral",
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--strict-config",
-            "--skip-git-repo-check",
-            "--sandbox",
-            "read-only",
-            "--color",
-            "never",
-            "-c",
-            "approval_policy=\"never\"",
-            "-c",
-            "history.persistence=\"none\"",
-            "-c",
-            "web_search=\"disabled\"",
-            "-c",
-            "allow_login_shell=false",
-            "-c",
-            "features.hooks=false",
-            "-c",
-            "features.codex_hooks=false",
-            "-c",
-            "features.plugins=false",
-            "-c",
-            "features.apps=false",
-            "-c",
-            "features.shell_tool=false",
-            "-c",
-            "features.apply_patch_freeform=false",
-            "-c",
-            "features.multi_agent=false",
-            "-c",
-            "features.multi_agent_v2=false",
-            "-c",
-            "features.memories=false",
-            "-c",
-            "features.shell_snapshot=false",
-            "-c",
-            "agents.enabled=false",
-            "-c",
-            "project_doc_max_bytes=0",
-            "-c",
-            "shell_environment_policy.inherit=\"none\"",
-        ],
+        CliAdapter::Codex => unreachable!("Codex uses the app-server transport"),
         CliAdapter::ClaudeCode => vec![
             "--print",
             "--input-format",
@@ -538,7 +501,8 @@ impl ProcessGuard {
 
     pub(super) fn kill_group(&mut self) {
         if let Some(group) = self.group.take() {
-            // Created with process_group(0), never BendSQL's own group.
+            // Each child owns its group (process_group(0) or setsid()), never
+            // BendSQL's own group.
             unsafe {
                 libc::kill(-group, libc::SIGKILL);
             }
@@ -741,32 +705,6 @@ fn parse_amp(bytes: &[u8]) -> Result<String> {
 }
 
 #[cfg(unix)]
-fn parse_codex(bytes: &[u8]) -> Result<String> {
-    let mut answer = None;
-    let mut completed = false;
-    for event in events(bytes) {
-        let event = event?;
-        match event["type"].as_str() {
-            Some("error" | "turn.failed") => {
-                bail!("Codex reported an unsuccessful turn; diagnostics suppressed")
-            }
-            Some("turn.completed") => completed = true,
-            Some("item.completed") if event["item"]["type"] == "agent_message" => {
-                answer = event["item"]["text"]
-                    .as_str()
-                    .map(normalize_answer)
-                    .transpose()?;
-            }
-            _ => {}
-        }
-    }
-    if !completed {
-        bail!("Codex returned no completed turn");
-    }
-    answer.ok_or_else(|| anyhow!("Codex returned no text answer"))
-}
-
-#[cfg(unix)]
 fn parse_claude(bytes: &[u8]) -> Result<String> {
     let result: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| {
         anyhow!("Claude Code returned invalid JSON; check its version outside BendSQL")
@@ -819,16 +757,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn parses_only_successful_final_answers_and_sanitizes_them() {
-        assert_eq!(parse_codex(b"{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"answer\"}}\n{\"type\":\"turn.completed\"}\n").unwrap(), "answer");
         assert_eq!(parse_claude(br#"{"type":"result","subtype":"success","is_error":false,"result":"\u001b[31manswer"}"#).unwrap(), "[31manswer");
-        for body in [
-            br#"{"type":"turn.failed","error":{"message":"private-secret"}}"#.as_slice(),
-            b"private-secret",
-            br#"{"type":"turn.completed"}"#,
-        ] {
-            let error = parse_codex(body).unwrap_err();
-            assert!(!error.to_string().contains("private-secret"));
-        }
         for body in [
             br#"{"type":"result","subtype":"error","is_error":true,"result":"private-secret"}"#
                 .as_slice(),
@@ -950,19 +879,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn arguments_enforce_safety_without_permission_bypass() {
-        for adapter in [
-            CliAdapter::Codex,
-            CliAdapter::ClaudeCode,
-            CliAdapter::Pi,
-            CliAdapter::Amp,
-        ] {
+        for adapter in [CliAdapter::ClaudeCode, CliAdapter::Pi, CliAdapter::Amp] {
             let args = arguments(adapter);
             assert!(!args.iter().any(|arg| arg.contains("dangerously")));
         }
         let args = arguments(CliAdapter::ClaudeCode);
         assert!(args.windows(2).any(|w| w == ["--tools", ""]));
-        let args = arguments(CliAdapter::Codex);
-        assert!(args.windows(2).any(|w| w == ["--sandbox", "read-only"]));
     }
 
     #[cfg(unix)]
