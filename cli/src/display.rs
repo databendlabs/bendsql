@@ -29,6 +29,7 @@ use tokio_stream::StreamExt;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::agent::memory::QueryPreview;
 use crate::ast::QueryKind;
 use crate::{
     ast::{format_query, highlight_query},
@@ -69,6 +70,7 @@ pub struct FormatDisplay<'a> {
     start: Instant,
     stats: Option<ServerStats>,
     interrupted: Arc<AtomicBool>,
+    preview: Option<QueryPreview>,
 }
 
 impl<'a> FormatDisplay<'a> {
@@ -91,6 +93,43 @@ impl<'a> FormatDisplay<'a> {
             start,
             stats: None,
             interrupted,
+            preview: None,
+        }
+    }
+
+    pub fn enable_capture(&mut self) {
+        self.preview = Some(QueryPreview::new(&self.data.schema()));
+    }
+
+    pub fn take_preview(&mut self, success: bool) -> Option<QueryPreview> {
+        self.preview.take().map(|mut preview| {
+            preview.finish(success);
+            preview
+        })
+    }
+
+    pub fn latest_stats(&self) -> Option<&ServerStats> {
+        self.stats.as_ref()
+    }
+
+    fn observe_row(&mut self, row: &Row) {
+        if let Some(preview) = &mut self.preview {
+            preview.observe(row);
+        }
+    }
+
+    async fn next_row(&mut self) -> Result<Option<databend_driver::Result<RowWithStats>>> {
+        if self.preview.is_none() {
+            return Ok(self.data.next().await);
+        }
+        let interrupted = self.interrupted.clone();
+        tokio::select! {
+            row = self.data.next() => Ok(row),
+            _ = async move {
+                while !interrupted.load(Ordering::SeqCst) {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            } => Err(anyhow!(INTERRUPTED_MESSAGE)),
         }
     }
 }
@@ -140,12 +179,13 @@ impl FormatDisplay<'_> {
         let mut rows = Vec::new();
         let mut bottom_rows = VecDeque::new();
         let mut error = None;
-        while let Some(line) = self.data.next().await {
+        while let Some(line) = self.next_row().await? {
             if self.interrupted.load(Ordering::SeqCst) {
                 return Err(anyhow!(INTERRUPTED_MESSAGE));
             }
             match line {
                 Ok(RowWithStats::Row(row)) => {
+                    self.observe_row(&row);
                     if collect_all_rows || self.rows_count < max_display_top_rows {
                         rows.push(row);
                     } else {
@@ -244,12 +284,13 @@ impl FormatDisplay<'_> {
         let mut wtr = csv::WriterBuilder::new()
             .quote_style(quote_style)
             .from_writer(std::io::stdout());
-        while let Some(line) = self.data.next().await {
+        while let Some(line) = self.next_row().await? {
             if self.interrupted.load(Ordering::SeqCst) {
                 return Err(anyhow!(INTERRUPTED_MESSAGE));
             }
             match line {
                 Ok(RowWithStats::Row(row)) => {
+                    self.observe_row(&row);
                     self.rows_count += 1;
                     let record = row.into_iter().map(|v| v.to_string()).collect::<Vec<_>>();
                     wtr.write_record(record)?;
@@ -277,12 +318,13 @@ impl FormatDisplay<'_> {
             .quote(b'"')
             .quote_style(quote_style)
             .from_writer(std::io::stdout());
-        while let Some(line) = self.data.next().await {
+        while let Some(line) = self.next_row().await? {
             if self.interrupted.load(Ordering::SeqCst) {
                 return Err(anyhow!(INTERRUPTED_MESSAGE));
             }
             match line {
                 Ok(RowWithStats::Row(row)) => {
+                    self.observe_row(&row);
                     self.rows_count += 1;
                     let record = row.into_iter().map(|v| v.to_string()).collect::<Vec<_>>();
                     wtr.write_record(record)?;
@@ -300,12 +342,13 @@ impl FormatDisplay<'_> {
 
     async fn display_null(&mut self) -> Result<()> {
         let mut error = None;
-        while let Some(line) = self.data.next().await {
+        while let Some(line) = self.next_row().await? {
             if self.interrupted.load(Ordering::SeqCst) {
                 return Err(anyhow!(INTERRUPTED_MESSAGE));
             }
             match line {
-                Ok(RowWithStats::Row(_)) => {
+                Ok(RowWithStats::Row(row)) => {
+                    self.observe_row(&row);
                     self.rows_count += 1;
                 }
                 Ok(RowWithStats::Stats(ss)) => {
@@ -420,7 +463,7 @@ impl ChunkDisplay for FormatDisplay<'_> {
             }
         }
         self.display_stats().await;
-        let stats = self.stats.take().unwrap_or_default();
+        let stats = self.stats.clone().unwrap_or_default();
         Ok(stats)
     }
 }
@@ -863,5 +906,105 @@ fn value_display_width(value: &Value, quote_string: bool) -> usize {
             let value_str = value.to_string();
             UnicodeWidthStr::width(value_str.as_str())
         }
+    }
+}
+
+#[cfg(test)]
+mod agent_tests {
+    use super::*;
+
+    fn stream(fail: bool) -> RowStatsIterator {
+        let schema = Arc::new(Schema::from_vec(vec![databend_driver::Field {
+            name: "value".into(),
+            data_type: databend_driver::DataType::String,
+        }]));
+        let mut events: Vec<databend_driver::Result<RowWithStats>> = (0..50)
+            .map(|n| {
+                Ok(RowWithStats::Row(Row::new(
+                    schema.clone(),
+                    vec![Value::String(n.to_string())],
+                )))
+            })
+            .collect();
+        events.push(Ok(RowWithStats::Stats(ServerStats {
+            read_rows: 1000,
+            ..ServerStats::default()
+        })));
+        if fail {
+            events.push(Err(databend_driver::Error::BadArgument(
+                "test failure".into(),
+            )));
+        }
+        RowStatsIterator::new(schema, Box::pin(tokio_stream::iter(events)))
+    }
+
+    #[tokio::test]
+    async fn captures_preview_and_partial_failures_in_all_output_formats() {
+        for format in [
+            OutputFormat::Table,
+            OutputFormat::CSV,
+            OutputFormat::TSV,
+            OutputFormat::Null,
+        ] {
+            for fail in [false, true] {
+                let settings = Settings {
+                    output_format: format.clone(),
+                    max_display_rows: 4,
+                    ..Settings::default()
+                };
+                let mut display = FormatDisplay::new(
+                    &settings,
+                    "SELECT value FROM t",
+                    false,
+                    Instant::now(),
+                    stream(fail),
+                    Arc::new(AtomicBool::new(false)),
+                );
+                display.enable_capture();
+                let result = display.display(None).await;
+                assert_eq!(result.is_err(), fail);
+                let preview = display.take_preview(result.is_ok()).unwrap();
+                assert_eq!(preview.rows.len(), 30);
+                assert_eq!(preview.fetched_rows, 50);
+                assert_eq!(preview.total_rows, if fail { None } else { Some(50) });
+                assert!(!preview.complete);
+                assert_eq!(display.latest_stats().unwrap().read_rows, 1000);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn capture_can_interrupt_a_pending_result_stream() {
+        let settings = Settings {
+            output_format: OutputFormat::Null,
+            ..Settings::default()
+        };
+        let (_sender, receiver) =
+            tokio::sync::mpsc::channel::<databend_driver::Result<RowWithStats>>(1);
+        let stream = RowStatsIterator::new(
+            Default::default(),
+            Box::pin(tokio_stream::wrappers::ReceiverStream::new(receiver)),
+        );
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let mut display = FormatDisplay::new(
+            &settings,
+            "SELECT 1",
+            false,
+            Instant::now(),
+            stream,
+            interrupted.clone(),
+        );
+        display.enable_capture();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            interrupted.store(true, Ordering::SeqCst);
+        });
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), display.display(None))
+            .await
+            .unwrap();
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains(INTERRUPTED_MESSAGE));
     }
 }

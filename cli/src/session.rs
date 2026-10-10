@@ -17,6 +17,9 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::agent::memory::{bounded_text, QueryRecord, MAX_TEXT_BYTES};
+use crate::agent::router::{comments_only, smart_input_is_safe, Input};
+use crate::agent::{AgentSession, InteractionMode};
 use crate::ast::quote_string_in_box_display;
 use crate::ast::QueryKind;
 use crate::config::ExpandMode;
@@ -32,6 +35,7 @@ use anyhow::anyhow;
 use anyhow::Result;
 use async_recursion::async_recursion;
 use chrono::NaiveDateTime;
+use clap::ValueEnum;
 use databend_common_ast::parser::all_reserved_keywords;
 use databend_driver::{Client, Connection, LoadMethod, ServerStats, TryFromRow};
 use log::error;
@@ -59,6 +63,20 @@ static VERSION_SHORT: Lazy<String> = Lazy::new(|| {
     }
 });
 
+fn usable_query_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 256
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
+async fn wait_for_interrupt(interrupted: Arc<AtomicBool>) {
+    while !interrupted.load(Ordering::SeqCst) {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 pub struct Session {
     client: Client,
     pub conn: Connection,
@@ -66,7 +84,7 @@ pub struct Session {
 
     settings: Settings,
     query: String,
-    sql_parser: SqlParser,
+    agent: Option<AgentSession>,
 
     server_handle: Option<JoinHandle<std::io::Result<()>>>,
 
@@ -192,16 +210,13 @@ impl Session {
             .expect("Error setting Ctrl-C handler");
         }
 
-        // Create SQL parser with session settings
-        let sql_parser = SqlParser::new(settings.sql_delimiter, settings.multi_line, is_repl);
-
         Ok(Self {
             client,
             conn,
             is_repl,
             settings,
             query: String::new(),
-            sql_parser,
+            agent: None,
             keywords,
             server_handle,
             interrupted,
@@ -336,6 +351,211 @@ impl Session {
         Ok(())
     }
 
+    pub async fn handle_agent_repl(
+        &mut self,
+        mode: InteractionMode,
+        config: crate::agent::config::AgentConfig,
+        backend: Option<String>,
+    ) -> Result<()> {
+        let mut agent = AgentSession::new(config, backend);
+        agent.mode = mode;
+        self.agent = Some(agent);
+        let config = Builder::new()
+            .max_history_size(100)?
+            .completion_prompt_limit(10)
+            .completion_type(CompletionType::List)
+            .build();
+        let mut rl = Editor::<CliHelper, DefaultHistory>::with_config(config)?;
+        rl.set_helper(Some(CliHelper::new(self.keywords.clone())));
+        // Deliberately do not load or save SQL/chat history in agent mode.
+        'repl: loop {
+            let mode = self.agent.as_ref().unwrap().mode;
+            let prompt = mode.prompt(!self.query.is_empty());
+            let line = match rl.readline(&prompt) {
+                Ok(line) => line,
+                Err(ReadlineError::Interrupted) => {
+                    self.query.clear();
+                    self.interrupted.store(false, Ordering::SeqCst);
+                    continue;
+                }
+                Err(ReadlineError::Eof) => break,
+                Err(error) => {
+                    eprintln!("input error: {error}");
+                    break;
+                }
+            };
+            self.interrupted.store(false, Ordering::SeqCst);
+            if line.len() <= MAX_TEXT_BYTES {
+                let _ = rl.add_history_entry(&line);
+            }
+            if self.query.len() + line.len() + usize::from(!self.query.is_empty()) > 64 * 1024 {
+                eprintln!("Input exceeds the 64 KiB SQL buffer limit; pending SQL cleared.");
+                self.query.clear();
+                continue;
+            }
+            let input = if self.query.is_empty() {
+                mode.route(&line, self.settings.sql_delimiter)
+            } else if line.trim_start().starts_with('/') && !line.trim_start().starts_with("/*") {
+                eprintln!("SQL is pending. Finish it or press Ctrl+C before using a command.");
+                continue;
+            } else {
+                Input::Sql(&line)
+            };
+            if matches!(input, Input::Sql(_)) {
+                let candidate = if self.query.is_empty() {
+                    line.clone()
+                } else {
+                    format!("{}\n{line}", self.query)
+                };
+                if comments_only(&candidate) {
+                    self.query.clear();
+                    continue;
+                }
+                if mode == InteractionMode::Smart
+                    && !smart_input_is_safe(
+                        &candidate,
+                        self.settings.sql_delimiter,
+                        self.settings.multi_line,
+                    )
+                {
+                    eprintln!("Ambiguous input. No SQL executed; finish valid SQL or use /sql or sql mode. Pending SQL is unchanged; Ctrl+C clears it.");
+                    continue;
+                }
+            }
+            let queries = match input {
+                Input::Empty => continue,
+                Input::Ambiguous => {
+                    eprintln!("Ambiguous input. No SQL executed. Use /sql <SQL>, /ask <question>, or select sql/agent mode.");
+                    continue;
+                }
+                Input::Question(question) => {
+                    self.ask_agent(question).await;
+                    continue;
+                }
+                Input::Command(command) => {
+                    let (name, argument) = command
+                        .split_once(char::is_whitespace)
+                        .map_or((command, ""), |(name, rest)| (name, rest.trim()));
+                    match name {
+                        "/mode" => {
+                            if argument.is_empty() {
+                                println!("Current mode: {}", mode.name());
+                            } else {
+                                match InteractionMode::from_str(argument, true) {
+                                    Ok(mode) => {
+                                        self.agent.as_mut().unwrap().mode = mode;
+                                        println!("Switched to {} mode.", mode.name());
+                                    }
+                                    Err(_) => eprintln!("Usage: /mode smart|sql|agent"),
+                                }
+                            }
+                            continue;
+                        }
+                        "/backend" => {
+                            let agent = self.agent.as_mut().unwrap();
+                            if argument.is_empty() {
+                                match agent.backend_summary() {
+                                    Ok(summary) => println!("{summary}"),
+                                    Err(error) => eprintln!("AI configuration error: {error}"),
+                                }
+                            } else {
+                                match agent.select_backend(argument) {
+                                    Ok(()) => {
+                                        println!("Backend switched. Conversation reset; query memory retained.");
+                                    }
+                                    Err(error) => eprintln!("Backend unchanged: {error}"),
+                                }
+                            }
+                            continue;
+                        }
+                        "/ask" => {
+                            if argument.is_empty() {
+                                eprintln!("Usage: /ask <question>");
+                            } else {
+                                self.ask_agent(argument).await;
+                            }
+                            continue;
+                        }
+                        "/sql" => {
+                            if argument.is_empty() {
+                                eprintln!("Usage: /sql <SQL>");
+                                continue;
+                            }
+                            SqlParser::new(
+                                self.settings.sql_delimiter,
+                                self.settings.multi_line,
+                                self.is_repl,
+                            )
+                            .parse(argument)
+                        }
+                        "/context" => {
+                            let summary = self.agent.as_ref().unwrap().memory.summary();
+                            println!(
+                                "{}",
+                                if summary.is_empty() {
+                                    "No cached queries.\n"
+                                } else {
+                                    &summary
+                                }
+                            );
+                            continue;
+                        }
+                        "/clear" => {
+                            self.agent.as_mut().unwrap().clear();
+                            rl.clear_history()?;
+                            println!("Query memory and conversation cleared.");
+                            continue;
+                        }
+                        "/help" => {
+                            println!("{}", crate::agent::HELP);
+                            continue;
+                        }
+                        _ if name.starts_with('/') => {
+                            eprintln!("Unknown agent command. Use /help.");
+                            continue;
+                        }
+                        _ => vec![command.to_owned()],
+                    }
+                }
+                Input::Sql(_) => self.append_query(&line),
+            };
+            for query in queries {
+                if self.interrupted.load(Ordering::SeqCst) {
+                    eprintln!("Remaining SQL batch skipped after Ctrl+C.");
+                    self.query.clear();
+                    break;
+                }
+                match self.handle_query(true, &query).await {
+                    Ok(None) => break 'repl,
+                    Ok(Some(_)) => {}
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        self.query.clear();
+                        break;
+                    }
+                }
+            }
+        }
+        self.agent = None;
+        self.query.clear();
+        self.conn.close().await?;
+        println!("Bye~");
+        Ok(())
+    }
+
+    async fn ask_agent(&mut self, question: &str) {
+        let cancel = wait_for_interrupt(self.interrupted.clone());
+        tokio::select! {
+            result = self.agent.as_mut().unwrap().ask(question) => {
+                match result {
+                    Ok(answer) => println!("AI> {answer}"),
+                    Err(error) => eprintln!("AI error: {error}"),
+                }
+            }
+            _ = cancel => eprintln!("AI request interrupted."),
+        }
+    }
+
     pub async fn handle_repl(&mut self) {
         let config = Builder::new()
             .completion_prompt_limit(10)
@@ -463,7 +683,15 @@ impl Session {
     pub fn append_query(&mut self, line: &str) -> Vec<String> {
         // Use the SQL parser to parse the line incrementally
         let mut err = String::new();
-        let queries = self.sql_parser.parse_line(line, &mut self.query, &mut err);
+        let parser = SqlParser::new(
+            self.settings.sql_delimiter,
+            self.settings.multi_line,
+            self.is_repl,
+        );
+        let queries = parser.parse_line(line, &mut self.query, &mut err);
+        if self.agent.is_some() && comments_only(&self.query) {
+            self.query.clear();
+        }
 
         if self.query.is_empty() && queries.is_empty() && !err.is_empty() {
             eprintln!("Parser '{}' failed\nwith error '{}'", line, err);
@@ -486,11 +714,82 @@ impl Session {
         is_repl: bool,
         raw_query: &str,
     ) -> Result<Option<ServerStats>> {
+        if self.agent.is_some() && self.interrupted.load(Ordering::SeqCst) {
+            return Err(anyhow!(INTERRUPTED_MESSAGE));
+        }
+        let is_command =
+            raw_query.trim_start().starts_with('!') || matches!(raw_query.trim(), "exit" | "quit");
+        let mut record = (self.agent.is_some()
+            && !is_command
+            && !matches!(QueryKind::from(raw_query), QueryKind::AlterUserPassword))
+        .then(|| QueryRecord::new(raw_query));
+        let previous_id = self.conn.last_query_id();
+        let start = Instant::now();
+        if let Some(record) = &mut record {
+            let info = self.conn.info().await;
+            record.database = info.database.map(|v| bounded_text(v, 256).0);
+            record.warehouse = info.warehouse.map(|v| bounded_text(v, 256).0);
+        }
+        let result = self
+            .execute_query(is_repl, raw_query, record.as_mut())
+            .await;
+        if let Some(mut record) = record {
+            record.elapsed_ms = start.elapsed().as_millis();
+            record.query_id = self
+                .conn
+                .last_query_id()
+                .filter(|id| Some(id) != previous_id.as_ref() && usable_query_id(id));
+            match &result {
+                Ok(_) => {
+                    record.status = "success".into();
+                }
+                Err(error) => {
+                    record.error = Some(bounded_text(error, 4096).0);
+                    if self.interrupted.load(Ordering::SeqCst) {
+                        record.status = "interrupted".into();
+                    }
+                }
+            }
+            if record.status == "interrupted" {
+                if let Some(query_id) = &record.query_id {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        self.conn.kill_query(query_id),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {
+                            record.cancel_request_sent = true;
+                            eprintln!("Cancellation request sent for {query_id}; this does not confirm server termination or rollback.");
+                        }
+                        Ok(Err(error)) => eprintln!("Query cancellation failed: {error}"),
+                        Err(_) => eprintln!(
+                            "Cancellation request timed out; server execution state is unknown."
+                        ),
+                    }
+                } else {
+                    eprintln!("No usable current Query ID: cancellation cannot be confirmed. The query may continue or commit; verify its state before retrying writes.");
+                }
+            }
+            let id = self.agent.as_mut().unwrap().memory.push(record);
+            println!("[{id}] Query context cached. Use /context to inspect.");
+        }
+        result
+    }
+
+    async fn execute_query(
+        &mut self,
+        is_repl: bool,
+        raw_query: &str,
+        record: Option<&mut QueryRecord>,
+    ) -> Result<Option<ServerStats>> {
         let mut query = raw_query
             .trim_end_matches(self.settings.sql_delimiter)
             .trim();
         let mut expand = None;
-        self.interrupted.store(false, Ordering::SeqCst);
+        if self.agent.is_none() {
+            self.interrupted.store(false, Ordering::SeqCst);
+        }
 
         if is_repl {
             if query.starts_with('!') {
@@ -526,6 +825,15 @@ impl Session {
                     QueryKind::Put(l, r) => self.conn.put_files(&l, &r).await?,
                     QueryKind::Get(l, r) => self.conn.get_files(&l, &r).await?,
                     QueryKind::GenData(t, s, o) => self.gendata(t, s, o).await?,
+                    _ if self.agent.is_some() => {
+                        tokio::select! {
+                            biased;
+                            _ = wait_for_interrupt(self.interrupted.clone()) => {
+                                return Err(anyhow!("{INTERRUPTED_MESSAGE} during query submission: server execution may continue; its state and Query ID may be unknown"));
+                            }
+                            data = self.conn.query_iter_ext(query) => data?,
+                        }
+                    }
                     _ => self.conn.query_iter_ext(query).await?,
                 };
 
@@ -537,7 +845,17 @@ impl Session {
                     data,
                     self.interrupted.clone(),
                 );
-                let stats = displayer.display(expand).await?;
+                if record.is_some() {
+                    displayer.enable_capture();
+                }
+                let result = displayer.display(expand).await;
+                if let Some(record) = record {
+                    record.preview = displayer.take_preview(result.is_ok()).unwrap_or_default();
+                    if let Some(stats) = displayer.latest_stats() {
+                        record.set_stats(stats);
+                    }
+                }
+                let stats = result?;
                 self.show_query_id_if_needed();
                 Ok(Some(stats))
             }
@@ -730,5 +1048,27 @@ impl Drop for Session {
         if let Some(handle) = self.server_handle.take() {
             handle.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod agent_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn query_ids_are_never_truncated_or_used_as_arbitrary_paths() {
+        assert!(usable_query_id("1234-5678_abcd"));
+        for id in [
+            "",
+            "../other-query",
+            "q/kill",
+            "q?redirect",
+            "q#fragment",
+            "q\nsecret",
+            "q\u{001b}[31m",
+        ] {
+            assert!(!usable_query_id(id));
+        }
+        assert!(!usable_query_id(&"x".repeat(257)));
     }
 }
