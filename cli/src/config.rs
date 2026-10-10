@@ -29,6 +29,8 @@ pub struct Config {
     pub settings: SettingsConfig,
     #[serde(default)]
     pub server: ServerConfig,
+    #[serde(default)]
+    pub agent: crate::agent::config::AgentConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -275,11 +277,25 @@ impl Config {
     }
 
     fn load_from_file(path: &str) -> Self {
-        match toml::from_str(&std::fs::read_to_string(path).unwrap()) {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(_) => {
+                eprintln!("failed to read config file {path}; using SQL defaults, AI disabled");
+                return Self {
+                    agent: crate::agent::config::AgentConfig::invalid(),
+                    ..Self::default()
+                };
+            }
+        };
+        match toml::from_str(&contents) {
             Ok(config) => config,
-            Err(e) => {
-                eprintln!("failed to load config file {path}: {e}, using defaults");
-                Self::default()
+            Err(_) => {
+                // Parser diagnostics can include source lines containing credentials.
+                eprintln!("failed to parse config file {path}; using SQL defaults, AI disabled");
+                Self {
+                    agent: crate::agent::config::AgentConfig::invalid(),
+                    ..Self::default()
+                }
             }
         }
     }
@@ -334,5 +350,35 @@ impl Default for ServerConfig {
             bind_port: 0,
             auto_open_browser: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod agent_config_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn bad_agent_section_keeps_connection_and_settings() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(file, "[connection]\nhost='database.example'\n[settings]\nmax_display_rows=12\n[agent]\ntimeout_secs='bad'").unwrap();
+        let config = Config::load_from_file(file.path().to_str().unwrap());
+        assert_eq!(config.connection.host, "database.example");
+        assert_eq!(config.settings.max_display_rows, Some(12));
+        assert!(config.agent.settings().is_err());
+    }
+
+    #[test]
+    fn unreadable_and_syntactically_invalid_files_disable_ai() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "[agent\nsecret='do-not-print-this'").unwrap();
+        let config = Config::load_from_file(file.path().to_str().unwrap());
+        assert!(config.agent.settings().is_err());
+        let missing = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .join("missing-config.toml");
+        let config = Config::load_from_file(missing.to_str().unwrap());
+        assert!(config.agent.settings().is_err());
     }
 }

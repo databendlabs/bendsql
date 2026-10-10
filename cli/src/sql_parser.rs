@@ -338,7 +338,7 @@ impl SqlParser {
     }
 
     /// Parse accumulated query text to extract complete statements
-    fn parse_statements(&self, query: &str) -> ParseResult {
+    pub(crate) fn parse_statements(&self, query: &str) -> ParseResult {
         // Split off the unclosed block-comment tail so the tokenizer only
         // sees text it can handle.  Statements before the `/*` are still
         // extracted normally; the comment portion stays in `remaining`.
@@ -414,10 +414,10 @@ impl SqlParser {
     }
 }
 
-struct ParseResult {
-    statements: Vec<String>,
-    remaining: String,
-    err: String,
+pub(crate) struct ParseResult {
+    pub(crate) statements: Vec<String>,
+    pub(crate) remaining: String,
+    pub(crate) err: String,
 }
 
 /// Parse SQL text for web API (non-REPL mode)
