@@ -41,7 +41,7 @@ const MAX_CHAT_BYTES: usize = 16 * 1024;
 #[derive(Clone, Debug, Serialize)]
 pub struct Message {
     role: &'static str,
-    content: String,
+    pub(super) content: String,
 }
 
 #[derive(Default)]

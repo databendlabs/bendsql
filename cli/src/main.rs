@@ -123,23 +123,16 @@ struct Args {
 
     #[clap(
         long,
-        conflicts_with_all = ["non_interactive", "query", "check", "data", "time", "ui"],
-        help = "Start an interactive SQL + AI session (model configured with BENDSQL_AGENT_* environment variables)"
-    )]
-    agent: bool,
-
-    #[clap(
-        long,
         value_enum,
-        requires = "agent",
-        help = "Initial interactive mode: smart (default), sql, or agent"
+        conflicts_with_all = ["non_interactive", "query", "check", "data", "time"],
+        help = "Initial interactive mode: sql (default), smart, or agent"
     )]
     mode: Option<agent::InteractionMode>,
 
     #[clap(
         long,
-        requires = "agent",
-        help = "Select a built-in CLI (claude/codex/pi/amp), a configured backend, or env for BENDSQL_AGENT_* settings"
+        conflicts_with_all = ["non_interactive", "query", "check", "data", "time"],
+        help = "Select a built-in CLI (claude/codex/pi), a configured backend, or env for BENDSQL_AGENT_* settings"
     )]
     backend: Option<String>,
 
@@ -243,9 +236,11 @@ pub async fn main() -> Result<()> {
         cmd.print_help()?;
         return Ok(());
     }
-    if args.agent && (!stdin().is_terminal() || !std::io::stdout().is_terminal()) {
+    if (args.mode.is_some() || args.backend.is_some())
+        && (!stdin().is_terminal() || !std::io::stdout().is_terminal())
+    {
         return Err(anyhow!(
-            "--agent requires an interactive terminal (stdin and stdout)"
+            "--mode/--backend require an interactive terminal (stdin and stdout)"
         ));
     }
 
@@ -373,7 +368,12 @@ pub async fn main() -> Result<()> {
     let dsn = conn_args.get_dsn()?;
     let mut settings = Settings::default();
     let is_terminal = stdin().is_terminal();
-    let is_repl = is_terminal && !args.non_interactive && !args.check && args.query.is_none();
+    let is_repl = is_terminal
+        && !args.non_interactive
+        && !args.check
+        && args.query.is_none()
+        && args.data.is_none()
+        && args.time.is_none();
     if is_repl {
         settings.display_pretty_sql = true;
         settings.show_progress = true;
@@ -422,12 +422,14 @@ pub async fn main() -> Result<()> {
     std::fs::create_dir_all(&log_dir)
         .with_context(|| format!("failed to create log directory {log_dir}"))?;
 
-    // The REST client logs SQL at info level. Keep agent SQL/chat memory off disk.
-    let log_level = if args.agent { "off" } else { &args.log_level };
+    // Interactive sessions can switch to AI at any time. Keep SQL/chat memory
+    // off disk in every interactive mode; batch logging remains unchanged.
+    let log_level = if is_repl { "off" } else { &args.log_level };
     let _guards = trace::init_logging(&log_dir, log_level).await?;
     info!("-> bendsql version: {}", VERSION.as_str());
 
-    let mut session = match session::Session::try_new(dsn, settings, is_repl).await {
+    let initial_mode = args.mode.unwrap_or_default();
+    let mut session = match session::Session::try_new(dsn, settings, is_repl, initial_mode).await {
         Ok(session) => session,
         Err(err) => {
             // Exit client if user login failed.
@@ -455,14 +457,10 @@ pub async fn main() -> Result<()> {
         return Ok(());
     }
 
-    if args.agent {
-        return session
-            .handle_agent_repl(args.mode.unwrap_or_default(), config.agent, args.backend)
-            .await;
-    }
     if is_repl {
-        session.handle_repl().await;
-        return Ok(());
+        return session
+            .handle_repl(initial_mode, config.agent, args.backend)
+            .await;
     }
 
     match args.query {
@@ -507,32 +505,32 @@ mod agent_args_tests {
     use super::*;
 
     #[test]
-    fn agent_is_explicit_and_conflicts_with_batch_modes() {
-        assert!(!Args::try_parse_from(["bendsql"]).unwrap().agent);
-        assert!(Args::try_parse_from(["bendsql", "--agent"]).unwrap().agent);
+    fn interactive_options_do_not_require_a_flag_and_conflict_with_batch_modes() {
+        let args = Args::try_parse_from(["bendsql"]).unwrap();
+        assert_eq!(args.mode.unwrap_or_default(), agent::InteractionMode::Sql);
+        assert!(Args::try_parse_from(["bendsql", "--agent"]).is_err());
         for flag in [
             "--non-interactive",
             "--check",
-            "--ui",
             "--time",
             "--query=SELECT 1",
             "--data=@file",
         ] {
-            assert!(Args::try_parse_from(["bendsql", "--agent", flag]).is_err());
+            assert!(Args::try_parse_from(["bendsql", "--mode", "sql", flag]).is_err());
+            assert!(Args::try_parse_from(["bendsql", "--backend", "api", flag]).is_err());
         }
-        assert!(Args::try_parse_from(["bendsql", "--agent", "--output", "tsv"]).is_ok());
-        assert!(Args::try_parse_from(["bendsql", "--backend", "api"]).is_err());
+        assert!(Args::try_parse_from(["bendsql", "--output", "tsv"]).is_ok());
         assert_eq!(
-            Args::try_parse_from(["bendsql", "--agent", "--backend", "api"])
+            Args::try_parse_from(["bendsql", "--backend", "api"])
                 .unwrap()
                 .backend
                 .as_deref(),
             Some("api")
         );
-        assert!(Args::try_parse_from(["bendsql", "--mode", "sql"]).is_err());
-        assert!(Args::try_parse_from(["bendsql", "--agent", "--mode", "unknown"]).is_err());
+        assert!(Args::try_parse_from(["bendsql", "--mode", "sql"]).is_ok());
+        assert!(Args::try_parse_from(["bendsql", "--mode", "unknown"]).is_err());
         for mode in ["smart", "sql", "agent"] {
-            let args = Args::try_parse_from(["bendsql", "--agent", "--mode", mode]).unwrap();
+            let args = Args::try_parse_from(["bendsql", "--mode", mode]).unwrap();
             assert_eq!(args.mode.unwrap().name(), mode);
         }
     }

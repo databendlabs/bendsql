@@ -20,7 +20,7 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Deserializer};
 
 pub const ENV_BACKEND: &str = "env";
-pub const BUILTIN_BACKENDS: [&str; 4] = ["local-claude", "local-codex", "local-pi", "local-amp"];
+pub const BUILTIN_BACKENDS: [&str; 3] = ["local-claude", "local-codex", "local-pi"];
 
 fn default_timeout() -> u64 {
     60
@@ -69,7 +69,6 @@ pub enum CliAdapter {
     Codex,
     ClaudeCode,
     Pi,
-    Amp,
 }
 
 #[derive(Clone, Deserialize)]
@@ -114,7 +113,6 @@ fn canonical_builtin(name: &str) -> Option<&'static str> {
         "local-claude" | "claude" | "claude-code" => Some("local-claude"),
         "local-codex" | "codex" => Some("local-codex"),
         "local-pi" | "pi" => Some("local-pi"),
-        "local-amp" | "amp" => Some("local-amp"),
         _ => None,
     }
 }
@@ -124,7 +122,6 @@ fn builtin_backend(name: &str) -> Option<BackendConfig> {
         "local-claude" => CliAdapter::ClaudeCode,
         "local-codex" => CliAdapter::Codex,
         "local-pi" => CliAdapter::Pi,
-        "local-amp" => CliAdapter::Amp,
         _ => unreachable!("canonical names are fixed"),
     };
     Some(BackendConfig::Cli {
@@ -132,7 +129,7 @@ fn builtin_backend(name: &str) -> Option<BackendConfig> {
         command: None,
         model: None,
         env_allowlist: Vec::new(),
-        // --agent opts into local CLI discovery when no backend is selected.
+        // AI questions use local CLI discovery when no backend is selected.
         // Discovery checks executables only; a question starts the process.
         allow_external_agent: true,
     })
@@ -213,7 +210,6 @@ impl<'de> Deserialize<'de> for AgentConfig {
                         CliAdapter::Codex => "codex".into(),
                         CliAdapter::ClaudeCode => "claude-code".into(),
                         CliAdapter::Pi => "pi".into(),
-                        CliAdapter::Amp => "amp".into(),
                     });
                     table
                         .entry("allow_external_agent")
@@ -250,8 +246,6 @@ mod tests {
             ("claude-code", CliAdapter::ClaudeCode),
             ("local-pi", CliAdapter::Pi),
             ("pi", CliAdapter::Pi),
-            ("local-amp", CliAdapter::Amp),
-            ("amp", CliAdapter::Amp),
         ] {
             let backend = settings.backend(name).unwrap();
             match backend.as_ref() {
@@ -270,6 +264,7 @@ mod tests {
             }
         }
         assert!(settings.backend("unsupported").is_none());
+        assert!(settings.backend("amp").is_none());
     }
 
     #[test]
@@ -465,13 +460,14 @@ allow_external_agent = true
 
     #[test]
     fn parses_cli_adapters_and_rejects_unsafe_or_unsupported_options() {
-        for adapter in ["codex", "claude-code", "pi", "amp"] {
+        for adapter in ["codex", "claude-code", "pi"] {
             let text = format!("[agent.backends.cli]\ntype='cli'\nadapter='{adapter}'\nallow_external_agent=true\nenv_allowlist=['CUSTOM_AUTH']");
             let config: Config = toml::from_str(&text).unwrap();
             assert!(config.agent.settings().is_ok());
         }
         for options in [
             "adapter='unsupported'",
+            "adapter='amp'",
             "adapter='codex'\nargs=['--dangerously-bypass-approvals-and-sandbox']",
             "adapter='codex'\nallow_external_agent='true'",
         ] {

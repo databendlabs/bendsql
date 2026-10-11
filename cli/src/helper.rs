@@ -15,25 +15,33 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use rustyline::completion::Completer;
-use rustyline::completion::FilenameCompleter;
-use rustyline::completion::Pair;
-use rustyline::error::ReadlineError;
-use rustyline::highlight::CmdKind;
-use rustyline::highlight::Highlighter;
-use rustyline::hint::Hinter;
-use rustyline::validate::ValidationContext;
-use rustyline::validate::ValidationResult;
-use rustyline::validate::Validator;
-use rustyline::Context;
-use rustyline::Helper;
-use rustyline::Result;
+use rustyline::completion::{Completer, FilenameCompleter, Pair};
+use rustyline::highlight::{CmdKind, Highlighter};
+use rustyline::hint::{Hint, Hinter};
+use rustyline::validate::{ValidationContext, ValidationResult, Validator};
+use rustyline::{Context, Helper, Result};
 
+use crate::agent::InteractionMode;
 use crate::ast::highlight_query;
 
 pub struct CliHelper {
     completer: FilenameCompleter,
     keywords: Option<Arc<sled::Db>>,
+    mode: InteractionMode,
+}
+
+pub struct CliHint {
+    text: String,
+    completion: Option<String>,
+}
+
+impl Hint for CliHint {
+    fn display(&self) -> &str {
+        &self.text
+    }
+    fn completion(&self) -> Option<&str> {
+        self.completion.as_deref()
+    }
 }
 
 impl CliHelper {
@@ -41,82 +49,127 @@ impl CliHelper {
         Self {
             completer: FilenameCompleter::new(),
             keywords,
+            mode: InteractionMode::Sql,
         }
     }
+
+    pub fn set_mode(&mut self, mode: InteractionMode) {
+        self.mode = mode;
+    }
+}
+
+/// Only the !mode command is completed in non-SQL modes. Completion replaces
+/// the argument, never the command or arbitrary question text.
+fn mode_candidates(line: &str, pos: usize) -> Option<(usize, Vec<Pair>)> {
+    let prefix = line.get(..pos)?;
+    let text = prefix.trim_start();
+    let argument = text.strip_prefix("!mode")?;
+    if !argument.is_empty() && !argument.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let word = argument.trim_start();
+    if word.chars().any(char::is_whitespace) {
+        return Some((pos, Vec::new()));
+    }
+    let partial = word.to_ascii_lowercase();
+    let separator = if argument.is_empty() { " " } else { "" };
+    let pairs = ["sql", "smart", "agent"]
+        .into_iter()
+        .filter(|mode| mode.starts_with(&partial))
+        .map(|mode| Pair {
+            display: mode.into(),
+            replacement: format!("{separator}{mode}"),
+        })
+        .collect();
+    Some((pos - word.len(), pairs))
 }
 
 impl Highlighter for CliHelper {
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        let line = highlight_query(line);
-        Cow::Owned(line)
+        if self.mode == InteractionMode::Sql {
+            Cow::Owned(highlight_query(line))
+        } else {
+            Cow::Borrowed(line)
+        }
     }
-
     fn highlight_prompt<'b, 's: 'b, 'p: 'b>(
         &'s self,
         prompt: &'p str,
-        default: bool,
-    ) -> std::borrow::Cow<'b, str> {
-        let _ = default;
-        std::borrow::Cow::Borrowed(prompt)
+        _default: bool,
+    ) -> Cow<'b, str> {
+        Cow::Borrowed(prompt)
     }
-
-    fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> {
-        std::borrow::Cow::Owned("\x1b[1m".to_owned() + hint + "\x1b[m")
+    fn highlight_hint<'h>(&self, hint: &'h str) -> Cow<'h, str> {
+        Cow::Owned(format!("\x1b[1m{hint}\x1b[m"))
     }
-
     fn highlight_candidate<'c>(
         &self,
-        candidate: &'c str, // FIXME should be Completer::Candidate
-        completion: rustyline::CompletionType,
-    ) -> std::borrow::Cow<'c, str> {
-        let _ = completion;
-        std::borrow::Cow::Borrowed(candidate)
+        candidate: &'c str,
+        _completion: rustyline::CompletionType,
+    ) -> Cow<'c, str> {
+        Cow::Borrowed(candidate)
     }
-
     fn highlight_char(&self, line: &str, _pos: usize, _kind: CmdKind) -> bool {
-        !line.is_empty()
+        self.mode == InteractionMode::Sql && !line.is_empty()
     }
 }
 
 impl Hinter for CliHelper {
-    type Hint = String;
-
-    fn hint(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> Option<Self::Hint> {
+    type Hint = CliHint;
+    fn hint(&self, line: &str, pos: usize, _ctx: &Context<'_>) -> Option<CliHint> {
+        if pos != line.len() {
+            return None;
+        }
+        if mode_candidates(line, pos).is_some() {
+            let argument = line.trim_start().strip_prefix("!mode")?;
+            if argument.trim().is_empty() {
+                let separator = if argument.is_empty() { " " } else { "" };
+                return Some(CliHint {
+                    text: format!("{separator}sql | smart | agent"),
+                    completion: None,
+                });
+            }
+            return None;
+        }
+        if self.mode != InteractionMode::Sql {
+            return None;
+        }
         let last_word = line
             .split(|p: char| p.is_whitespace() || p == '.')
             .next_back()
             .unwrap_or(line);
-
         if last_word.is_empty() {
             return None;
         }
-        match self.keywords {
-            Some(ref keywords) => {
-                let (_, res) = KeyWordCompleter::complete(line, pos, keywords);
-                if !res.is_empty() {
-                    Some(res[0].replacement[last_word.len()..].to_owned())
-                } else {
-                    None
-                }
-            }
-            None => None,
+        let (_, results) = KeyWordCompleter::complete(line, pos, self.keywords.as_ref()?);
+        let suffix = results
+            .first()?
+            .replacement
+            .get(last_word.len()..)?
+            .to_owned();
+        if suffix.is_empty() {
+            return None;
         }
+        Some(CliHint {
+            text: suffix.clone(),
+            completion: Some(suffix),
+        })
     }
 }
 
 impl Completer for CliHelper {
     type Candidate = Pair;
-
-    fn complete(
-        &self,
-        line: &str,
-        pos: usize,
-        ctx: &Context<'_>,
-    ) -> std::result::Result<(usize, Vec<Pair>), ReadlineError> {
+    fn complete(&self, line: &str, pos: usize, ctx: &Context<'_>) -> Result<(usize, Vec<Pair>)> {
+        if let Some(result) = mode_candidates(line, pos) {
+            return Ok(result);
+        }
+        if self.mode != InteractionMode::Sql {
+            return Ok((pos, Vec::new()));
+        }
         if let Some(ref keywords) = self.keywords {
-            let keyword_candidates = KeyWordCompleter::complete(line, pos, keywords);
-            if !keyword_candidates.1.is_empty() {
-                return Ok(keyword_candidates);
+            let result = KeyWordCompleter::complete(line, pos, keywords);
+            if !result.1.is_empty() {
+                return Ok(result);
             }
         }
         self.completer.complete(line, pos, ctx)
@@ -125,43 +178,104 @@ impl Completer for CliHelper {
 
 impl Validator for CliHelper {
     fn validate(&self, ctx: &mut ValidationContext<'_>) -> Result<ValidationResult> {
-        let input = ctx.input().trim_end();
-        if input.strip_suffix('\\').is_some() {
+        if self.mode == InteractionMode::Sql && ctx.input().trim_end().ends_with('\\') {
             Ok(ValidationResult::Incomplete)
         } else {
             Ok(ValidationResult::Valid(None))
         }
     }
 }
-
 impl Helper for CliHelper {}
 
-struct KeyWordCompleter {}
-
+struct KeyWordCompleter;
 impl KeyWordCompleter {
-    fn complete(s: &str, pos: usize, db: &sled::Db) -> (usize, Vec<Pair>) {
-        let hint = s
-            .split(|p: char| p.is_whitespace() || p == '.')
+    fn complete(text: &str, pos: usize, db: &sled::Db) -> (usize, Vec<Pair>) {
+        let Some(prefix) = text.get(..pos) else {
+            return (pos, Vec::new());
+        };
+        let word = prefix
+            .split(|c: char| c.is_whitespace() || c == '.')
             .next_back()
-            .unwrap_or(s)
-            .to_ascii_lowercase();
+            .unwrap_or(prefix);
+        let hint = word.to_ascii_lowercase();
+        let results = db
+            .scan_prefix(&hint)
+            .filter_map(|entry| entry.ok())
+            .map(|(word, category)| {
+                let word = String::from_utf8_lossy(&word);
+                Pair {
+                    display: format!("{word}({})", String::from_utf8_lossy(&category)),
+                    replacement: word.to_string(),
+                }
+            })
+            .collect();
+        (pos - word.len(), results)
+    }
+}
 
-        let r = db.scan_prefix(&hint);
-        let mut results = Vec::new();
-        for line in r {
-            let (w, t) = line.unwrap();
-            let word = String::from_utf8_lossy(&w);
-            let category = String::from_utf8_lossy(&t);
-            results.push(Pair {
-                display: format!("{word}({category})"),
-                replacement: word.to_string(),
-            });
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyline::history::DefaultHistory;
+
+    #[test]
+    fn sql_hints_and_completion_are_disabled_in_other_modes() {
+        let db = Arc::new(sled::Config::new().temporary(true).open().unwrap());
+        db.insert("select", "k").unwrap();
+        let mut helper = CliHelper::new(Some(db));
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+        let prefix = &"select"[..5];
+        assert_eq!(
+            helper
+                .hint(prefix, prefix.len(), &ctx)
+                .unwrap()
+                .completion(),
+            Some("t")
+        );
+        assert!(!helper.complete("sel", 3, &ctx).unwrap().1.is_empty());
+        for mode in [InteractionMode::Smart, InteractionMode::Agent] {
+            helper.set_mode(mode);
+            assert!(helper.hint("sel", 3, &ctx).is_none());
+            assert!(helper.complete("sel", 3, &ctx).unwrap().1.is_empty());
+            assert!(helper.complete("/tmp/", 5, &ctx).unwrap().1.is_empty());
+            assert_eq!(helper.highlight("select", 6), "select");
         }
+        helper.set_mode(InteractionMode::Sql);
+        assert!(helper.hint("sel", 3, &ctx).is_some());
+    }
 
-        if pos >= hint.len() {
-            (pos - hint.len(), results)
-        } else {
-            (0, results)
+    #[test]
+    fn mode_choices_are_available_in_every_mode_and_are_not_inserted_as_one_hint() {
+        let mut helper = CliHelper::new(None);
+        let history = DefaultHistory::new();
+        let ctx = Context::new(&history);
+        for mode in [
+            InteractionMode::Sql,
+            InteractionMode::Smart,
+            InteractionMode::Agent,
+        ] {
+            helper.set_mode(mode);
+            let hint = helper.hint("!mode", 5, &ctx).unwrap();
+            assert_eq!(hint.display(), " sql | smart | agent");
+            assert!(hint.completion().is_none());
+            let (_, choices) = helper.complete("!mode ", 6, &ctx).unwrap();
+            assert_eq!(
+                choices
+                    .iter()
+                    .map(|p| p.replacement.as_str())
+                    .collect::<Vec<_>>(),
+                ["sql", "smart", "agent"]
+            );
+            let (start, choices) = helper.complete("!mode sm", 8, &ctx).unwrap();
+            assert_eq!(start, 6);
+            assert_eq!(choices[0].replacement, "smart");
+            assert!(helper
+                .complete("!mode sql extra", 15, &ctx)
+                .unwrap()
+                .1
+                .is_empty());
+            assert!(mode_candidates("!model", 6).is_none());
         }
     }
 }

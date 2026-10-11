@@ -77,10 +77,7 @@ pub fn classify(line: &str, delimiter: char) -> Input<'_> {
     if line.is_empty() {
         return Input::Empty;
     }
-    if (line.starts_with('/') && !line.starts_with("/*"))
-        || line.starts_with('!')
-        || matches!(line, "exit" | "quit")
-    {
+    if line.starts_with('!') || matches!(line, "exit" | "quit") {
         return Input::Command(line);
     }
     if comments_only(line) {
@@ -91,7 +88,7 @@ pub fn classify(line: &str, delimiter: char) -> Input<'_> {
     }
     let first = first_keyword(line);
     // File-transfer/generation commands are client operations, not AST SQL.
-    // Require /sql or sql mode rather than guessing whether "put/get" is prose.
+    // Require !sql or sql mode rather than guessing whether "put/get" is prose.
     if matches!(first.as_str(), "PUT" | "GET" | "GENDATA") {
         return Input::Ambiguous;
     }
@@ -158,7 +155,7 @@ mod tests {
             "SELECT 1; SELECT * FROM",
             "SELECT 1; SELECT 'unfinished",
             "SELECT 1; !exit",
-            "SELECT 1; /ask why",
+            "SELECT 1; !ask why",
             "SELECT 1; definitely_not_sql;",
             "SELECT 1; /* unfinished",
         ] {
@@ -239,8 +236,8 @@ mod tests {
         assert_eq!(classify("SELECT 为什么这么慢？", ';'), Input::Ambiguous);
         assert_eq!(classify("show me the results", ';'), Input::Ambiguous);
         assert_eq!(
-            classify(" /ask explain this ", ';'),
-            Input::Command("/ask explain this")
+            classify(" !ask explain this ", ';'),
+            Input::Command("!ask explain this")
         );
         assert_eq!(classify("quit", ';'), Input::Command("quit"));
         assert_eq!(classify("  ", ';'), Input::Empty);

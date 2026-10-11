@@ -61,14 +61,10 @@ impl CliBackend {
                 "CLI model must be nonempty, at most 256 bytes and contain no control characters"
             );
         }
-        if adapter == CliAdapter::Amp && model.is_some() {
-            bail!("Amp manages its own model routing; omit model for the Amp backend (no verified --model interface)");
-        }
         let executable = resolve_executable(command.unwrap_or(match adapter {
             CliAdapter::Codex => "codex",
             CliAdapter::ClaudeCode => "claude",
             CliAdapter::Pi => "pi",
-            CliAdapter::Amp => "amp",
         }))?;
         let env = child_environment(Some(adapter), env_allowlist)?;
         let codex = (adapter == CliAdapter::Codex).then(|| {
@@ -107,14 +103,7 @@ impl CliBackend {
         if let Some(model) = &self.model {
             args.extend(["--model".into(), model.into()]);
         }
-        if self.adapter == CliAdapter::Amp {
-            // Static policy only: never write SQL, prompts, secrets or answers.
-            let path = directory.path().join("amp-policy.json");
-            std::fs::write(&path, serde_json::to_vec(&amp_policy())?)
-                .map_err(|_| anyhow!("Cannot create temporary Amp policy"))?;
-            args.extend(["--settings-file".into(), path.into_os_string()]);
-        }
-        if matches!(self.adapter, CliAdapter::Pi | CliAdapter::Amp) {
+        if self.adapter == CliAdapter::Pi {
             self.capabilities_checked
                 .get_or_try_init(|| async {
                     let mut probe = args.clone();
@@ -129,7 +118,6 @@ impl CliBackend {
             CliAdapter::Codex => unreachable!("Codex uses the app-server transport"),
             CliAdapter::ClaudeCode => parse_claude(&stdout),
             CliAdapter::Pi => parse_pi(&stdout),
-            CliAdapter::Amp => parse_amp(&stdout),
         }
     }
 
@@ -314,7 +302,6 @@ pub(super) fn child_environment(
             "RADIUS_API_KEY",
             "HF_TOKEN",
         ],
-        Some(CliAdapter::Amp) => &["AMP_API_KEY"],
         None => &[],
     };
     for name in auth {
@@ -345,7 +332,6 @@ pub(super) fn child_environment(
                 | "PI_OFFLINE"
                 | "PI_SKIP_VERSION_CHECK"
                 | "PI_TELEMETRY"
-                | "AMP_SKIP_UPDATE_CHECK"
         ) {
             bail!("CLI env_allowlist cannot override enforced safety settings");
         }
@@ -364,9 +350,6 @@ pub(super) fn child_environment(
         env.insert("PI_OFFLINE".into(), "1".into());
         env.insert("PI_SKIP_VERSION_CHECK".into(), "1".into());
         env.insert("PI_TELEMETRY".into(), "0".into());
-    }
-    if adapter == Some(CliAdapter::Amp) {
-        env.insert("AMP_SKIP_UPDATE_CHECK".into(), "1".into());
     }
     Ok(env)
 }
@@ -425,26 +408,7 @@ fn arguments(adapter: CliAdapter) -> Vec<&'static str> {
             "--system-prompt",
             SYSTEM_PROMPT,
         ],
-        CliAdapter::Amp => vec!["--execute", "--stream-json"],
     }
-}
-
-#[cfg(unix)]
-fn amp_policy() -> serde_json::Value {
-    serde_json::json!({
-        "amp.tools.disable": ["*"],
-        "amp.mcpServers": {},
-        "amp.mcpPermissions": [
-            {"matches": {"command": "*"}, "action": "reject"},
-            {"matches": {"url": "*"}, "action": "reject"},
-        ],
-        "amp.updates.mode": "disabled",
-        "amp.runner.env.enabled": false,
-        "amp.remoteThreadCreation.enabled": false,
-        "amp.notifications.enabled": false,
-        "amp.skills.disableClaudeCodeSkills": true,
-        "amp.skills.disableGlobalAgentsSkills": true,
-    })
 }
 
 #[cfg(unix)]
@@ -468,7 +432,6 @@ fn validate_capabilities(adapter: CliAdapter, help: &[u8]) -> Result<()> {
             "--offline",
             "--system-prompt",
         ],
-        CliAdapter::Amp => &["--execute", "--stream-json", "--settings-file"],
         _ => &[],
     };
     let advertised: std::collections::BTreeSet<_> = text
@@ -638,73 +601,6 @@ fn parse_pi(bytes: &[u8]) -> Result<String> {
 }
 
 #[cfg(unix)]
-fn parse_amp(bytes: &[u8]) -> Result<String> {
-    let mut initialized = false;
-    let mut answer = None;
-    for event in events(bytes) {
-        let event = event?;
-        if answer.is_some() {
-            bail!("Amp returned records after its final result");
-        }
-        match (event["type"].as_str(), event["subtype"].as_str()) {
-            (Some("system"), Some("init")) => {
-                if initialized {
-                    bail!("Amp returned multiple initialization records");
-                }
-                let tools = event["tools"]
-                    .as_array()
-                    .ok_or_else(|| anyhow!("Amp did not report its enabled tools"))?;
-                let servers = event["mcp_servers"]
-                    .as_array()
-                    .ok_or_else(|| anyhow!("Amp did not report its MCP capabilities"))?;
-                if !tools.is_empty()
-                    || servers.iter().any(|s| {
-                        !matches!(
-                            s["status"].as_str(),
-                            Some("denied" | "failed" | "blocked-by-registry")
-                        )
-                    })
-                {
-                    bail!("Amp reported active tools or MCP despite the restricted policy; answer suppressed");
-                }
-                initialized = true;
-            }
-            (Some("system"), Some(subtype)) if subtype.starts_with("error") => {
-                bail!("Amp reported a system error; diagnostics suppressed")
-            }
-            (Some("assistant"), _)
-                if event["message"]["content"]
-                    .as_array()
-                    .is_some_and(|blocks| blocks.iter().any(|b| b["type"] == "tool_use")) =>
-            {
-                bail!("Amp reported a tool call despite the restricted policy; answer suppressed");
-            }
-            (Some("result"), Some("success")) if event["is_error"] == false && initialized => {
-                if !event["permission_denials"].is_null()
-                    && !event["permission_denials"]
-                        .as_array()
-                        .is_some_and(Vec::is_empty)
-                {
-                    bail!(
-                        "Amp reported permission denials or invalid permissions; answer suppressed"
-                    );
-                }
-                answer = Some(normalize_answer(
-                    event["result"]
-                        .as_str()
-                        .ok_or_else(|| anyhow!("Amp returned no text answer"))?,
-                )?);
-            }
-            (Some("result"), _) | (Some("error"), _) => {
-                bail!("Amp returned an unsuccessful or invalid result; diagnostics suppressed")
-            }
-            _ => {}
-        }
-    }
-    answer.ok_or_else(|| anyhow!("Amp returned no successful result"))
-}
-
-#[cfg(unix)]
 fn parse_claude(bytes: &[u8]) -> Result<String> {
     let result: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| {
         anyhow!("Claude Code returned invalid JSON; check its version outside BendSQL")
@@ -802,70 +698,21 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn amp_requires_success_and_disabled_tools() {
-        let init = "{\"type\":\"system\",\"subtype\":\"init\",\"tools\":[],\"mcp_servers\":[]}\n";
-        let result = "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"answer\"}";
-        assert_eq!(
-            parse_amp(format!("{init}{result}").as_bytes()).unwrap(),
-            "answer"
-        );
-        assert!(parse_amp(result.as_bytes()).is_err());
-        assert!(parse_amp(
-            format!(
-                "{}{result}",
-                init.replace("\"tools\":[]", "\"tools\":[\"Bash\"]")
-            )
-            .as_bytes()
-        )
-        .is_err());
-        assert!(parse_amp(
-            format!(
-                "{}{result}",
-                init.replace(
-                    "\"mcp_servers\":[]",
-                    "\"mcp_servers\":[{\"status\":\"connected\"}]"
-                )
-            )
-            .as_bytes()
-        )
-        .is_err());
-        assert!(parse_amp(format!("{init}{result}\n{{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"error\":\"private-secret\"}}").as_bytes()).is_err());
-        assert!(!parse_amp(b"private-secret")
+    fn capabilities_are_checked_without_exposing_help() {
+        let adapter = CliAdapter::Pi;
+        let mut help = arguments(adapter).join(" ");
+        help.push_str(" --model");
+        assert!(validate_capabilities(adapter, help.as_bytes()).is_ok());
+        let flag = "--no-tools";
+        let old = help.replace(flag, &format!("{flag}-not-supported"));
+        assert!(validate_capabilities(adapter, old.as_bytes()).is_err());
+        assert!(!validate_capabilities(adapter, b"private-secret")
             .unwrap_err()
             .to_string()
             .contains("private-secret"));
-        let policy = amp_policy();
-        assert_eq!(policy["amp.tools.disable"], serde_json::json!(["*"]));
-        assert_eq!(policy["amp.updates.mode"], "disabled");
-        assert_eq!(policy["amp.mcpPermissions"][0]["action"], "reject");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn capabilities_are_checked_without_exposing_help() {
-        for adapter in [CliAdapter::Pi, CliAdapter::Amp] {
-            let mut help = arguments(adapter).join(" ");
-            help.push_str(" --settings-file --model");
-            assert!(validate_capabilities(adapter, help.as_bytes()).is_ok());
-            let flag = if adapter == CliAdapter::Pi {
-                "--no-tools"
-            } else {
-                "--settings-file"
-            };
-            let old = help.replace(flag, &format!("{flag}-not-supported"));
-            assert!(validate_capabilities(adapter, old.as_bytes()).is_err());
-            assert!(!validate_capabilities(adapter, b"private-secret")
-                .unwrap_err()
-                .to_string()
-                .contains("private-secret"));
-        }
-        assert!(
-            CliBackend::new(CliAdapter::Amp, None, Some("unsupported-model"), &[], true).is_err()
-        );
         for (adapter, key, expected) in [
             (CliAdapter::Pi, "PI_OFFLINE", "1"),
             (CliAdapter::Pi, "PI_TELEMETRY", "0"),
-            (CliAdapter::Amp, "AMP_SKIP_UPDATE_CHECK", "1"),
         ] {
             let env = child_environment(Some(adapter), &[]).unwrap();
             assert_eq!(
@@ -879,7 +726,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn arguments_enforce_safety_without_permission_bypass() {
-        for adapter in [CliAdapter::ClaudeCode, CliAdapter::Pi, CliAdapter::Amp] {
+        for adapter in [CliAdapter::ClaudeCode, CliAdapter::Pi] {
             let args = arguments(adapter);
             assert!(!args.iter().any(|arg| arg.contains("dangerously")));
         }

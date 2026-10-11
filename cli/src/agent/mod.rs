@@ -21,6 +21,7 @@ pub mod llm;
 pub mod memory;
 pub(crate) mod progress;
 pub mod router;
+mod skills;
 
 use anyhow::{anyhow, bail, Result};
 use backend::ChatBackend;
@@ -32,8 +33,8 @@ use memory::{Memory, MAX_TEXT_BYTES};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum InteractionMode {
     #[default]
-    Smart,
     Sql,
+    Smart,
     Agent,
 }
 
@@ -59,10 +60,7 @@ impl InteractionMode {
         if line.is_empty() {
             return router::Input::Empty;
         }
-        if (line.starts_with('/') && !line.starts_with("/*"))
-            || line.starts_with('!')
-            || matches!(line, "exit" | "quit")
-        {
+        if line.starts_with('!') || matches!(line, "exit" | "quit") {
             return router::Input::Command(line);
         }
         match self {
@@ -80,6 +78,7 @@ pub struct AgentSession {
     config: AgentConfig,
     selected: Option<String>,
     backend: Option<Box<dyn ChatBackend>>,
+    skills: Option<skills::EmbeddedSkills>,
 }
 
 impl Default for AgentSession {
@@ -100,6 +99,7 @@ impl AgentSession {
             config,
             selected,
             backend: None,
+            skills: None,
         }
     }
 
@@ -140,18 +140,7 @@ impl AgentSession {
         } else {
             ""
         };
-        let retention = if matches!(
-            backend.as_deref(),
-            Some(config::BackendConfig::Cli {
-                adapter: config::CliAdapter::Amp,
-                ..
-            })
-        ) {
-            "\nAmp may retain threads locally/remotely; no verified ephemeral option is used. /clear removes BendSQL context, not external history."
-        } else {
-            ""
-        };
-        Ok(format!("Current backend: {current}\nAvailable backends: {names}\nDefault discovery: codex, then claude, then pi. Explicit --backend/agent.backend selection takes precedence; runtime failures never switch services.\nBuilt-in aliases: claude, claude-code, codex, pi, amp. env explicitly uses BENDSQL_AGENT_BASE_URL, BENDSQL_AGENT_MODEL and optional BENDSQL_AGENT_API_KEY.{notice}{retention}"))
+        Ok(format!("Current backend: {current}\nAvailable backends: {names}\nDefault discovery: codex, then claude, then pi. Explicit --backend/agent.backend selection takes precedence; runtime failures never switch services.\nBuilt-in aliases: claude, claude-code, codex, pi. env explicitly uses BENDSQL_AGENT_BASE_URL, BENDSQL_AGENT_MODEL and optional BENDSQL_AGENT_API_KEY.{notice}"))
     }
 
     pub fn select_backend(&mut self, name: &str) -> Result<()> {
@@ -181,7 +170,13 @@ impl AgentSession {
         if self.backend.is_none() {
             self.backend = Some(backend::build(&self.config, selected)?);
         }
-        let messages = self.conversation.messages(question, &self.memory);
+        if self.skills.is_none() {
+            self.skills = Some(skills::EmbeddedSkills::new()?);
+        }
+        let mut messages = self.conversation.messages(question, &self.memory);
+        messages[0]
+            .content
+            .push_str(self.skills.as_ref().unwrap().prompt());
         let timeout = std::time::Duration::from_secs(self.config.settings()?.timeout_secs);
         let backend = self.backend.as_ref().unwrap();
         let answer = tokio::time::timeout(timeout, backend.complete(&messages))
@@ -198,21 +193,23 @@ impl AgentSession {
     }
 }
 
-pub const HELP: &str = "Interactive modes (default: smart):\n\
-smart>  Whole-batch AST validation; mixed SQL/prose executes nothing\n\
-sql>    Input is SQL only; finish with the configured delimiter\n\
-agent>  Input goes to AI, with cached query context; no SQL is executed\n\
-/mode [smart|sql|agent]  Show or change the interaction mode\n\
-/backend [name]   List backends or switch (clears conversation, retains query memory)\n\
-/sql <SQL>       Execute explicitly (no trailing delimiter required)\n\
-/ask <question>  Ask AI explicitly; suggested SQL is never executed\n\
-/context         List cached queries and preview completeness\n\
-/clear           Clear query memory and conversation\n\
-/help            Show this help\n\
-exit / quit      Exit; Ctrl+C clears pending SQL or interrupts work\n\
+pub const HELP: &str = "Interactive modes (default: sql):\n\
+sql>    SQL input with autocomplete; finish with the configured delimiter\n\
+smart>  Whole-batch AST routing; mixed SQL/prose executes nothing; no SQL autocomplete\n\
+agent>  AI questions with cached query context; no SQL execution or autocomplete\n\
+!mode [sql|smart|agent]  Show choices or change mode (Tab completes the choices)\n\
+!backend [name]  List backends or switch (clears conversation, retains query memory)\n\
+!sql <SQL>       Execute explicitly (no trailing delimiter required)\n\
+!ask <question>  Ask AI explicitly; suggested SQL is never executed\n\
+!context [clear] List cached query summaries, or clear query/conversation memory\n\
+!help           Show this help\n\
+!configs        Show current settings\n\
+!set            Set settings\n\
+!source <file>  Execute SQL from a file\n\
+!exit / !quit   Exit; Ctrl+C clears pending SQL or interrupts work\n\
 Questions send selected SQL, result previews, errors and conversation to the configured model backend.\n\
 BendSQL history is not saved to disk; external CLIs/services have their own access and retention policies.\n\
-Use /clear before discussing unrelated or sensitive data.";
+Use !context clear before discussing unrelated or sensitive data.";
 
 #[cfg(test)]
 mod tests {
@@ -350,7 +347,7 @@ model = "second-model"
     fn modes_control_routing_and_prompts() {
         let sql = "SELECT 1;";
         let question = "What does the last result mean?";
-        assert_eq!(InteractionMode::default(), InteractionMode::Smart);
+        assert_eq!(InteractionMode::default(), InteractionMode::Sql);
         assert_eq!(InteractionMode::Smart.route(sql, ';'), Input::Sql(sql));
         assert_eq!(
             InteractionMode::Smart.route(question, ';'),
@@ -367,8 +364,8 @@ model = "second-model"
             InteractionMode::Agent,
         ] {
             assert_eq!(
-                mode.route("/mode smart", ';'),
-                Input::Command("/mode smart")
+                mode.route("!mode smart", ';'),
+                Input::Command("!mode smart")
             );
             assert_eq!(mode.prompt(false), format!("{}> ", mode.name()));
             assert_eq!(mode.prompt(true), format!("{}(sql)> ", mode.name()));

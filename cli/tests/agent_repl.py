@@ -81,9 +81,10 @@ class MockService(http.server.BaseHTTPRequestHandler):
                 self.release_queries.wait(10)
             if "STALL_KILL" in sql:
                 self.delayed_query_ids.add(query_id)
+            completion_query = "system.functions" in sql and "'f' as type" in sql
             data = (
-                [["mock-version"]]
-                if "version()" in sql.lower()
+                [["mock-version"]] if "version()" in sql.lower()
+                else [["autocomplete_table_unique", "t"], ["autocomplete_column_unique", "c"]] if completion_query
                 else [[str(n)] for n in range(50)]
             )
             response = {
@@ -91,7 +92,8 @@ class MockService(http.server.BaseHTTPRequestHandler):
                 "node_id": None,
                 "session_id": None,
                 "session": None,
-                "schema": [{"name": "value", "type": "String"}],
+                "schema": ([{"name": "name", "type": "String"}, {"name": "type", "type": "String"}]
+                           if completion_query else [{"name": "value", "type": "String"}]),
                 "data": [] if fail or "BLOCK_PAGE" in sql else data,
                 "state": "Failed" if fail else "Running" if "BLOCK_PAGE" in sql else "Succeeded",
                 "settings": None,
@@ -152,12 +154,14 @@ class MockService(http.server.BaseHTTPRequestHandler):
 
 
 class Terminal:
-    def __init__(self, executable, env, port, mode=None, backend=None):
+    def __init__(self, executable, env, port, mode="smart", backend=None, autocomplete=False):
         args = [
-            executable, "--agent", "--no-auto-complete", "--dsn",
+            executable, "--dsn",
             f"databend://root:@127.0.0.1:{port}/default?sslmode=disable&login=disable",
             "--output", "null",
         ]
+        if not autocomplete:
+            args.append("--no-auto-complete")
         if mode:
             args.extend(["--mode", mode])
         if backend:
@@ -168,7 +172,7 @@ class Terminal:
         self.pending = b""
         self.transcript = []
         self.finished = False
-        self.startup_prompt = f"{mode or 'smart'}> "
+        self.startup_prompt = f"{mode or 'sql'}> "
         self.startup_checked = False
 
     def expect(self, text):
@@ -194,7 +198,7 @@ class Terminal:
         self.pending = self.pending[end:]
         if text == self.startup_prompt and not self.startup_checked:
             output = b"".join(self.transcript)
-            for verbose in [b"Interactive modes (", b"/mode [", b"Available backends:", b"Current backend:"]:
+            for verbose in [b"Interactive modes (", b"!mode [", b"Available backends:", b"Current backend:"]:
                 assert verbose not in output, "Startup should not print usage or backend lists"
             self.startup_checked = True
 
@@ -238,10 +242,10 @@ def exercise_modes(executable, env, port):
         terminal.send("SELECT 1;")
         assert len(MockService.sql_requests) == 2
         assert not MockService.model_requests
-        terminal.send("/context")
+        terminal.send("!context")
         assert b"cached 30/50 rows" in b"".join(terminal.transcript)
 
-        terminal.send("/mode agent", "agent> ")
+        terminal.send("!mode agent", "agent> ")
         terminal.send("SELECT 2;", "agent> ")
         assert len(MockService.sql_requests) == 2
         assert len(MockService.model_requests) == 1
@@ -251,29 +255,29 @@ def exercise_modes(executable, env, port):
         assert record["preview"]["complete"] is False
         assert record["stats"]["read_rows"] == 1000
 
-        terminal.send("/mode sql", "sql> ")
+        terminal.send("!mode sql", "sql> ")
         terminal.send("Not SQL;", "sql> ")
         assert len(MockService.sql_requests) == 3
         assert len(MockService.model_requests) == 1
-        terminal.send("/mode smart")
-        terminal.send("/ask Explain Q2")
+        terminal.send("!mode smart")
+        terminal.send("!ask Explain Q2")
         failed = next(r for r in last_context()["query_records"] if r["id"] == "Q2")
         assert failed["status"] == "failed"
         assert "Mock syntax error" in failed["error"]
 
         terminal.send("SELECT * FROM", "smart(sql)> ")
-        terminal.send("/mode agent", "smart(sql)> ")
+        terminal.send("!mode agent", "smart(sql)> ")
         assert len(MockService.sql_requests) == 3
         assert len(MockService.model_requests) == 2
         terminal.send("numbers;")
         assert len(MockService.sql_requests) == 4
-        terminal.send("/clear")
-        terminal.send("/context")
-        terminal.send("/ask Hello after clearing")
+        terminal.send("!context clear")
+        terminal.send("!context")
+        terminal.send("!ask Hello after clearing")
         assert last_context()["query_records"] == []
         assert len(MockService.model_requests[-1]["messages"]) == 2
         terminal.send("SELECT 3;")
-        terminal.send("/context")
+        terminal.send("!context")
         assert b"Q4: success" in b"".join(terminal.transcript)
         terminal.finish()
 
@@ -284,7 +288,7 @@ def exercise_missing_model(executable, env, port):
     model_count = len(MockService.model_requests)
     with Terminal(executable, env, port, mode="sql") as terminal:
         terminal.expect("sql> ")
-        terminal.send("/ask Hello", "sql> ")
+        terminal.send("!ask Hello", "sql> ")
         assert b"Set BENDSQL_AGENT_BASE_URL" in b"".join(terminal.transcript)
         terminal.send("SELECT 1;", "sql> ")
         assert len(MockService.sql_requests) == sql_count + 2
@@ -325,36 +329,36 @@ model = "broken-model"
     write_config(env, config)
     with Terminal(executable, env, port, backend="second") as terminal:
         terminal.expect("smart> ")
-        terminal.send("/backend")
+        terminal.send("!backend")
         assert b"Current backend: second" in b"".join(terminal.transcript)
-        terminal.send("/ask Initial question")
+        terminal.send("!ask Initial question")
         assert MockService.model_requests[-1]["model"] == "second-model"
         assert MockService.model_requests[-1]["max_tokens"] == 1024
         assert MockService.model_headers[-1]["x-project"] == "example"
         assert "authorization" not in MockService.model_headers[-1]
         terminal.send("SELECT 1;")
-        terminal.send("/ask Follow-up question")
+        terminal.send("!ask Follow-up question")
         assert len(MockService.model_requests[-1]["messages"]) == 4
-        terminal.send("/backend first")
-        terminal.send("/ask Explain Q1")
+        terminal.send("!backend first")
+        terminal.send("!ask Explain Q1")
         assert MockService.model_requests[-1]["model"] == "first-model"
         assert MockService.model_headers[-1]["authorization"] == "Bearer private-token"
         assert MockService.model_headers[-1]["x-custom-key"] == "private-header"
         assert len(MockService.model_requests[-1]["messages"]) == 2
         assert last_context()["query_records"][0]["id"] == "Q1"
         count = len(MockService.model_requests)
-        terminal.send("/backend broken")
+        terminal.send("!backend broken")
         assert len(MockService.model_requests) == count
-        terminal.send("/ask Still on first?")
+        terminal.send("!ask Still on first?")
         assert MockService.model_requests[-1]["model"] == "first-model"
         assert len(MockService.model_requests[-1]["messages"]) == 4
-        terminal.send("/backend env")
-        terminal.send("/ask Explicit environment backend")
+        terminal.send("!backend env")
+        terminal.send("!ask Explicit environment backend")
         assert MockService.model_requests[-1]["model"] == "mock"
         assert len(MockService.model_requests[-1]["messages"]) == 2
         assert last_context()["query_records"][0]["id"] == "Q1"
-        terminal.send("/clear")
-        terminal.send("/ask After clearing")
+        terminal.send("!context clear")
+        terminal.send("!ask After clearing")
         assert last_context()["query_records"] == []
         assert len(MockService.model_requests[-1]["messages"]) == 2
         terminal.finish()
@@ -365,7 +369,7 @@ model = "broken-model"
     # Without a CLI override, the selected config wins over legacy environment.
     with Terminal(executable, env, port) as terminal:
         terminal.expect("smart> ")
-        terminal.send("/ask Config default")
+        terminal.send("!ask Config default")
         assert MockService.model_requests[-1]["model"] == "first-model"
         terminal.finish()
 
@@ -376,8 +380,8 @@ model = "broken-model"
     with Terminal(executable, env, port) as terminal:
         terminal.expect("smart> ")
         assert len(MockService.model_requests) == count
-        terminal.send("/backend second")
-        terminal.send("/ask Explicit selection")
+        terminal.send("!backend second")
+        terminal.send("!ask Explicit selection")
         assert MockService.model_requests[-1]["model"] == "second-model"
         terminal.finish()
 
@@ -391,8 +395,8 @@ model = "broken-model"
             terminal.expect("smart> ")
             count = len(MockService.model_requests)
             sql_count = len(MockService.sql_requests)
-            terminal.send("/ask Bad configuration")
-            terminal.send("/backend env")
+            terminal.send("!ask Bad configuration")
+            terminal.send("!backend env")
             assert len(MockService.model_requests) == count
             terminal.send("SELECT 1;")
             assert len(MockService.sql_requests) == sql_count + 1
@@ -496,9 +500,9 @@ allow_external_agent = true
             sql_count = len(MockService.sql_requests)
             for backend in ["claude", "codex"]:
                 if backend == "codex":
-                    terminal.send("/backend codex")
+                    terminal.send("!backend codex")
                 count = len(cli_records(record_path))
-                terminal.send("/ask Please explain Q1; do-not-put-this-in-argv")
+                terminal.send("!ask Please explain Q1; do-not-put-this-in-argv")
                 record = cli_records(record_path)[-1]
                 assert len(cli_records(record_path)) == count + 1
                 args = record["argv"]
@@ -530,18 +534,18 @@ allow_external_agent = true
                 assert context["query_records"][0]["id"] == expected_id
                 assert len(record["messages"]) == 2
                 for question in ["exit-error", "bad-json", "failed-turn", "overflow-stdout", "overflow-stderr"]:
-                    terminal.send(f"/ask {question}")
+                    terminal.send(f"!ask {question}")
                     assert len(cli_records(record_path)[-1]["messages"]) == 4
-                terminal.send("/ask After failed requests")
+                terminal.send("!ask After failed requests")
                 assert len(cli_records(record_path)[-1]["messages"]) == 4
-                terminal.send("/ask long-answer")
+                terminal.send("!ask long-answer")
                 assert b"[Answer truncated at 8 KiB]" in b"".join(terminal.transcript)
-                terminal.send("/clear")
+                terminal.send("!context clear")
                 terminal.send("SELECT 1;")
                 sql_count += 1
                 # Cancel while the process and a descendant are holding both pipes.
                 count = len(cli_records(record_path))
-                os.write(terminal.fd, b"/ask block-cli\r")
+                os.write(terminal.fd, b"!ask block-cli\r")
                 record = wait_cli_record(record_path, count + 1)
                 os.write(terminal.fd, b"\x03")
                 terminal.expect("AI request interrupted.")
@@ -549,23 +553,23 @@ allow_external_agent = true
                 wait_stopped(record)
                 if backend == "codex":
                     assert cli_records(record_path + ".interrupt")[-1]["pid"] == record["pid"]
-                terminal.send("/ask After cancellation")
+                terminal.send("!ask After cancellation")
                 assert len(cli_records(record_path)[-1]["messages"]) == 2
                 # Also exercise deadline-based cleanup, not only user cancellation.
-                terminal.send("/ask block-cli")
+                terminal.send("!ask block-cli")
                 timed_out = cli_records(record_path)[-1]
                 wait_stopped(timed_out)
                 if backend == "codex":
                     assert cli_records(record_path + ".interrupt")[-1]["pid"] == timed_out["pid"]
-                terminal.send("/ask After timeout")
+                terminal.send("!ask After timeout")
                 assert len(cli_records(record_path)[-1]["messages"]) == 4
                 assert len(MockService.sql_requests) == sql_count
                 assert len(MockService.model_requests) == api_count
             count = len(cli_records(record_path))
-            terminal.send("/backend no-consent")
-            terminal.send("/backend not-installed")
+            terminal.send("!backend no-consent")
+            terminal.send("!backend not-installed")
             assert len(cli_records(record_path)) == count
-            terminal.send("/ask Still on codex")
+            terminal.send("!ask Still on codex")
             assert "app-server" in cli_records(record_path)[-1]["argv"]
             terminal.finish()
             output = b"".join(terminal.transcript)
@@ -588,27 +592,27 @@ def exercise_builtin_clis(executable, env, port):
     record_path = os.path.join(env["HOME"], "builtin_cli_requests.jsonl")
     api_count = len(MockService.model_requests)
     with tempfile.TemporaryDirectory(prefix="bendsql-builtin-bin-") as directory:
-        for name in ["codex", "claude", "pi", "amp"]:
+        for name in ["codex", "claude", "pi"]:
             path = os.path.join(directory, name)
             with open(path, "w") as file:
                 file.write(f"#!{sys.executable}\n{contents}")
             os.chmod(path, 0o700)
         cli_env = dict(env, PATH=directory + os.pathsep + env.get("PATH", os.defpath),
-                       AMP_API_KEY="private-amp-key", GEMINI_API_KEY="private-pi-key")
+                       GEMINI_API_KEY="private-pi-key")
         for name in list(cli_env):
             if name.startswith("BENDSQL_AGENT_"):
                 del cli_env[name]
-        for name in ["local-claude", "local-codex", "local-pi", "local-amp"]:
+        for name in ["local-claude", "local-codex", "local-pi"]:
             with Terminal(executable, cli_env, port, backend=name) as terminal:
                 terminal.expect("smart> ")
-                terminal.send("/backend")
+                terminal.send("!backend")
                 output = b"".join(terminal.transcript)
                 assert f"Current backend: {name}".encode() in output
-                for builtin in [b"local-claude", b"local-codex", b"local-pi", b"local-amp"]:
+                for builtin in [b"local-claude", b"local-codex", b"local-pi"]:
                     assert builtin in output
                 terminal.send("SELECT 1;")
                 sql_count = len(MockService.sql_requests)
-                terminal.send("/ask Explain Q1 without backend configuration")
+                terminal.send("!ask Explain Q1 without backend configuration")
                 record = cli_records(record_path)[-1]
                 assert "--model" not in record["argv"]
                 assert "CLI_TEST_RECORD" not in record["env"]
@@ -616,82 +620,71 @@ def exercise_builtin_clis(executable, env, port):
                 assert json.loads(record["messages"][-1]["content"])["query_records"][0]["id"] == "Q1"
                 if name == "local-codex":
                     assert "app-server" in record["argv"]
-                    terminal.send("/backend claude-code")
-                    terminal.send("/ask Switch to built-in Claude")
+                    terminal.send("!backend claude-code")
+                    terminal.send("!ask Switch to built-in Claude")
                     assert "--print" in cli_records(record_path)[-1]["argv"]
                 elif name == "local-claude":
                     assert "--print" in record["argv"]
-                    terminal.send("/backend codex")
-                    terminal.send("/ask Switch to built-in Codex")
+                    terminal.send("!backend codex")
+                    terminal.send("!ask Switch to built-in Codex")
                     assert "app-server" in cli_records(record_path)[-1]["argv"]
                 elif name == "local-pi":
                     assert "--no-tools" in record["argv"] and "--no-session" in record["argv"]
                     assert "--no-extensions" in record["argv"] and "--no-mcp" in record["argv"]
                     assert record["env"]["PI_OFFLINE"] == "1"
                     assert record["env"]["GEMINI_API_KEY"] == "private-pi-key"
-                    assert "AMP_API_KEY" not in record["env"]
-                    terminal.send("/backend amp")
-                    terminal.send("/ask Switch to built-in Amp")
-                    assert "--stream-json" in cli_records(record_path)[-1]["argv"]
-                else:
-                    assert "--stream-json" in record["argv"] and "--settings-file" in record["argv"]
-                    assert record["policy"]["amp.tools.disable"] == ["*"]
-                    assert record["policy"]["amp.mcpPermissions"][0]["action"] == "reject"
-                    assert record["directory_files"] == ["amp-policy.json"]
-                    assert record["env"]["AMP_API_KEY"] == "private-amp-key"
-                    assert "GEMINI_API_KEY" not in record["env"]
-                    terminal.send("/backend pi")
-                    terminal.send("/ask Switch to built-in Pi")
-                    assert "--no-tools" in cli_records(record_path)[-1]["argv"]
+                    terminal.send("!backend claude")
+                    terminal.send("!ask Switch to built-in Claude")
+                    assert "--print" in cli_records(record_path)[-1]["argv"]
                 assert len(cli_records(record_path)[-1]["messages"]) == 2
                 assert len(MockService.sql_requests) == sql_count
                 assert len(MockService.model_requests) == api_count
                 terminal.finish()
         # Exercise failures/cancellation for each new adapter using its native wire format.
         write_config(cli_env, '[agent]\ntimeout_secs=2')
-        for name in ["pi", "amp"]:
+        for name in ["pi"]:
             with Terminal(executable, cli_env, port, backend=name) as terminal:
                 terminal.expect("smart> ")
                 terminal.send("SELECT 1;")
                 sql_count = len(MockService.sql_requests)
                 help_count = len(cli_records(record_path + ".help"))
-                terminal.send("/ask Explain Q1")
+                terminal.send("!ask Explain Q1")
                 assert len(cli_records(record_path + ".help")) == help_count + 1
                 for question in ["exit-error", "bad-json", "failed-turn", "overflow-stdout", "overflow-stderr", "tool-policy"]:
-                    terminal.send(f"/ask {question}")
+                    terminal.send(f"!ask {question}")
                     assert len(cli_records(record_path)[-1]["messages"]) == 4
-                terminal.send("/ask After failures")
+                terminal.send("!ask After failures")
                 assert len(cli_records(record_path)[-1]["messages"]) == 4
-                terminal.send("/ask long-answer")
+                terminal.send("!ask long-answer")
                 assert b"[Answer truncated at 8 KiB]" in b"".join(terminal.transcript)
                 assert len(cli_records(record_path + ".help")) == help_count + 1
-                terminal.send("/clear")
+                terminal.send("!context clear")
                 count = len(cli_records(record_path))
-                os.write(terminal.fd, b"/ask block-cli\r")
+                os.write(terminal.fd, b"!ask block-cli\r")
                 record = wait_cli_record(record_path, count + 1)
                 os.write(terminal.fd, b"\x03")
                 terminal.expect("AI request interrupted.")
                 terminal.expect("smart> ")
                 wait_stopped(record)
-                terminal.send("/ask After cancellation")
+                terminal.send("!ask After cancellation")
                 assert len(cli_records(record_path)[-1]["messages"]) == 2
-                terminal.send("/ask block-cli")
+                terminal.send("!ask block-cli")
                 wait_stopped(cli_records(record_path)[-1])
-                terminal.send("/ask After timeout")
+                terminal.send("!ask After timeout")
                 assert len(cli_records(record_path)[-1]["messages"]) == 4
                 assert len(MockService.sql_requests) == sql_count
                 assert len(cli_records(record_path + ".help")) == help_count + 2
                 terminal.finish()
-                for secret in [b"private-cli-secret", b"private-thinking", b"private-amp-key", b"private-pi-key"]:
+                for secret in [b"private-cli-secret", b"private-thinking", b"private-pi-key"]:
                     assert secret not in b"".join(terminal.transcript)
         # Old versions fail before receiving context. No downgrade and no service fallback.
-        for name in ["pi", "amp"]:
+        for name in ["pi"]:
             write_config(cli_env, f'[agent.backends.local-{name}]\nenv_allowlist=["CLI_TEST_OLD"]')
             old_env = dict(cli_env, CLI_TEST_OLD="1")
             with Terminal(executable, old_env, port, backend=name) as terminal:
                 terminal.expect("smart> ")
                 count = len(cli_records(record_path))
-                terminal.send("/ask Context must not be delivered")
+                terminal.send("!ask Context must not be delivered")
                 assert len(cli_records(record_path)) == count
                 assert b"Context was not sent" in b"".join(terminal.transcript)
                 assert cli_records(record_path + ".help")[-1]["stdin"] == ""
@@ -703,7 +696,7 @@ def exercise_builtin_clis(executable, env, port):
         write_config(cli_env, '[agent]\nbackend="local-codex"\n[agent.backends.local-codex]\nmodel="custom-builtin-model"')
         with Terminal(executable, cli_env, port, backend="codex") as terminal:
             terminal.expect("smart> ")
-            terminal.send("/ask Built-in model override")
+            terminal.send("!ask Built-in model override")
             assert cli_records(record_path)[-1]["model"] == "custom-builtin-model"
             terminal.finish()
         # A disabled canonical profile cannot be bypassed through its alias.
@@ -711,7 +704,7 @@ def exercise_builtin_clis(executable, env, port):
         with Terminal(executable, cli_env, port, backend="codex") as terminal:
             terminal.expect("smart> ")
             count = len(cli_records(record_path))
-            terminal.send("/ask Disabled built-in")
+            terminal.send("!ask Disabled built-in")
             assert len(cli_records(record_path)) == count
             terminal.send("SELECT 1;")
             terminal.finish()
@@ -775,7 +768,7 @@ command = {json.dumps(mock)}
             assert not cli_records(path), "Adapter must not start until a question"
             terminal.send("SELECT 1;")
             sql_count = len(MockService.sql_requests)
-            terminal.send("/ask Explain Q1; do-not-put-this-in-argv")
+            terminal.send("!ask Explain Q1; do-not-put-this-in-argv")
             assert b"Mock ACP answer" in b"".join(terminal.transcript)
             prompt = acp_records(path, "prompt")[-1]
             init = acp_records(path, "initialize")[-1]
@@ -794,7 +787,7 @@ command = {json.dumps(mock)}
                 assert key not in init["env"]
             assert json.loads(prompt["messages"][-1]["content"])["query_records"][0]["id"] == "Q1"
             wait_stopped(prompt)
-            terminal.send("/ask Follow-up")
+            terminal.send("!ask Follow-up")
             prompt = acp_records(path, "prompt")[-1]
             assert len(prompt["messages"]) == 4
             wait_stopped(prompt)
@@ -802,47 +795,47 @@ command = {json.dumps(mock)}
                         "overflow-frame", "overflow-wire", "overflow-stderr", "tool-call", "permission",
                         "read-file", "write-file", "terminal", "extension", "failed-turn", "no-answer"]
             for question in failures:
-                terminal.send(f"/ask {question}")
+                terminal.send(f"!ask {question}")
                 prompt = acp_records(path, "prompt")[-1]
                 assert len(prompt["messages"]) == 6
                 wait_stopped(prompt)
             replies = acp_records(path, "client_reply")
             assert any(reply["reply"].get("result", {}).get("outcome", {}).get("outcome") == "cancelled" for reply in replies)
             assert sum(reply["reply"].get("error", {}).get("code") == -32601 for reply in replies) >= 4
-            terminal.send("/ask After errors")
+            terminal.send("!ask After errors")
             assert len(acp_records(path, "prompt")[-1]["messages"]) == 6
-            terminal.send("/ask long-answer")
+            terminal.send("!ask long-answer")
             assert b"[Answer truncated at 8 KiB]" in b"".join(terminal.transcript)
-            terminal.send("/ask max-tokens")
+            terminal.send("!ask max-tokens")
             assert b"[ACP answer truncated by model output limit]" in b"".join(terminal.transcript)
-            terminal.send("/clear")
+            terminal.send("!context clear")
             count = len(acp_records(path, "prompt"))
-            os.write(terminal.fd, b"/ask block-acp\r")
+            os.write(terminal.fd, b"!ask block-acp\r")
             prompt = wait_acp_prompt(path, count + 1)
             os.write(terminal.fd, b"\x03")
             terminal.expect("AI request interrupted.")
             terminal.expect("smart> ")
             wait_stopped(prompt)
             assert acp_records(path, "cancel")[-1]["pid"] == prompt["pid"]
-            terminal.send("/ask After cancellation")
+            terminal.send("!ask After cancellation")
             assert len(acp_records(path, "prompt")[-1]["messages"]) == 2
-            terminal.send("/ask block-acp")
+            terminal.send("!ask block-acp")
             prompt = acp_records(path, "prompt")[-1]
             wait_stopped(prompt)
             assert acp_records(path, "cancel")[-1]["pid"] == prompt["pid"]
-            terminal.send("/ask After timeout")
+            terminal.send("!ask After timeout")
             assert len(acp_records(path, "prompt")[-1]["messages"]) == 4
-            terminal.send("/ask ignore-cancel")
+            terminal.send("!ask ignore-cancel")
             wait_stopped(acp_records(path, "prompt")[-1])
             # Initialization failure/timeout must never receive a prompt/context.
             for backend in ["bad-version", "hang-init"]:
                 count = len(acp_records(path, "prompt"))
-                terminal.send(f"/backend {backend}")
-                terminal.send("/ask Context must not be delivered")
+                terminal.send(f"!backend {backend}")
+                terminal.send("!ask Context must not be delivered")
                 assert len(acp_records(path, "prompt")) == count
                 init = acp_records(path, "initialize")[-1]
                 wait_stopped(dict(init, child=None))
-            terminal.send("/backend no-consent")
+            terminal.send("!backend no-consent")
             assert len(MockService.model_requests) == api_count
             assert len(MockService.sql_requests) == sql_count
             terminal.send("SELECT 1;")
@@ -884,7 +877,7 @@ def exercise_smart_input_boundaries(executable, env, port):
         assert len(MockService.sql_requests) == sql_count + 3
         terminal.send("SELECT 'a|b'| SELECT 4|")
         assert len(MockService.sql_requests) == sql_count + 5
-        terminal.send("/sql SELECT 5|")
+        terminal.send("!sql SELECT 5|")
         assert len(MockService.sql_requests) == sql_count + 6
         terminal.send("!set multi_line false")
         terminal.send("SELECT * FROM")
@@ -896,10 +889,10 @@ def exercise_smart_input_boundaries(executable, env, port):
         terminal.send("SELECT 7", "smart(sql)> ")
         terminal.send(";")
         assert len(MockService.sql_requests) == sql_count + 8
-        terminal.send("/mode sql", "sql> ")
+        terminal.send("!mode sql", "sql> ")
         terminal.send("Not SQL;", "sql> ")
         assert len(MockService.sql_requests) == sql_count + 9
-        terminal.send("/mode agent", "agent> ")
+        terminal.send("!mode agent", "agent> ")
         terminal.send("SELECT 8;", "agent> ")
         assert len(MockService.sql_requests) == sql_count + 9
         assert len(MockService.model_requests) == api_count + 2
@@ -931,16 +924,16 @@ def exercise_sql_cancellation(executable, env, port):
             assert time.monotonic() - start < 2, "Submission cancellation waited for a response"
             assert len(MockService.sql_requests) == sql_count + 1
             assert len(MockService.kill_requests) == kills, "A previous query was incorrectly cancelled"
-            terminal.send("/ask Explain Q2")
+            terminal.send("!ask Explain Q2")
             record = next(r for r in last_context()["query_records"] if r["id"] == "Q2")
             assert record["status"] == "interrupted" and record["query_id"] is None
             assert record["cancel_request_sent"] is False
             assert "state and Query ID may be unknown" in record["error"]
             MockService.release_queries.set()
             terminal.send("SELECT 2;")
-            terminal.send("/sql SELECT SPOOF_INTERRUPTED;")
+            terminal.send("!sql SELECT SPOOF_INTERRUPTED;")
             assert len(MockService.kill_requests) == kills
-            terminal.send("/ask Explain Q4")
+            terminal.send("!ask Explain Q4")
             record = next(r for r in last_context()["query_records"] if r["id"] == "Q4")
             assert record["status"] == "failed" and record["cancel_request_sent"] is False
             MockService.release_queries.clear()
@@ -950,7 +943,7 @@ def exercise_sql_cancellation(executable, env, port):
             os.write(terminal.fd, b"\x03")
             terminal.expect("smart> ")
             assert len(MockService.kill_requests) == kills + 1
-            terminal.send("/ask Explain Q5")
+            terminal.send("!ask Explain Q5")
             record = next(r for r in last_context()["query_records"] if r["id"] == "Q5")
             assert record["status"] == "interrupted" and record["query_id"] is not None
             assert record["cancel_request_sent"] is True
@@ -965,7 +958,7 @@ def exercise_sql_cancellation(executable, env, port):
             terminal.expect("smart> ")
             assert time.monotonic() - start < 5, "Cancellation request has no deadline"
             assert len(MockService.kill_requests) == kills + 2
-            terminal.send("/ask Explain Q6")
+            terminal.send("!ask Explain Q6")
             record = next(r for r in last_context()["query_records"] if r["id"] == "Q6")
             assert record["status"] == "interrupted" and record["cancel_request_sent"] is False
             assert b"Cancellation request timed out" in b"".join(terminal.transcript)
@@ -988,9 +981,9 @@ def exercise_default_backend_discovery(executable, env, port):
             (["codex", "claude", "pi"], "local-codex", "app-server"),
             (["claude", "pi"], "local-claude", "--no-session-persistence"),
             (["pi"], "local-pi", "--no-tools"),
-            ([], None, None), (["amp"], None, None),
+            ([], None, None),
         ]:
-            for name in ["codex", "claude", "pi", "amp"]:
+            for name in ["codex", "claude", "pi"]:
                 filename = os.path.join(directory, name)
                 if os.path.exists(filename):
                     os.unlink(filename)
@@ -1003,10 +996,10 @@ def exercise_default_backend_discovery(executable, env, port):
             with Terminal(executable, auto_env, port) as terminal:
                 terminal.expect("smart> ")
                 assert len(cli_records(path)) == count, "Discovery must not start a model"
-                terminal.send("/backend")
+                terminal.send("!backend")
                 if expected:
                     assert f"Current backend: {expected}".encode() in b"".join(terminal.transcript)
-                terminal.send("/mode agent", "agent> ")
+                terminal.send("!mode agent", "agent> ")
                 terminal.send("hello, how are you", "agent> ")
                 if expected:
                     assert len(cli_records(path)) == count + 1
@@ -1018,7 +1011,7 @@ def exercise_default_backend_discovery(executable, env, port):
                     assert marker in cli_records(path)[-1]["argv"]
                     # Explicit selection beats auto detection, even when unavailable.
                     before = len(cli_records(path))
-                    terminal.send("/backend env", "agent> ")
+                    terminal.send("!backend env", "agent> ")
                     terminal.send("hello using explicit env", "agent> ")
                     assert len(cli_records(path)) == before
                     assert len(MockService.model_requests) == api_count + 1
@@ -1028,11 +1021,11 @@ def exercise_default_backend_discovery(executable, env, port):
                     assert b"No local coding CLI found" in b"".join(terminal.transcript)
                     assert b"Set BENDSQL_AGENT_BASE_URL" not in b"".join(terminal.transcript)
                 assert len(MockService.model_requests) == api_count
-                os.write(terminal.fd, b"/help\r")
-                terminal.expect("Use /clear before discussing unrelated or sensitive data.")
+                os.write(terminal.fd, b"!help\r")
+                terminal.expect("Use !context clear before discussing unrelated or sensitive data.")
                 terminal.expect("agent> ")
-                assert b"/mode [smart|sql|agent]" in b"".join(terminal.transcript)
-                terminal.send("/mode sql", "sql> ")
+                assert b"!mode [sql|smart|agent]" in b"".join(terminal.transcript)
+                terminal.send("!mode sql", "sql> ")
                 terminal.send("SELECT 1;", "sql> ")
                 terminal.finish()
         # Merely defining profiles does not pick arbitrary HTTP services. An
@@ -1044,14 +1037,14 @@ def exercise_default_backend_discovery(executable, env, port):
         before = len(cli_records(path))
         with Terminal(executable, auto_env, port) as terminal:
             terminal.expect("smart> ")
-            terminal.send("/ask Config explicitly selected env")
+            terminal.send("!ask Config explicitly selected env")
             assert len(cli_records(path)) == before
             assert len(MockService.model_requests) == api_count + 1
             api_count += 1
             terminal.finish()
         with Terminal(executable, auto_env, port, backend="missing-profile") as terminal:
             terminal.expect("smart> ")
-            terminal.send("/ask Explicit invalid selection must not discover codex")
+            terminal.send("!ask Explicit invalid selection must not discover codex")
             assert len(cli_records(path)) == before
             assert len(MockService.model_requests) == api_count
             terminal.finish()
@@ -1151,6 +1144,112 @@ def exercise_transient_ai_spinner(executable, env, port):
         MockService.release_models.set()
 
 
+def exercise_default_sql_modes_and_embedded_skills(executable, env, port):
+    import re
+    write_config(env, '[agent]\nbackend="env"')
+    sql_count, ai_count = len(MockService.sql_requests), len(MockService.model_requests)
+    animated = dict(env, TERM="xterm")
+    with Terminal(executable, animated, port, mode=None, autocomplete=True) as terminal:
+        terminal.expect("sql> ")
+        assert len(MockService.sql_requests) == sql_count + 2  # Version + SQL completion catalog.
+        assert len(MockService.model_requests) == ai_count
+        os.write(terminal.fd, b"!mode\r")
+        terminal.expect("Options: sql | smart | agent")
+        terminal.expect("sql> ")
+        os.write(terminal.fd, b"!mode sm\t\r")
+        terminal.expect("Switched to smart mode.")
+        terminal.expect("smart> ")
+        os.write(terminal.fd, b"!mode ag\t\r")
+        terminal.expect("Switched to agent mode.")
+        terminal.expect("agent> ")
+        for question in ["sel", "autocomplete_table_"]:
+            os.write(terminal.fd, question.encode())
+            terminal.expect(question)
+            os.write(terminal.fd, b"\t\x03")
+            terminal.expect("agent> ")
+        assert len(MockService.model_requests) == ai_count
+        os.write(terminal.fd, b"!mode smart\r")
+        terminal.expect("smart> ")
+        before = len(b"".join(terminal.transcript))
+        os.write(terminal.fd, b"autocomplete_table_")
+        terminal.expect("autocomplete_table_")
+        os.write(terminal.fd, b"\t\x03")
+        terminal.expect("smart> ")
+        assert b"unique" not in b"".join(terminal.transcript)[before:]
+        os.write(terminal.fd, b"!mode sql\r")
+        terminal.expect("Switched to sql mode.")
+        terminal.expect("sql> ")
+        assert len(MockService.sql_requests) == sql_count + 2, "Catalog should not reload on every switch"
+        os.write(terminal.fd, b"autocomplete_table_")
+        terminal.expect("unique")
+        os.write(terminal.fd, b"\x03")
+        terminal.expect("\x1b[?2004l")  # The old readline ended; ignore input redraw prompts.
+        terminal.expect("sql> ")
+        os.write(terminal.fd, b"SELECT 'private-query-value';\r")
+        terminal.expect("[Q1]")
+        terminal.expect("sql> ")
+        os.write(terminal.fd, b"!ask Explain Q1\r")
+        terminal.expect("AI> ")
+        terminal.expect("sql> ")
+        system = MockService.model_requests[-1]["messages"][0]["content"]
+        match = re.search(r"^Directory: (.+)$", system, re.MULTILINE)
+        assert match and "BendSQL embedded skills" in system
+        directory = match.group(1)
+        assert os.path.isdir(directory)
+        resource = os.path.join(directory, "README.md")
+        with open(resource) as file:
+            contents = file.read()
+        assert "private-query-value" not in contents
+        assert "SKILL.md" in contents
+        assert os.stat(resource).st_mode & 0o222 == 0
+        assert os.stat(directory).st_mode & 0o222 == 0
+        os.write(terminal.fd, b"!context clear\r")
+        terminal.expect("Query memory and conversation cleared.")
+        terminal.expect("sql> ")
+        os.write(terminal.fd, b"!ask Hello after clear\r")
+        terminal.expect("AI> ")
+        terminal.expect("sql> ")
+        assert last_context()["query_records"] == []
+        assert f"Directory: {directory}" in MockService.model_requests[-1]["messages"][0]["content"]
+        terminal.finish()
+        assert not os.path.exists(directory)
+    # No SQL catalog request in smart/agent startup. It is fetched lazily once
+    # when the user explicitly enters SQL mode, without enabling hints elsewhere.
+    for mode in ["smart", "agent"]:
+        count = len(MockService.sql_requests)
+        with Terminal(executable, env, port, mode=mode, autocomplete=True) as terminal:
+            terminal.expect(f"{mode}> ")
+            assert len(MockService.sql_requests) == count + 1
+            terminal.send("!mode sql", "sql> ")
+            assert len(MockService.sql_requests) == count + 2
+            terminal.send(f"!mode {mode}", f"{mode}> ")
+            terminal.send("!mode sql", "sql> ")
+            assert len(MockService.sql_requests) == count + 2
+            terminal.finish()
+    # Batch SQL remains non-AI even when interactive modes are available.
+    dsn = f"databend://root:@127.0.0.1:{port}/default?sslmode=disable&login=disable"
+    with tempfile.TemporaryDirectory(prefix="bendsql-batch-home-") as home:
+        batch_env = dict(env, HOME=home)
+        before = len(MockService.model_requests)
+        result = subprocess.run([executable, "--dsn", dsn], input=b"SELECT 1;\n", env=batch_env, capture_output=True, timeout=15)
+        assert result.returncode == 0 and b"sql> " not in result.stdout
+        assert len(MockService.model_requests) == before
+        result = subprocess.run([executable, "--dsn", dsn, "--query=SELECT 2;"], env=batch_env, capture_output=True, timeout=15)
+        assert result.returncode == 0 and len(MockService.model_requests) == before
+        result = subprocess.run([executable, "--agent"], env=batch_env, capture_output=True, timeout=15)
+        assert result.returncode != 0 and b"unexpected argument '--agent'" in result.stderr
+    # Removed command prefixes are not compatibility aliases.
+    with Terminal(executable, env, port, mode=None) as terminal:
+        terminal.expect("sql> ")
+        os.write(terminal.fd, b"!backend amp\r")
+        terminal.expect("Backend unchanged:")
+        terminal.expect("sql> ")
+        os.write(terminal.fd, b"/mode smart;\r")
+        terminal.expect("[Q1]")
+        terminal.expect("sql> ")
+        terminal.finish()
+
+
 def main():
     executable = os.path.abspath(sys.argv[1])
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockService)
@@ -1168,10 +1267,10 @@ def main():
                 BENDSQL_AGENT_MODEL="mock",
             )
             result = subprocess.run(
-                [executable, "--agent"], env=env, capture_output=True, timeout=15
+                [executable, "--mode", "smart"], env=env, capture_output=True, timeout=15
             )
             assert result.returncode != 0
-            assert b"requires an interactive terminal" in result.stderr
+            assert b"require an interactive terminal" in result.stderr
             assert not MockService.sql_requests
             exercise_modes(executable, env, port)
             exercise_missing_model(executable, env, port)
@@ -1183,6 +1282,7 @@ def main():
             exercise_sql_cancellation(executable, env, port)
             exercise_default_backend_discovery(executable, env, port)
             exercise_transient_ai_spinner(executable, env, port)
+            exercise_default_sql_modes_and_embedded_skills(executable, env, port)
             assert not os.path.exists(os.path.join(home, ".bendsql_history"))
             for root, _, files in os.walk(home):
                 for name in files:
@@ -1194,11 +1294,12 @@ def main():
             "configured backends, headers, priority, switching and fail-closed configuration; "
             "Codex/Claude mock CLIs, stdin context, env isolation, errors, budgets and process cleanup; "
             "zero-config built-ins, aliases, partial overrides and disable controls; "
-            "Pi/Amp protocols, safety settings, old-version rejection and process cleanup; "
+            "Pi protocol, safety settings, old-version rejection and process cleanup; "
             "ACP SDK lifecycle, capability denial, bounded transport, cancel handshake and cleanup; "
             "whole-input smart routing, live parser settings and SQL cancellation boundaries; "
             "quiet startup, default CLI priority, explicit selection and no runtime fallback; "
-            "animated AI spinner, clean final screen on success/error/cancel/timeout, no request debug output"
+            "animated AI spinner, clean final screen on success/error/cancel/timeout, no request debug output; "
+            "default SQL REPL, !mode Tab choices, lazy SQL-only completion and packaged read-only skills"
         )
     finally:
         server.shutdown()

@@ -175,35 +175,57 @@ prompt = ":) "
 | `!configs`     | Show current settings   |
 | `!set`         | Set settings            |
 | `!source file` | Source file and execute |
+| `!help` | Show all interactive commands |
+| `!mode` | Show sql / smart / agent choices (Tab completion) |
+| `!mode sql` | Enter SQL mode with autocomplete |
+| `!mode smart` | Classify SQL/questions, without SQL autocomplete |
+| `!mode agent` | Ask AI with cached context, without SQL autocomplete |
+| `!backend` | Show or select the AI backend |
+| `!ask question` | Ask AI explicitly in any mode |
+| `!sql query` | Execute SQL explicitly in any mode |
+| `!context` | Show cached query summaries |
+| `!context clear` | Clear query memory and conversation |
 
 ## Interactive SQL + AI session
 
-Start the opt-in interactive session with `bendsql --agent`. It requires a terminal
-on both stdin and stdout and cannot be combined with batch execution, `--check`,
-`--time`, data loading flags, or `--ui`. The ordinary SQL REPL is unchanged.
-The session starts directly at its mode prompt; usage is available through `/help`
-and backend details through `/backend`, rather than printed at startup.
+Start `bendsql` normally: every interactive session opens in **SQL mode** and can
+switch to smart or agent mode with `!mode`. No feature flag is required; `--agent`
+and slash-prefixed commands are not accepted. Batch execution, piped SQL, `--query`,
+`--check`, time-only execution and data loading keep their existing non-AI paths.
+Explicit `--mode` / `--backend` require terminal stdin/stdout and conflict with
+batch options. All interactive modes share one REPL implementation.
+The session starts directly at its mode prompt; usage is available through `!help`
+and backend details through `!backend`, rather than printed at startup.
 
 Without an explicit backend, BendSQL checks installed executables in order:
 **`codex` → `claude` (Claude Code) → `pi`**. `--backend` takes precedence over
 `agent.backend` in the config file; either explicit selection bypasses discovery.
 No model process starts until a question is submitted. Missing all three CLIs
-produces an actionable error without blocking SQL. Amp remains explicitly selectable,
-not an automatic candidate. Merely defining HTTP profiles or setting legacy model
+produces an actionable error without blocking SQL. Amp is not supported. Merely
+defining HTTP profiles or setting legacy model
 environment variables does not select them.
 
 The session has three modes, sharing the same query memory and conversation:
 
 | Mode | Prompt | Input behavior |
 | --- | --- | --- |
-| `smart` (default) | `smart>` | Validates the whole SQL batch with the Databend AST parser before executing any prefix. Incomplete SQL can continue; mixed/invalid input requires explicit routing. Other questions go to AI. |
-| `sql` | `sql>` | Treats input as SQL, without a model call. Finish SQL with the configured delimiter (normally `;`). |
+| `smart` | `smart>` | Validates the whole SQL batch with the Databend AST parser before executing any prefix. Incomplete SQL can continue; mixed/invalid input requires explicit routing. Other questions go to AI. |
+| `sql` (default) | `sql>` | Treats input as SQL, without a model call. SQL keyword hints and file completion are enabled. Finish SQL with the configured delimiter (normally `;`). |
 | `agent` | `agent>` | Sends input to AI with cached query context, even if it looks like SQL. Does not execute the input. |
 
-Select an initial mode with `bendsql --agent --mode sql`, or switch during the
-session with `/mode smart`, `/mode sql`, or `/mode agent`. Pending multi-line SQL
+Select an initial mode with `bendsql --mode sql`, or switch during the
+session with `!mode smart`, `!mode sql`, or `!mode agent`. Pending multi-line SQL
 uses a prompt such as `smart(sql)>`; finish it or press Ctrl+C before switching.
-Mode switching does not clear context.
+Mode switching does not clear context. Typing `!mode` displays the three choices
+as an inline hint, and Tab completes the mode argument. Executing `!mode` lists
+`sql | smart | agent`; use `!mode <choice>` to switch.
+
+SQL keyword hints, filename completion and SQL highlighting are disabled in
+smart/agent modes. The `!mode` choice helper remains available in every mode.
+Server table/field keywords are loaded only when SQL mode is first entered (unless
+`--no-auto-complete` is set), so starting in smart/agent mode avoids that catalog
+query. Returning to SQL restores completion without reloading the same catalog.
+Custom `settings.prompt` text is preserved after the mode prefix.
 
 Smart mode is conservative: `SELECT 1; Explain the result` executes **nothing**,
 not the SQL prefix. The same whole-input check applies to multi-line continuation,
@@ -211,7 +233,7 @@ custom delimiters and single-line settings. A complete batch containing an unfin
 or invalid tail is rejected before execution, with the existing pending SQL unchanged.
 This is atomic **classification**, not a transaction: a fully valid SQL batch can
 still partially succeed if a later statement fails on the server.
-Use `/ask` / agent mode to discuss SQL, or `/sql` / sql mode to run unsupported/new
+Use `!ask` / agent mode to discuss SQL, or `!sql` / sql mode to run unsupported/new
 server syntax without local AST validation. Client operations such as `PUT`, `GET`
 and `GENDATA` also require an explicit SQL path if the AST does not recognize them.
 These explicit paths keep their normal CLI behavior; AI suggestions are never
@@ -221,7 +243,7 @@ Quoted delimiters, `\G`, closed comments and valid multi-statement batches use t
 existing REPL splitter. Standalone closed comments do not start/hold a SQL buffer;
 unclosed comments keep accumulating. `!set sql_delimiter ...` and `!set multi_line ...`
 apply immediately to both smart validation and execution. Smart mode cannot infer
-intent for text that is valid SQL but intended as prose: choose agent mode or `/ask`
+intent for text that is valid SQL but intended as prose: choose agent mode or `!ask`
 when you want explanation rather than execution. Local AST/server version differences
 are handled through explicit routing, not model-based execution guesses.
 
@@ -253,13 +275,13 @@ model = "local-model"
 # No api_key_env is needed for an unauthenticated local service.
 ```
 
-Select a backend with `bendsql --agent --backend local`, or `/backend local`
-inside the session. `/backend` lists names and the current selection without
+Select a backend with `bendsql --backend local`, or `!backend local`
+inside the session. `!backend` lists names and the current selection without
 printing URLs, headers or credentials. `--backend` overrides `agent.backend`.
 Switching succeeds only after validating the selected configuration; on failure,
 the existing backend and conversation remain active. On success, conversation
 history is cleared while query evidence is retained. Switching back does not
-restore the old conversation. `/clear` clears both kinds of context and drops the
+restore the old conversation. `!context clear` clears both kinds of context and drops the
 backend client; the selected name remains unchanged.
 
 The reserved backend `env` explicitly uses the original environment-variable
@@ -270,7 +292,7 @@ export BENDSQL_AGENT_BASE_URL='https://your-model-service.example/v1'
 export BENDSQL_AGENT_MODEL='your-model-name'
 # Optional for services that require authentication; do not pass keys in the URL.
 export BENDSQL_AGENT_API_KEY='your-api-key'
-bendsql --agent --backend env
+bendsql --backend env
 ```
 
 For a named backend, legacy `BENDSQL_AGENT_*` variables do not override its URL,
@@ -293,42 +315,39 @@ errors. `timeout_secs` defaults to 60 and supports 1–3600 seconds; `max_tokens
 defaults to 2048 and supports 1–65536 (the service may have a lower limit).
 AI requests can be interrupted with Ctrl+C. This initial implementation returns
 text answers without streaming and never exposes a BendSQL query execution tool to a backend.
-`openai-compatible` and the local `cli` adapters `codex`, `claude-code`, `pi` and
-`amp` are implemented, together with a configurable stdio ACP v1 backend.
+`openai-compatible` and the local `cli` adapters `codex`, `claude-code` and `pi`
+are implemented, together with a configurable stdio ACP v1 backend.
 
 ### Built-in local coding CLI backends
 
 Local CLI invocation means starting an installed program, not local model inference.
 These are trusted external agents, with their own authentication, file access and
-service retention policies. **Entering `--agent` opts into ordered local CLI discovery
-unless overridden; submitting a question runs the selected trusted program under
-those policies.** Neither the temporary directory nor an environment
+service retention policies. **Entering agent/smart mode or using `!ask` and
+submitting a question runs the selected trusted program under those policies.** Neither the temporary directory nor an environment
 allowlist is an OS security sandbox. Codex can still use tools in its read-only sandbox; BendSQL
 does not provide a SQL execution tool or execute SQL generated in an answer.
 
-Codex, Claude Code, Pi and Amp are built in: **no backend configuration tables are needed**.
+Codex, Claude Code and Pi are built in: **no backend configuration tables are needed**.
 Install and authenticate the CLI, then use default discovery or select one:
 
 ```bash
-bendsql --agent  # codex, then claude, then pi
-bendsql --agent --backend local-claude
-bendsql --agent --backend local-codex
-bendsql --agent --backend local-pi
-bendsql --agent --backend local-amp
-# Short aliases are also accepted: claude, claude-code, codex, pi, amp
-bendsql --agent --backend pi
-bendsql --agent --backend amp
+bendsql  # SQL mode; !mode agent then a question uses codex, then claude, then pi
+bendsql --backend local-claude
+bendsql --backend local-codex
+bendsql --backend local-pi
+# Short aliases are also accepted: claude, claude-code, codex, pi
+bendsql --mode agent --backend pi
 ```
 
-Inside the session, `/backend` lists built-in and custom names. Use
-`/backend claude`, `/backend codex`, `/backend pi`, or `/backend amp` to select one.
+Inside the session, `!backend` lists built-in and custom names. Use
+`!backend claude`, `!backend codex`, or `!backend pi` to select one.
 Selection validates the executable without starting a model request; the program
 starts only when a question is submitted. Missing CLIs produce an error,
 never a switch to another service. Default discovery checks configured built-in
 command overrides as well as PATH, skips disabled/non-CLI profiles, and fixes the
 selected backend before making a request. Authentication/request failures and
-`/clear` do not advance to another provider. Privacy/retention details are available
-through `/backend` and `/help`; per-request backend notices are not printed.
+`!context clear` do not advance to another provider. Privacy/retention details are available
+through `!backend` and `!help`; per-request backend notices are not printed.
 
 To set a default, only the selection is needed:
 
@@ -359,10 +378,9 @@ built-in defaults. Independently named custom CLI profiles still require
 
 BendSQL starts a fresh process for each question and supplies the bounded
 conversation/query evidence through stdin, not command arguments or context files.
-No CLI session IDs are resumed; switching backends or `/clear` does not recover
+No CLI session IDs are resumed; switching backends or `!context clear` does not recover
 previous remote conversation state. Model selection is optional: Codex uses the
-`thread/start` model field, while Claude Code and Pi receive `--model`. Amp controls its own model routing; setting
-`model` on an Amp backend is rejected instead of passing an unverified flag.
+`thread/start` model field, while Claude Code and Pi receive `--model`.
 Install and authenticate the CLI separately; BendSQL never downloads
 an adapter or invokes a shell to interpret `command`. An absolute executable path
 or a bare executable name is accepted; arbitrary arguments and relative paths are
@@ -395,15 +413,8 @@ The adapters use distinct structured-output protocols:
   update activity, **not model requests**. Only authoritative assistant text from
   `message_end`, followed by a completed run, is shown; thinking/deltas are ignored.
   Aborts, final errors, incomplete retries and reported tool use do not become answers.
-- **Amp:** `--execute --stream-json` with a private, temporary settings file containing
-  only static policy: disable tools with `"*"`, reject all MCP servers, disable
-  auto-updates and remote creation. Query context and credentials are never written
-  to that file. Only a successful final `result` is displayed. Reported active tools,
-  MCP connections, tool calls or permission denials cause an error. Amp plugins and
-  managed settings can still affect startup; reporting a violation is not prevention
-  or rollback of actions an external program may already have taken.
 
-Pi and Amp perform a bounded `--help` check before their first question, with empty
+Pi performs a bounded `--help` check before its first question, with empty
 stdin and the same restrictive options/settings. Required advertised flags must be
 present; old/unsupported versions receive no conversation or query context. Successful
 checks are cached for that backend instance, not globally, and reset when the backend
@@ -421,8 +432,8 @@ percentage or stage log. It is stopped and erased before printing an answer/erro
 including cancellation and timeout. Backend-selection notices and Codex startup/
 generation messages do not remain in the output. Non-terminal stderr hides the
 animation. Timeout errors still identify the phase; normal replies remain clean.
-Pi/Amp adapters follow their published CLI/JSON protocols and are tested with mock
-executables; neither executable was installed for live verification. Real model
+The Pi adapter follows its published CLI/JSON protocol and is tested with a mock
+executable; it was not installed for live verification. Real model
 execution is not part of the mock test suite. A deliberately ignored live Codex
 smoke test can be run with `cargo test -p bendsql --bin bendsql real_codex_hi -- --ignored --nocapture`;
 it sends only `hi`, requires an authenticated installed CLI and may incur model cost.
@@ -430,8 +441,7 @@ it sends only `hi`, requires an authenticated installed CLI and may incur model 
 The child environment is cleared and rebuilt from basic runtime variables
 (`PATH`, `HOME`, user/locale/temp variables) and CLI-specific auth variables:
 `CODEX_HOME`, `OPENAI_API_KEY`, `CODEX_API_KEY` for Codex; `CLAUDE_CONFIG_DIR`,
-`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` for Claude Code; `AMP_API_KEY` for Amp;
-and Pi's config/package directory variables plus a fixed set of common provider
+`ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` for Claude Code; and Pi's config/package directory variables plus a fixed set of common provider
 credentials (including `OPENAI_API_KEY`, Anthropic keys/tokens, `GEMINI_API_KEY`,
 Groq/Mistral/OpenRouter keys). Additional provider, ambient cloud, proxy and certificate
 variables must be explicitly named in `env_allowlist`; missing/empty references are errors.
@@ -454,16 +464,34 @@ cannot guarantee cleanup. On other platforms, use the HTTP backend.
 
 BendSQL itself does not persist CLI input/output. Ephemeral/no-session flags request
 that Codex/Claude Code/Pi not save conversation history, but CLI diagnostics, managed
-settings and upstream service retention can still apply. Amp has no verified ephemeral
-flag in this integration and may retain threads locally/remotely; a warning is shown
-when it is selected. Amp's noninteractive mode may require `AMP_API_KEY` containing
-an access token, per its CLI authentication documentation. `/clear` removes local
+settings and upstream service retention can still apply. `!context clear` removes local
 BendSQL context, not files or history previously retained by an external CLI/service.
+
+### Embedded skill resources
+
+`cli/skills/` is the source directory for built-in skills. Add future skills under
+`<name>/SKILL.md` with optional Markdown reference files. The build script embeds
+all resource bytes into the CLI in **debug and release**, tracks directory changes,
+and rejects symlinks. This does not change the frontend's asset-loading behavior.
+
+The first AI request extracts only these static resources into a private directory;
+Unix files/directories are marked read-only. The directory lives with the interactive
+session and is removed on exit. Clearing query/conversation context does not remove
+built-in references. No SQL, result data, questions, responses or credentials are
+written to the skill directory.
+
+Every backend's system message describes the directory, available SKILL.md files
+and bounded text excerpts (16 KiB total, at most 4 KiB per Markdown document). This
+also works for HTTP-only models, which cannot read a local path. Missing/truncated
+content is explicitly identified; no task-specific skills are bundled yet. Static
+resources are reference material, not new tool permissions: no scripts are executed,
+and skills cannot override the rules preventing automatic SQL or Shell execution.
+Future resources are capped at 256 files / 4 MiB total and 1 MiB per file.
 
 ### ACP adapters
 
 BendSQL can act as a text-only ACP Client for an **already installed, trusted
-stdio adapter**. Configure it explicitly; the four native CLI built-ins above
+stdio adapter**. Configure it explicitly; the three native CLI built-ins above
 remain zero-config and unchanged.
 
 ```toml
@@ -478,7 +506,7 @@ allow_external_agent = true
 env_allowlist = ["ANTHROPIC_API_KEY"]
 ```
 
-Use `bendsql --agent --backend my-acp` or `/backend my-acp`. The adapter must speak
+Use `bendsql --backend my-acp` or `!backend my-acp`. The adapter must speak
 ACP on stdout and use stderr for diagnostics; normal CLI text/JSON output is not
 ACP. BendSQL does not download an adapter or construct package-manager commands.
 If you configure a launcher or script, its behavior (including downloads) is your
@@ -512,7 +540,7 @@ Abandoning a question (Ctrl+C or timeout) cancels its worker. Once a session exi
 it tries `session/cancel`, allows at most 200 ms for protocol completion, and cleans
 up the process group. The cancelled worker has a 500 ms cleanup deadline before
 being aborted. This is **best-effort protocol cancellation**, not confirmation that
-a remote model request stopped. Fresh processes/sessions mean `/clear` and backend
+a remote model request stopped. Fresh processes/sessions mean `!context clear` and backend
 switches cannot accidentally resume old local conversation state; they cannot erase
 history retained by the adapter or its upstream services.
 
@@ -537,16 +565,18 @@ creation, streaming text, capability denial, errors, byte budgets and cancellati
 with descendant-process cleanup. No real ACP adapter/model service has been invoked.
 
 ```text
+sql> !mode smart
+Switched to smart mode.
 smart> SELECT channel, sum(amount) AS revenue FROM orders GROUP BY channel;
 ... normal SQL output ...
-[Q1] Query context cached. Use /context to inspect.
+[Q1] Query context cached. Use !context to inspect.
 smart> Which channel has the highest revenue?
 AI> ... explanation based on Q1 ...
-smart> /mode agent
+smart> !mode agent
 Switched to agent mode.
 agent> Suggest a query that groups revenue by week.
 AI> ... suggested SQL, not executed ...
-agent> /mode sql
+agent> !mode sql
 Switched to sql mode.
 sql> SELECT ...;
 ```
@@ -555,13 +585,13 @@ Explicit commands are available in all three modes:
 
 | Command | Behavior |
 | --- | --- |
-| `/mode [smart\|sql\|agent]` | Show or change the input mode. |
-| `/backend [name]` | List/select model backends; switching resets conversation, not query memory. |
-| `/sql <SQL>` | Execute SQL explicitly; a trailing delimiter is not required. |
-| `/ask <question>` | Ask AI explicitly, without executing generated SQL. |
-| `/context` | List cached query IDs, status and preview completeness. |
-| `/clear` | Clear query records, conversation and in-memory input history. |
-| `/help` | Show mode and command help. |
+| `!mode [sql\|smart\|agent]` | Show choices / Tab-complete them, or switch the input mode. |
+| `!backend [name]` | List/select model backends; switching resets conversation, not query memory. |
+| `!sql <SQL>` | Execute SQL explicitly; a trailing delimiter is not required. |
+| `!ask <question>` | Ask AI explicitly, without executing generated SQL. |
+| `!context` | List cached query IDs, status and preview completeness. |
+| `!context clear` | Clear query records, conversation and in-memory input history. |
+| `!help` | Show mode and command help. |
 
 SQL uses the existing execution and output paths, without rewriting it, injecting
 `LIMIT`, or rerunning it to collect context. Each query records SQL, status,
@@ -587,16 +617,18 @@ queries, plus bounded conversation history. Incomplete results are marked explic
 the assistant is instructed not to infer whole-result aggregates from previews.
 Large records may be reduced further to fit the 32 KiB query-context budget.
 Missing/evicted records cannot be recovered by AI, and query IDs are not reused
-when `/clear` is invoked. Questions have an 8 KiB limit; displayed/stored AI answers
+when `!context clear` is invoked. Questions have an 8 KiB limit; displayed/stored AI answers
 are also limited to 8 KiB and marked if truncated.
 
 **Privacy:** asking a question sends selected SQL, previews, errors and recent
 conversation to the configured model backend (or external CLI). Review its data-handling policy before
 using sensitive data. SQL and cell contents are treated as untrusted evidence, not
-instructions; this does not guarantee the model's answers are correct. BendSQL agent sessions
-do not load/save disk history, and BendSQL client file logging is disabled in these sessions.
+instructions; this does not guarantee the model's answers are correct. All interactive sessions
+do not load/save disk history, and BendSQL client file logging is disabled in them.
+The bounded query/conversation cache stays in RAM; the only resource extraction is
+static compiled skill documentation.
 Normal database-side logging and model-service retention policies still apply.
-Use `/clear` to remove local context before changing topics.
+Use `!context clear` to remove local context before changing topics.
 
 For local verification (the terminal smoke test requires Unix and Python 3, but no
 live database or model service):

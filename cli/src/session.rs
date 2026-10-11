@@ -39,7 +39,6 @@ use chrono::NaiveDateTime;
 use clap::ValueEnum;
 use databend_common_ast::parser::all_reserved_keywords;
 use databend_driver::{Client, Connection, LoadMethod, ServerStats, TryFromRow};
-use log::error;
 use once_cell::sync::Lazy;
 use rustyline::config::Builder;
 use rustyline::error::ReadlineError;
@@ -90,11 +89,17 @@ pub struct Session {
     server_handle: Option<JoinHandle<std::io::Result<()>>>,
 
     keywords: Option<Arc<sled::Db>>,
+    server_keywords_loaded: bool,
     interrupted: Arc<AtomicBool>,
 }
 
 impl Session {
-    pub async fn try_new(dsn: String, settings: Settings, is_repl: bool) -> Result<Self> {
+    pub async fn try_new(
+        dsn: String,
+        settings: Settings,
+        is_repl: bool,
+        initial_mode: InteractionMode,
+    ) -> Result<Self> {
         let client =
             Client::new(dsn.clone()).with_name(format!("bendsql/{}", VERSION_SHORT.as_str()));
         let conn = client.get_conn().await?;
@@ -155,30 +160,6 @@ impl Session {
                 }
                 db.apply_batch(batch)?;
             }
-            // server keywords
-            if !settings.no_auto_complete {
-                let rows = conn.query_iter(PROMPT_SQL).await;
-                match rows {
-                    Ok(mut rows) => {
-                        let mut count = 0;
-                        let mut batch = sled::Batch::default();
-                        while let Some(Ok(row)) = rows.next().await {
-                            let (w, t): (String, String) = row.try_into().unwrap();
-                            batch.insert(w.as_str(), t.as_str());
-                            count += 1;
-                            if count % 1000 == 0 {
-                                db.apply_batch(batch)?;
-                                batch = sled::Batch::default();
-                            }
-                        }
-                        db.apply_batch(batch)?;
-                        println!("Loaded {} auto complete keywords from server.", db.len());
-                    }
-                    Err(e) => {
-                        eprintln!("WARN: loading auto complete keywords failed: {e}");
-                    }
-                }
-            }
             keywords = Some(Arc::new(db));
         }
 
@@ -211,7 +192,7 @@ impl Session {
             .expect("Error setting Ctrl-C handler");
         }
 
-        Ok(Self {
+        let mut session = Self {
             client,
             conn,
             is_repl,
@@ -219,9 +200,54 @@ impl Session {
             query: String::new(),
             agent: None,
             keywords,
+            server_keywords_loaded: false,
             server_handle,
             interrupted,
-        })
+        };
+        if is_repl && initial_mode == InteractionMode::Sql {
+            session.load_server_keywords().await?;
+        }
+        Ok(session)
+    }
+
+    async fn load_server_keywords(&mut self) -> Result<()> {
+        if self.server_keywords_loaded || self.settings.no_auto_complete {
+            return Ok(());
+        }
+        let Some(db) = &self.keywords else {
+            return Ok(());
+        };
+        let mut rows = match self.conn.query_iter(PROMPT_SQL).await {
+            Ok(rows) => rows,
+            Err(_) => {
+                eprintln!("WARN: loading autocomplete keywords failed; SQL remains available.");
+                return Ok(());
+            }
+        };
+        let mut batch = sled::Batch::default();
+        let mut count = 0;
+        while let Some(row) = rows.next().await {
+            let parsed = row
+                .map_err(|_| ())
+                .and_then(|row| <(String, String)>::try_from(row).map_err(|_| ()));
+            let (word, category) = match parsed {
+                Ok(row) => row,
+                Err(_) => {
+                    eprintln!("WARN: invalid autocomplete data; SQL remains available.");
+                    return Ok(());
+                }
+            };
+            batch.insert(word.to_ascii_lowercase().as_str(), category.as_str());
+            count += 1;
+            if count % 1000 == 0 {
+                db.apply_batch(batch)?;
+                batch = sled::Batch::default();
+            }
+        }
+        db.apply_batch(batch)?;
+        self.server_keywords_loaded = true;
+        println!("Loaded {} auto complete keywords from server.", db.len());
+        Ok(())
     }
 
     async fn prompt(&self) -> String {
@@ -352,7 +378,7 @@ impl Session {
         Ok(())
     }
 
-    pub async fn handle_agent_repl(
+    pub async fn handle_repl(
         &mut self,
         mode: InteractionMode,
         config: crate::agent::config::AgentConfig,
@@ -368,10 +394,16 @@ impl Session {
             .build();
         let mut rl = Editor::<CliHelper, DefaultHistory>::with_config(config)?;
         rl.set_helper(Some(CliHelper::new(self.keywords.clone())));
-        // Deliberately do not load or save SQL/chat history in agent mode.
+        // All interactive modes can use AI context; input history stays in memory.
         'repl: loop {
             let mode = self.agent.as_ref().unwrap().mode;
-            let prompt = mode.prompt(!self.query.is_empty());
+            rl.helper_mut().unwrap().set_mode(mode);
+            let prompt =
+                if self.query.is_empty() && self.settings.prompt != Settings::default().prompt {
+                    format!("{}> {}", mode.name(), self.prompt().await)
+                } else {
+                    mode.prompt(!self.query.is_empty())
+                };
             let line = match rl.readline(&prompt) {
                 Ok(line) => line,
                 Err(ReadlineError::Interrupted) => {
@@ -396,7 +428,7 @@ impl Session {
             }
             let input = if self.query.is_empty() {
                 mode.route(&line, self.settings.sql_delimiter)
-            } else if line.trim_start().starts_with('/') && !line.trim_start().starts_with("/*") {
+            } else if line.trim_start().starts_with('!') {
                 eprintln!("SQL is pending. Finish it or press Ctrl+C before using a command.");
                 continue;
             } else {
@@ -419,14 +451,14 @@ impl Session {
                         self.settings.multi_line,
                     )
                 {
-                    eprintln!("Ambiguous input. No SQL executed; finish valid SQL or use /sql or sql mode. Pending SQL is unchanged; Ctrl+C clears it.");
+                    eprintln!("Ambiguous input. No SQL executed; finish valid SQL or use !sql or sql mode. Pending SQL is unchanged; Ctrl+C clears it.");
                     continue;
                 }
             }
             let queries = match input {
                 Input::Empty => continue,
                 Input::Ambiguous => {
-                    eprintln!("Ambiguous input. No SQL executed. Use /sql <SQL>, /ask <question>, or select sql/agent mode.");
+                    eprintln!("Ambiguous input. No SQL executed. Use !sql <SQL>, !ask <question>, or select sql/agent mode.");
                     continue;
                 }
                 Input::Question(question) => {
@@ -437,22 +469,27 @@ impl Session {
                     let (name, argument) = command
                         .split_once(char::is_whitespace)
                         .map_or((command, ""), |(name, rest)| (name, rest.trim()));
+                    let name = name.strip_prefix('!').unwrap_or(name);
                     match name {
-                        "/mode" => {
+                        "mode" => {
                             if argument.is_empty() {
-                                println!("Current mode: {}", mode.name());
+                                println!("Current mode: {}. Options: sql | smart | agent. Use !mode <choice> or Tab to select.", mode.name());
                             } else {
                                 match InteractionMode::from_str(argument, true) {
                                     Ok(mode) => {
+                                        if mode == InteractionMode::Sql {
+                                            self.load_server_keywords().await?;
+                                        }
                                         self.agent.as_mut().unwrap().mode = mode;
+                                        rl.helper_mut().unwrap().set_mode(mode);
                                         println!("Switched to {} mode.", mode.name());
                                     }
-                                    Err(_) => eprintln!("Usage: /mode smart|sql|agent"),
+                                    Err(_) => eprintln!("Usage: !mode sql|smart|agent"),
                                 }
                             }
                             continue;
                         }
-                        "/backend" => {
+                        "backend" => {
                             let agent = self.agent.as_mut().unwrap();
                             if argument.is_empty() {
                                 match agent.backend_summary() {
@@ -469,17 +506,17 @@ impl Session {
                             }
                             continue;
                         }
-                        "/ask" => {
+                        "ask" => {
                             if argument.is_empty() {
-                                eprintln!("Usage: /ask <question>");
+                                eprintln!("Usage: !ask <question>");
                             } else {
                                 self.ask_agent(argument).await;
                             }
                             continue;
                         }
-                        "/sql" => {
+                        "sql" => {
                             if argument.is_empty() {
-                                eprintln!("Usage: /sql <SQL>");
+                                eprintln!("Usage: !sql <SQL>");
                                 continue;
                             }
                             SqlParser::new(
@@ -489,7 +526,13 @@ impl Session {
                             )
                             .parse(argument)
                         }
-                        "/context" => {
+                        "context" if argument == "clear" => {
+                            self.agent.as_mut().unwrap().clear();
+                            rl.clear_history()?;
+                            println!("Query memory and conversation cleared.");
+                            continue;
+                        }
+                        "context" if argument.is_empty() => {
                             let summary = self.agent.as_ref().unwrap().memory.summary();
                             println!(
                                 "{}",
@@ -501,18 +544,12 @@ impl Session {
                             );
                             continue;
                         }
-                        "/clear" => {
-                            self.agent.as_mut().unwrap().clear();
-                            rl.clear_history()?;
-                            println!("Query memory and conversation cleared.");
+                        "context" => {
+                            eprintln!("Usage: !context [clear]");
                             continue;
                         }
-                        "/help" => {
+                        "help" => {
                             println!("{}", crate::agent::HELP);
-                            continue;
-                        }
-                        _ if name.starts_with('/') => {
-                            eprintln!("Unknown agent command. Use /help.");
                             continue;
                         }
                         _ => vec![command.to_owned()],
@@ -531,6 +568,12 @@ impl Session {
                     Ok(Some(_)) => {}
                     Err(error) => {
                         eprintln!("error: {error}");
+                        if error.to_string().contains("Unauthenticated") {
+                            match self.reconnect().await {
+                                Ok(()) => eprintln!("Reconnected; the statement was not retried. Verify execution state before retrying writes."),
+                                Err(error) => eprintln!("reconnect error: {error}"),
+                            }
+                        }
                         self.query.clear();
                         break;
                     }
@@ -558,88 +601,6 @@ impl Session {
             Some(Err(error)) => eprintln!("AI error: {error}"),
             None => eprintln!("AI request interrupted."),
         }
-    }
-
-    pub async fn handle_repl(&mut self) {
-        let config = Builder::new()
-            .completion_prompt_limit(10)
-            .completion_type(CompletionType::List)
-            .build();
-        let mut rl = Editor::<CliHelper, DefaultHistory>::with_config(config).unwrap();
-
-        rl.set_helper(Some(CliHelper::new(self.keywords.clone())));
-        rl.load_history(&get_history_path()).ok();
-
-        'F: loop {
-            match rl.readline(&self.prompt().await) {
-                Ok(line) => {
-                    let queries = self.append_query(&line);
-                    for query in queries {
-                        if !query.starts_with('!') {
-                            let _ = rl.add_history_entry(format!(
-                                "{}{}",
-                                query, self.settings.sql_delimiter
-                            ));
-                        }
-
-                        match self.handle_query(true, &query).await {
-                            Ok(None) => {
-                                break 'F;
-                            }
-                            Ok(Some(_)) => {}
-                            Err(e) => {
-                                if e.to_string().contains("Unauthenticated") {
-                                    if let Err(e) = self.reconnect().await {
-                                        eprintln!("reconnect error: {e}");
-                                    } else if let Err(e) = self.handle_query(true, &query).await {
-                                        eprintln!("error: {e}");
-                                    }
-                                } else {
-                                    eprintln!("error: {e}");
-                                    if e.to_string().contains(INTERRUPTED_MESSAGE) {
-                                        if let Some(query_id) = self.conn.last_query_id() {
-                                            println!("killing query: {query_id}");
-                                            let _ = self.conn.kill_query(&query_id).await;
-                                        }
-                                    }
-                                    self.query.clear();
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => match e {
-                    ReadlineError::Io(err) => {
-                        eprintln!("io err: {err}");
-                    }
-                    ReadlineError::Interrupted => {
-                        self.query.clear();
-                        println!("^C");
-                    }
-                    ReadlineError::Eof => {
-                        break;
-                    }
-                    #[cfg(unix)]
-                    ReadlineError::Errno(err) => {
-                        error!("Unix err: {err}");
-                        break;
-                    }
-                    #[cfg(windows)]
-                    ReadlineError::SystemError(err) => {
-                        error!("Windows err: {err}");
-                        break;
-                    }
-                    _ => {}
-                },
-            }
-        }
-        // save history first to avoid loss data.
-        let _ = rl.save_history(&get_history_path());
-        if let Err(e) = self.conn.close().await {
-            println!("got error when closing session: {e}");
-        }
-        println!("Bye~");
     }
 
     pub async fn handle_reader<R: BufRead>(&mut self, r: R) -> Result<()> {
@@ -776,7 +737,7 @@ impl Session {
                 }
             }
             let id = self.agent.as_mut().unwrap().memory.push(record);
-            println!("[{id}] Query context cached. Use /context to inspect.");
+            println!("[{id}] Query context cached. Use !context to inspect.");
         }
         result
     }
@@ -1038,13 +999,6 @@ impl Session {
         }
         Ok(())
     }
-}
-
-fn get_history_path() -> String {
-    format!(
-        "{}/.bendsql_history",
-        std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
-    )
 }
 
 impl Drop for Session {
