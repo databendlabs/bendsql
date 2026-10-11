@@ -327,8 +327,8 @@ starts only when a question is submitted. Missing CLIs produce an error,
 never a switch to another service. Default discovery checks configured built-in
 command overrides as well as PATH, skips disabled/non-CLI profiles, and fixes the
 selected backend before making a request. Authentication/request failures and
-`/clear` do not advance to another provider. A brief context-sharing notice is shown
-before the first question to a backend, not a full usage banner at startup.
+`/clear` do not advance to another provider. Privacy/retention details are available
+through `/backend` and `/help`; per-request backend notices are not printed.
 
 To set a default, only the selection is needed:
 
@@ -416,8 +416,11 @@ Codex `0.154.0` was verified with its generated app-server schema and opt-in liv
 Claude Code `2.1.203` was checked through its help and mock print/JSON protocol. Older releases may lack required
 flags. Unsupported versions, failed authentication or invalid structured output
 produce an error, never a downgrade to weaker permissions or another backend.
-Codex emits brief startup/generation progress; timeout messages identify the phase
-rather than treating backend selection as proof of a model request.
+AI requests display a temporary stderr spinner (`AI thinking`) rather than a
+percentage or stage log. It is stopped and erased before printing an answer/error,
+including cancellation and timeout. Backend-selection notices and Codex startup/
+generation messages do not remain in the output. Non-terminal stderr hides the
+animation. Timeout errors still identify the phase; normal replies remain clean.
 Pi/Amp adapters follow their published CLI/JSON protocols and are tested with mock
 executables; neither executable was installed for live verification. Real model
 execution is not part of the mock test suite. A deliberately ignored live Codex

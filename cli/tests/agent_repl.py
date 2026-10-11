@@ -38,6 +38,7 @@ class MockService(http.server.BaseHTTPRequestHandler):
     kill_requests = []
     page_requests = []
     release_queries = threading.Event()
+    release_models = threading.Event()
     delayed_query_ids = set()
 
     def log_message(self, *args):
@@ -55,6 +56,17 @@ class MockService(http.server.BaseHTTPRequestHandler):
         elif self.path == "/v1/chat/completions":
             self.model_requests.append(request)
             self.model_headers.append({key.lower(): value for key, value in self.headers.items()})
+            question = json.loads(request["messages"][-1]["content"])["question"]
+            if question == "slow-spinner":
+                time.sleep(0.5)
+            if question == "error-spinner":
+                time.sleep(0.3)
+                self.send_response(503)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if question == "wait-spinner":
+                self.release_models.wait(10)
             response = {
                 "choices": [
                     {"message": {"content": "Mock answer grounded in cached records."}}
@@ -191,6 +203,9 @@ class Terminal:
         self.expect(prompt)
 
     def finish(self):
+        output = b"".join(self.transcript)
+        for debug in [b"AI backend:", b"Codex: starting app-server.", b"Codex: generating response."]:
+            assert debug not in output, "AI request debug messages must not pollute output"
         os.write(self.fd, b"quit\r")
         self.expect("Bye~")
         _, status = os.waitpid(self.pid, 0)
@@ -1042,6 +1057,100 @@ def exercise_default_backend_discovery(executable, env, port):
             terminal.finish()
 
 
+def visible_terminal(transcript):
+    # Minimal screen reconstruction for the CSI cursor/erase sequences emitted
+    # by rustyline and indicatif. Raw PTY transcripts legitimately contain ticks;
+    # the persistent rendered terminal must not contain a spinner after completion.
+    import re
+    text = transcript.decode(errors="replace")
+    rows, row, column = [[]], 0, 0
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == "\x1b":
+            match = re.match(r"\x1b\[([0-9;?]*)([A-Za-z~])", text[index:])
+            if match:
+                parameters, action = match.groups()
+                values = [int(value or "0") for value in parameters.lstrip("?").split(";")]
+                count = values[0] or 1
+                if action == "A": row = max(0, row - count)
+                elif action in ["B", "E"]:
+                    row += count
+                    if action == "E": column = 0
+                elif action == "F": row, column = max(0, row - count), 0
+                elif action == "C": column += count
+                elif action == "D": column = max(0, column - count)
+                elif action == "G": column = count - 1
+                elif action in ["H", "f"]:
+                    row, column = count - 1, (values[1] if len(values) > 1 else 1) - 1
+                elif action == "K":
+                    while len(rows) <= row: rows.append([])
+                    if values[0] == 2: rows[row] = []
+                    elif values[0] == 0: del rows[row][column:]
+                    else:
+                        for position in range(min(column + 1, len(rows[row]))): rows[row][position] = " "
+                elif action == "J" and values[0] in [2, 3]: rows = [[]]; row = column = 0
+                index += len(match.group())
+                continue
+            index += 2
+            continue
+        if char == "\r": column = 0
+        elif char == "\n": row += 1
+        elif char == "\b": column = max(0, column - 1)
+        elif not char.isprintable(): pass
+        else:
+            while len(rows) <= row: rows.append([])
+            while len(rows[row]) <= column: rows[row].append(" ")
+            rows[row][column] = char
+            column += 1
+        index += 1
+    return "\n".join("".join(line).rstrip() for line in rows)
+
+
+def exercise_transient_ai_spinner(executable, env, port):
+    write_config(env, '[agent]\nbackend="env"\ntimeout_secs=1')
+    animated_env = dict(env, TERM="xterm")
+    MockService.release_models.clear()
+    try:
+        with Terminal(executable, animated_env, port) as terminal:
+            terminal.expect("smart> ")
+            # Do not use send(): readline's input redraws also contain the prompt.
+            for question, output in [("slow-spinner", "AI> "), ("error-spinner", "AI error: ")]:
+                before = len(b"".join(terminal.transcript))
+                os.write(terminal.fd, question.encode() + b"\r")
+                terminal.expect("AI thinking")
+                terminal.expect(output)
+                terminal.expect("smart> ")
+                transcript = b"".join(terminal.transcript)
+                assert transcript[before:].count(b"AI thinking") >= 2, "Spinner must animate during a slow request"
+                assert "AI thinking" not in visible_terminal(transcript), "Spinner survived final output"
+            count = len(MockService.model_requests)
+            os.write(terminal.fd, b"wait-spinner\r")
+            terminal.expect("AI thinking")
+            wait_http_count(MockService.model_requests, count + 1)
+            os.write(terminal.fd, b"\x03")
+            terminal.expect("AI request interrupted.")
+            terminal.expect("smart> ")
+            assert "AI thinking" not in visible_terminal(b"".join(terminal.transcript))
+            MockService.release_models.set()
+            MockService.release_models.clear()
+            os.write(terminal.fd, b"wait-spinner\r")
+            terminal.expect("AI thinking")
+            terminal.expect("AI error: ")
+            terminal.expect("smart> ")
+            assert "AI thinking" not in visible_terminal(b"".join(terminal.transcript))
+            MockService.release_models.set()
+            os.write(terminal.fd, b"slow-spinner\r")
+            terminal.expect("AI> ")
+            terminal.expect("smart> ")
+            screen = visible_terminal(b"".join(terminal.transcript))
+            assert "Mock answer grounded in cached records." in screen
+            assert "AI thinking" not in screen
+            terminal.finish()
+    finally:
+        MockService.release_models.set()
+
+
 def main():
     executable = os.path.abspath(sys.argv[1])
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockService)
@@ -1073,6 +1182,7 @@ def main():
             exercise_smart_input_boundaries(executable, env, port)
             exercise_sql_cancellation(executable, env, port)
             exercise_default_backend_discovery(executable, env, port)
+            exercise_transient_ai_spinner(executable, env, port)
             assert not os.path.exists(os.path.join(home, ".bendsql_history"))
             for root, _, files in os.walk(home):
                 for name in files:
@@ -1087,7 +1197,8 @@ def main():
             "Pi/Amp protocols, safety settings, old-version rejection and process cleanup; "
             "ACP SDK lifecycle, capability denial, bounded transport, cancel handshake and cleanup; "
             "whole-input smart routing, live parser settings and SQL cancellation boundaries; "
-            "quiet startup, default CLI priority, explicit selection and no runtime fallback"
+            "quiet startup, default CLI priority, explicit selection and no runtime fallback; "
+            "animated AI spinner, clean final screen on success/error/cancel/timeout, no request debug output"
         )
     finally:
         server.shutdown()

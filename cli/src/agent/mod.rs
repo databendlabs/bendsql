@@ -19,6 +19,7 @@ mod codex;
 pub mod config;
 pub mod llm;
 pub mod memory;
+pub(crate) mod progress;
 pub mod router;
 
 use anyhow::{anyhow, bail, Result};
@@ -79,7 +80,6 @@ pub struct AgentSession {
     config: AgentConfig,
     selected: Option<String>,
     backend: Option<Box<dyn ChatBackend>>,
-    notice_shown: bool,
 }
 
 impl Default for AgentSession {
@@ -100,7 +100,6 @@ impl AgentSession {
             config,
             selected,
             backend: None,
-            notice_shown: false,
         }
     }
 
@@ -161,7 +160,6 @@ impl AgentSession {
         let backend = backend::build(&self.config, name)?;
         self.backend = Some(backend);
         self.selected = Some(name.into());
-        self.notice_shown = false;
         self.conversation.clear();
         Ok(())
     }
@@ -182,23 +180,6 @@ impl AgentSession {
         let selected = self.selected.as_deref().unwrap();
         if self.backend.is_none() {
             self.backend = Some(backend::build(&self.config, selected)?);
-        }
-        if !self.notice_shown {
-            match self.config.settings()?.backend(selected).as_deref() {
-                Some(config::BackendConfig::Cli {
-                    adapter: config::CliAdapter::Amp,
-                    ..
-                }) => {
-                    eprintln!("AI backend: {selected}. External agent receives query context and may retain threads; /clear does not erase external history.");
-                }
-                Some(config::BackendConfig::Cli { .. } | config::BackendConfig::Acp { .. }) => {
-                    eprintln!("AI backend: {selected}. Query context is shared with this trusted external agent; file access/retention policies apply.");
-                }
-                _ => eprintln!(
-                    "AI backend: {selected}. Selected query context is sent to the model service."
-                ),
-            }
-            self.notice_shown = true;
         }
         let messages = self.conversation.messages(question, &self.memory);
         let timeout = std::time::Duration::from_secs(self.config.settings()?.timeout_secs);

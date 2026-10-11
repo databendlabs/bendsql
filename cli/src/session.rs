@@ -18,6 +18,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::agent::memory::{bounded_text, QueryRecord, MAX_TEXT_BYTES};
+use crate::agent::progress::AiProgress;
 use crate::agent::router::{comments_only, smart_input_is_safe, Input};
 use crate::agent::{AgentSession, InteractionMode};
 use crate::ast::quote_string_in_box_display;
@@ -544,15 +545,18 @@ impl Session {
     }
 
     async fn ask_agent(&mut self, question: &str) {
+        let progress = AiProgress::new();
         let cancel = wait_for_interrupt(self.interrupted.clone());
-        tokio::select! {
-            result = self.agent.as_mut().unwrap().ask(question) => {
-                match result {
-                    Ok(answer) => println!("AI> {answer}"),
-                    Err(error) => eprintln!("AI error: {error}"),
-                }
-            }
-            _ = cancel => eprintln!("AI request interrupted."),
+        let result = tokio::select! {
+            result = self.agent.as_mut().unwrap().ask(question) => Some(result),
+            _ = cancel => None,
+        };
+        // Join the ticker and erase its line before writing persistent output.
+        drop(progress);
+        match result {
+            Some(Ok(answer)) => println!("AI> {answer}"),
+            Some(Err(error)) => eprintln!("AI error: {error}"),
+            None => eprintln!("AI request interrupted."),
         }
     }
 

@@ -395,7 +395,6 @@ async fn run(
     if token.is_cancelled() {
         bail!("Codex request cancelled before startup");
     }
-    eprintln!("Codex: starting app-server.");
     let mut command = tokio::process::Command::new(executable);
     command
         .args(args)
@@ -460,7 +459,6 @@ async fn run(
         }
         rpc.turn = Some(turn);
         phase.store(4, Ordering::SeqCst);
-        eprintln!("Codex: generating response.");
         while !rpc.completed {
             let frame = rpc.next().await?;
             rpc.event(frame).await?;
