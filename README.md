@@ -151,7 +151,7 @@ prompt = ":) "
 | Parameter            | Description                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `display_pretty_sql` | Whether to display SQL queries in a formatted way.                                                                  |
-| `prompt`             | The prompt to display before asking for input.                                                                      |
+| `prompt`             | Complete prompt template (default `{mode}> `). Supports `{mode}`, `{database}`, `{user}`, `{host}`, `{port}`, `{catalog}` and `{warehouse}`. |
 | `progress_color`     | The color to use for the progress bar.                                                                              |
 | `show_progress`      | Whether to show a progress bar when executing queries.                                                              |
 | `show_stats`         | Whether to show statistics after executing queries.                                                                 |
@@ -225,7 +225,22 @@ smart/agent modes. The `!mode` choice helper remains available in every mode.
 Server table/field keywords are loaded only when SQL mode is first entered (unless
 `--no-auto-complete` is set), so starting in smart/agent mode avoids that catalog
 query. Returning to SQL restores completion without reloading the same catalog.
-Custom `settings.prompt` text is preserved after the mode prefix.
+The complete prompt is controlled by `settings.prompt`, whose default template
+is `"{mode}> "`. No mode prefix or suffix is added outside the template. `{mode}`
+expands to `sql`, `smart` or `agent` on each input; omitting it intentionally hides
+the mode (use `!mode` to inspect it). Existing `{host}`, `{port}`, `{user}`,
+`{catalog}`, `{database}` and `{warehouse}` placeholders remain supported.
+
+```toml
+[settings]
+prompt = "🐳 @{database} [{mode}]:) "
+```
+
+This renders `🐳 @default [sql]:) ` and updates after mode switches. With
+`prompt = "🐳 @{database}:) "`, it renders `🐳 @default:) ` in all modes, without
+an extra `sql>`/`smart>`/`agent>` prefix. Configured whitespace is preserved; include
+a trailing space if desired. Pending SQL uses the separate `sql(sql)> ` or
+`smart(sql)> ` continuation prompt rather than repeating the full template.
 
 Smart mode is conservative: `SELECT 1; Explain the result` executes **nothing**,
 not the SQL prefix. The same whole-input check applies to multi-line continuation,

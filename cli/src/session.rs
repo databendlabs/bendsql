@@ -38,7 +38,7 @@ use async_recursion::async_recursion;
 use chrono::NaiveDateTime;
 use clap::ValueEnum;
 use databend_common_ast::parser::all_reserved_keywords;
-use databend_driver::{Client, Connection, LoadMethod, ServerStats, TryFromRow};
+use databend_driver::{Client, Connection, ConnectionInfo, LoadMethod, ServerStats, TryFromRow};
 use once_cell::sync::Lazy;
 use rustyline::config::Builder;
 use rustyline::error::ReadlineError;
@@ -62,6 +62,38 @@ static VERSION_SHORT: Lazy<String> = Lazy::new(|| {
         None => format!("{version}-{sha}"),
     }
 });
+
+/// Expand template tokens once. Connection values are literal data: a database
+/// called `{mode}` must not become a second template or change the mode label.
+fn render_prompt(template: &str, info: &ConnectionInfo, mode: InteractionMode) -> String {
+    let port = info.port.to_string();
+    let warehouse = info
+        .warehouse
+        .as_ref()
+        .map(|w| format!("({w})"))
+        .unwrap_or_else(|| format!("{}:{}", info.host, info.port));
+    let mut output = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        output.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let Some(end) = rest.find('}') else { break };
+        let value = match &rest[1..end] {
+            "mode" => mode.name(),
+            "host" => &info.host,
+            "user" => &info.user,
+            "port" => &port,
+            "catalog" => info.catalog.as_deref().unwrap_or("default"),
+            "database" => info.database.as_deref().unwrap_or("default"),
+            "warehouse" => &warehouse,
+            _ => &rest[..=end],
+        };
+        output.push_str(value);
+        rest = &rest[end + 1..];
+    }
+    output.push_str(rest);
+    output
+}
 
 fn usable_query_id(id: &str) -> bool {
     !id.is_empty()
@@ -250,31 +282,11 @@ impl Session {
         Ok(())
     }
 
-    async fn prompt(&self) -> String {
+    async fn prompt(&self, mode: InteractionMode) -> String {
         if !self.query.trim().is_empty() {
-            "> ".to_owned()
+            mode.prompt(true)
         } else {
-            let info = self.conn.info().await;
-            let mut prompt = self.settings.prompt.clone();
-            prompt = prompt.replace("{host}", &info.host);
-            prompt = prompt.replace("{user}", &info.user);
-            prompt = prompt.replace("{port}", &info.port.to_string());
-            if let Some(catalog) = &info.catalog {
-                prompt = prompt.replace("{catalog}", catalog);
-            } else {
-                prompt = prompt.replace("{catalog}", "default");
-            }
-            if let Some(database) = &info.database {
-                prompt = prompt.replace("{database}", database);
-            } else {
-                prompt = prompt.replace("{database}", "default");
-            }
-            if let Some(warehouse) = &info.warehouse {
-                prompt = prompt.replace("{warehouse}", &format!("({warehouse})"));
-            } else {
-                prompt = prompt.replace("{warehouse}", &format!("{}:{}", info.host, info.port));
-            }
-            format!("{} ", prompt.trim_end())
+            render_prompt(&self.settings.prompt, &self.conn.info().await, mode)
         }
     }
 
@@ -398,12 +410,7 @@ impl Session {
         'repl: loop {
             let mode = self.agent.as_ref().unwrap().mode;
             rl.helper_mut().unwrap().set_mode(mode);
-            let prompt =
-                if self.query.is_empty() && self.settings.prompt != Settings::default().prompt {
-                    format!("{}> {}", mode.name(), self.prompt().await)
-                } else {
-                    mode.prompt(!self.query.is_empty())
-                };
+            let prompt = self.prompt(mode).await;
             let line = match rl.readline(&prompt) {
                 Ok(line) => line,
                 Err(ReadlineError::Interrupted) => {
@@ -1012,6 +1019,80 @@ impl Drop for Session {
 #[cfg(test)]
 mod agent_boundary_tests {
     use super::*;
+
+    fn connection_info() -> ConnectionInfo {
+        ConnectionInfo {
+            handler: "REST".into(),
+            host: "localhost".into(),
+            port: 8000,
+            user: "root".into(),
+            database: Some("analytics".into()),
+            catalog: None,
+            warehouse: None,
+        }
+    }
+
+    #[test]
+    fn prompt_template_controls_the_complete_prompt_in_every_mode() {
+        let info = connection_info();
+        assert_eq!(Settings::default().prompt, "{mode}> ");
+        for mode in [
+            InteractionMode::Sql,
+            InteractionMode::Smart,
+            InteractionMode::Agent,
+        ] {
+            assert_eq!(
+                render_prompt(&Settings::default().prompt, &info, mode),
+                format!("{}> ", mode.name())
+            );
+            assert_eq!(
+                render_prompt("🐳 @{database}:) ", &info, mode),
+                "🐳 @analytics:) "
+            );
+            assert_eq!(
+                render_prompt("🐳 @{database} [{mode}]:) ", &info, mode),
+                format!("🐳 @analytics [{}]:) ", mode.name())
+            );
+        }
+    }
+
+    #[test]
+    fn prompt_expansion_preserves_old_fields_and_literal_values() {
+        let mut info = connection_info();
+        assert_eq!(
+            render_prompt(
+                "{user}@{warehouse}/{catalog}/{database}:{port}/{host}",
+                &info,
+                InteractionMode::Sql
+            ),
+            "root@localhost:8000/default/analytics:8000/localhost"
+        );
+        info.warehouse = Some("compute".into());
+        info.catalog = Some("catalog".into());
+        info.database = Some("{mode}".into());
+        assert_eq!(
+            render_prompt(
+                "{warehouse}/{catalog}/{database}/{mode}/{unknown}",
+                &info,
+                InteractionMode::Smart
+            ),
+            "(compute)/catalog/{mode}/smart/{unknown}"
+        );
+        assert_eq!(
+            render_prompt("  {mode}>  ", &info, InteractionMode::Agent),
+            "  agent>  "
+        );
+        assert_eq!(render_prompt("", &info, InteractionMode::Agent), "");
+        assert_eq!(
+            render_prompt("literal {", &info, InteractionMode::Sql),
+            "literal {"
+        );
+        info.database = None;
+        assert_eq!(
+            render_prompt("{database}", &info, InteractionMode::Sql),
+            "default"
+        );
+    }
 
     #[test]
     fn query_ids_are_never_truncated_or_used_as_arbitrary_paths() {

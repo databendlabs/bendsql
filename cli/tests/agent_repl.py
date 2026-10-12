@@ -154,7 +154,7 @@ class MockService(http.server.BaseHTTPRequestHandler):
 
 
 class Terminal:
-    def __init__(self, executable, env, port, mode="smart", backend=None, autocomplete=False):
+    def __init__(self, executable, env, port, mode="smart", backend=None, autocomplete=False, startup_prompt=None):
         args = [
             executable, "--dsn",
             f"databend://root:@127.0.0.1:{port}/default?sslmode=disable&login=disable",
@@ -172,7 +172,7 @@ class Terminal:
         self.pending = b""
         self.transcript = []
         self.finished = False
-        self.startup_prompt = f"{mode or 'sql'}> "
+        self.startup_prompt = startup_prompt or f"{mode or 'sql'}> "
         self.startup_checked = False
 
     def expect(self, text):
@@ -1250,6 +1250,43 @@ def exercise_default_sql_modes_and_embedded_skills(executable, env, port):
         terminal.finish()
 
 
+def exercise_prompt_templates(executable, env, port):
+    # Complete configured templates win over a hard-coded mode prefix. Cases
+    # intentionally include one with no trailing space and literal braces.
+    for template, visible in [
+        ("🐳 @{database}:) ", "🐳 @default:) "),
+        ("🐳 @{database} [{mode}]:) ", None),
+        ("{user}@{host}:{port}/{catalog}/{database} [{mode}]> ", None),
+        ("🐳 @{database}:)", "🐳 @default:)"),
+        ("literal {unknown} [{mode}]> ", None),
+    ]:
+        write_config(env, f'[settings]\nprompt = {json.dumps(template, ensure_ascii=False)}\n[agent]\nbackend="env"\n')
+        def expected(mode):
+            return visible if visible is not None else template.replace("{mode}", mode).replace("{user}", "root").replace("{host}", "127.0.0.1").replace("{port}", str(port)).replace("{catalog}", "default").replace("{database}", "default")
+        initial = expected("sql")
+        with Terminal(executable, env, port, mode=None, startup_prompt=initial) as terminal:
+            terminal.expect(initial)
+            for mode in ["smart", "agent", "sql"]:
+                os.write(terminal.fd, f"!mode {mode}\r".encode())
+                terminal.expect(f"Switched to {mode} mode.")
+                terminal.expect(expected(mode))
+            # Changing the template live also updates mode rendering immediately.
+            terminal.send("!set prompt [{mode}]@{database}", "[sql]@default")
+            os.write(terminal.fd, b"!mode smart\r")
+            terminal.expect("Switched to smart mode.")
+            terminal.expect("[smart]@default")
+            terminal.send("SELECT", "smart(sql)> ")
+            terminal.send("1;", "[smart]@default")
+            os.write(terminal.fd, b"!mode sql\r")
+            terminal.expect("Switched to sql mode.")
+            terminal.expect("[sql]@default")
+            terminal.finish()
+            output = b"".join(terminal.transcript)
+            for mode in ["sql", "smart", "agent"]:
+                assert (f"{mode}> 🐳").encode() not in output
+    write_config(env, "")
+
+
 def main():
     executable = os.path.abspath(sys.argv[1])
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockService)
@@ -1283,6 +1320,7 @@ def main():
             exercise_default_backend_discovery(executable, env, port)
             exercise_transient_ai_spinner(executable, env, port)
             exercise_default_sql_modes_and_embedded_skills(executable, env, port)
+            exercise_prompt_templates(executable, env, port)
             assert not os.path.exists(os.path.join(home, ".bendsql_history"))
             for root, _, files in os.walk(home):
                 for name in files:
@@ -1299,7 +1337,8 @@ def main():
             "whole-input smart routing, live parser settings and SQL cancellation boundaries; "
             "quiet startup, default CLI priority, explicit selection and no runtime fallback; "
             "animated AI spinner, clean final screen on success/error/cancel/timeout, no request debug output; "
-            "default SQL REPL, !mode Tab choices, lazy SQL-only completion and packaged read-only skills"
+            "default SQL REPL, !mode Tab choices, lazy SQL-only completion and packaged read-only skills; "
+            "complete configured prompt templates, {mode}, emoji, old variables and live prompt changes"
         )
     finally:
         server.shutdown()
