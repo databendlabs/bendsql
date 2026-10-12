@@ -72,7 +72,9 @@ class MockService(http.server.BaseHTTPRequestHandler):
             # Standard non-streaming OpenAI Chat Completions shape; the CLI uses
             # the first assistant choice, not metadata, usage or service errors.
             answer = "Mock answer grounded in cached records."
-            if question == "provider-suggest-sql":
+            if question == "provider-markdown":
+                answer = "## Query analysis\n\n**Estimated** rows are not actual timings.\n\n1. Inspect `EXPLAIN`.\n2. Check pruning.\n\n> Evidence only\n\n```sql\nSELECT 'a|b',\n  42;\n```\n\n[Docs](https://docs.databend.com/)\n\n<script>private-html-payload</script>\n\n![tracking](https://private.example/image)\n"
+            elif question == "provider-suggest-sql":
                 answer = "DROP TABLE orders;"
             elif question == "provider-controls":
                 answer = "\x1b[31mPrintable answer\r\n"
@@ -1378,6 +1380,63 @@ max_tokens = 1024
         terminal.finish()
 
 
+def exercise_ai_markdown_output(executable, env, port):
+    import re
+    write_config(env, '[agent]\nbackend="env"')
+    colored = dict(env, TERM="xterm")
+    with Terminal(executable, colored, port, mode="agent") as terminal:
+        terminal.expect("agent> ")
+        queries = len(MockService.sql_requests)
+        os.write(terminal.fd, b"provider-markdown\r")
+        terminal.expect("AI>")
+        terminal.expect("agent> ")
+        output = b"".join(terminal.transcript)
+        display = re.sub(rb"\x1b\[[0-9;]*m", b"", output)
+        assert b"AI>\r\nQuery analysis" in display
+        assert b"Estimated rows are not actual timings." in display
+        assert b"1. Inspect EXPLAIN." in display
+        assert b"SELECT 'a|b',\r\n  42;" in display
+        assert b"Docs (https://docs.databend.com/)" in display
+        assert b"\x1b[1;36mQuery analysis" in output
+        for hidden in [b"## Query analysis", b"**Estimated**", b"```sql", b"private-html-payload", b"private.example/image", b"AI thinking"]:
+            assert hidden not in visible_terminal(output).encode()
+        assert len(MockService.sql_requests) == queries
+        terminal.send("provider-follow-up", "agent> ")
+        history = MockService.model_requests[-1]["messages"]
+        raw = next(m["content"] for m in history if m["role"] == "assistant")
+        assert raw.startswith("## Query analysis") and "```sql" in raw and "**Estimated**" in raw
+        assert "\x1b[1;36m" not in raw, "Generated styles must not enter conversation history"
+        terminal.send("!set ai_output plain", "agent> ")
+        before = len(b"".join(terminal.transcript))
+        terminal.send("provider-markdown", "agent> ")
+        plain = b"".join(terminal.transcript)[before:]
+        assert b"AI> ## Query analysis" in plain and b"```sql" in plain
+        assert b"\x1b[1;36mQuery analysis" not in plain
+        terminal.send("!set ai_output markdown", "agent> ")
+        before = len(b"".join(terminal.transcript))
+        terminal.send("provider-markdown", "agent> ")
+        assert b"\x1b[1;36mQuery analysis" in b"".join(terminal.transcript)[before:]
+        terminal.send("!set ai_output html", "agent> ")
+        assert b"AI output must be markdown or plain" in b"".join(terminal.transcript)
+        assert len(MockService.sql_requests) == queries
+        terminal.finish()
+    # File config and explicit NO_COLOR both work without changing SQL output.
+    write_config(env, '[settings]\nai_output="plain"\n[agent]\nbackend="env"')
+    with Terminal(executable, colored, port, mode="agent") as terminal:
+        terminal.expect("agent> ")
+        terminal.send("provider-markdown", "agent> ")
+        assert b"AI> ## Query analysis" in b"".join(terminal.transcript)
+        terminal.finish()
+    write_config(env, '[agent]\nbackend="env"')
+    with Terminal(executable, dict(colored, NO_COLOR="1"), port, mode="agent") as terminal:
+        terminal.expect("agent> ")
+        terminal.send("provider-markdown", "agent> ")
+        output = b"".join(terminal.transcript)
+        assert b"AI>\r\nQuery analysis" in output
+        assert b"\x1b[1;36mQuery analysis" not in output
+        terminal.finish()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("executable")
@@ -1418,13 +1477,14 @@ def main():
                 exercise_default_sql_modes_and_embedded_skills(executable, env, port)
                 exercise_prompt_templates(executable, env, port)
             exercise_openai_provider(executable, env, port)
+            exercise_ai_markdown_output(executable, env, port)
             assert not os.path.exists(os.path.join(home, ".bendsql_history"))
             for root, _, files in os.walk(home):
                 for name in files:
                     if name.startswith("bendsql.log"):
                         assert os.path.getsize(os.path.join(root, name)) == 0
         if args.provider_only:
-            print("PASS: mock OpenAI provider; request/auth/config, Databend skill, multi-turn evidence, errors/budgets, no SQL execution and clear")
+            print("PASS: mock OpenAI provider; request/auth/config, Databend skill, multi-turn evidence, errors/budgets, no SQL execution, clear and terminal Markdown/plain presentation")
             return
         print(
             "PASS: mock OpenAI provider; three-mode PTY sessions, SQL/AI separation, partial/failed "
@@ -1438,7 +1498,8 @@ def main():
             "quiet startup, default CLI priority, explicit selection and no runtime fallback; "
             "animated AI spinner, clean final screen on success/error/cancel/timeout, no request debug output; "
             "default SQL REPL, !mode Tab choices, lazy SQL-only completion and packaged read-only skills; "
-            "complete configured prompt templates, {mode}, emoji, old variables and live prompt changes"
+            "complete configured prompt templates, {mode}, emoji, old variables and live prompt changes; "
+            "AI Markdown/plain presentation, unchanged raw history, no suggested SQL execution or residual spinner"
         )
     finally:
         server.shutdown()

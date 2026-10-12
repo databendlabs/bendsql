@@ -262,6 +262,32 @@ intent for text that is valid SQL but intended as prose: choose agent mode or `!
 when you want explanation rather than execution. Local AST/server version differences
 are handled through explicit routing, not model-based execution guesses.
 
+### AI answer presentation
+
+AI answers use basic terminal Markdown rendering by default on a capable interactive
+terminal. Headings/emphasis, lists, quotations, inline/code blocks and HTTP(S) links
+are formatted; links are shown as text URLs, never opened. Multi-line/structured
+answers put `AI>` on its own line. SQL code is not reformatted, wrapped, highlighted
+as executable input or run. HTML/images are omitted rather than rendered/fetched.
+Table pipes remain readable text; advanced table layout and token-level code syntax
+highlighting are not implemented. Spinner cleanup happens before final rendering.
+
+```toml
+[settings]
+ai_output = "markdown" # or "plain"; independent of SQL output_format
+```
+
+```text
+!set ai_output plain
+!set ai_output markdown
+```
+
+Plain mode preserves Markdown syntax. Non-terminal output and `TERM=dumb` fall back
+to plain text; `NO_COLOR` disables generated styles while retaining Markdown layout.
+Conversation stores the original (control-filtered) Markdown, never renderer ANSI
+codes. Incoming control sequences are filtered before presentation; only fixed
+renderer-generated styles may reach the terminal.
+
 ### Model backends
 
 Configure named Chat Completions compatible backends in the existing

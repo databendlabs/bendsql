@@ -604,7 +604,10 @@ impl Session {
         // Join the ticker and erase its line before writing persistent output.
         drop(progress);
         match result {
-            Some(Ok(answer)) => println!("AI> {answer}"),
+            Some(Ok(answer)) => print!(
+                "{}",
+                crate::agent::markdown::format_answer(&answer, self.settings.ai_output)
+            ),
             Some(Err(error)) => eprintln!("AI error: {error}"),
             None => eprintln!("AI request interrupted."),
         }

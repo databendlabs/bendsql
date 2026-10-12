@@ -18,6 +18,7 @@ mod cli;
 mod codex;
 pub mod config;
 pub mod llm;
+pub(crate) mod markdown;
 pub mod memory;
 pub(crate) mod progress;
 pub mod router;
@@ -204,7 +205,7 @@ agent>  AI questions with cached query context; no SQL execution or autocomplete
 !context [clear] List cached query summaries, or clear query/conversation memory\n\
 !help           Show this help\n\
 !configs        Show current settings\n\
-!set            Set settings\n\
+!set            Set settings (ai_output: markdown|plain)\n\
 !source <file>  Execute SQL from a file\n\
 !exit / !quit   Exit; Ctrl+C clears pending SQL or interrupts work\n\
 Questions send selected SQL, result previews, errors and conversation to the configured model backend.\n\

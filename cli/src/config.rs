@@ -49,6 +49,7 @@ pub struct SettingsConfig {
     pub max_display_rows: Option<usize>,
     pub max_col_width: Option<usize>,
     pub max_width: Option<usize>,
+    pub ai_output: Option<AiOutput>,
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -93,6 +94,8 @@ pub struct Settings {
     pub max_width: usize,
     /// Output format is set by the flag.
     pub output_format: OutputFormat,
+    /// AI presentation only; does not affect SQL output or raw conversation.
+    pub ai_output: AiOutput,
     // Output Quote Style.
     pub quote_style: OutputQuoteStyle,
     /// Expand table format display, default off, could be on/off/auto.
@@ -114,6 +117,25 @@ pub struct Settings {
     pub auto_open_browser: bool,
     /// Enable web UI interface (security risk)
     pub enable_ui: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiOutput {
+    #[default]
+    Markdown,
+    Plain,
+}
+
+impl TryFrom<&str> for AiOutput {
+    type Error = anyhow::Error;
+    fn try_from(value: &str) -> Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "markdown" => Ok(Self::Markdown),
+            "plain" => Ok(Self::Plain),
+            _ => Err(anyhow!("AI output must be markdown or plain")),
+        }
+    }
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize)]
@@ -186,6 +208,7 @@ impl Settings {
         self.max_width = cfg.max_width.unwrap_or(self.max_width);
         self.max_col_width = cfg.max_col_width.unwrap_or(self.max_col_width);
         self.max_display_rows = cfg.max_display_rows.unwrap_or(self.max_display_rows);
+        self.ai_output = cfg.ai_output.unwrap_or(self.ai_output);
         self.auto_open_browser = c.server.auto_open_browser;
         self.bind_address.clone_from(&c.server.bind_address);
         if self.bind_port == 0 {
@@ -201,6 +224,7 @@ impl Settings {
             "show_progress" => self.show_progress = cmd_value.parse()?,
             "show_stats" => self.show_stats = cmd_value.parse()?,
             "show_query_id" => self.show_query_id = cmd_value.parse()?,
+            "ai_output" => self.ai_output = cmd_value.try_into()?,
             "output_format" => {
                 self.output_format = match cmd_value.to_ascii_lowercase().as_str() {
                     "table" => OutputFormat::Table,
@@ -309,6 +333,7 @@ impl Default for Settings {
             prompt: "{mode}> ".to_string(),
             no_auto_complete: false,
             output_format: OutputFormat::Table,
+            ai_output: AiOutput::Markdown,
             quote_style: OutputQuoteStyle::Necessary,
             sql_delimiter: ';',
             expand: ExpandMode::Auto,
