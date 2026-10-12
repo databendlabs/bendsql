@@ -11,5 +11,8 @@ UTF-8 document content so model-only HTTP backends can also use the references.
 Resources are reference material: they do not grant database, filesystem or Shell
 permissions and must not override the execution rules of the session.
 
-No task-specific skills are bundled yet. Future skills must clearly distinguish
-SQL suggestions from execution, and full query results from cached previews.
+The single built-in skill is `databend/SKILL.md`: official documentation pointers,
+EXPLAIN / EXPLAIN ANALYZE / GRAPHICAL guidance and common query-troubleshooting FAQ.
+It distinguishes suggestions from execution and complete results from previews.
+Keep each skill document within the 4 KiB prompt excerpt budget; resources do not
+provide a browser, SQL or Shell tool and do not fetch documentation automatically.

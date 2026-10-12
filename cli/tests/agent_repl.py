@@ -17,6 +17,7 @@
 Run: python3 cli/tests/agent_repl.py target/debug/bendsql
 """
 
+import argparse
 import errno
 import http.server
 import json
@@ -47,6 +48,7 @@ class MockService(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         request = json.loads(self.rfile.read(length) or b"{}")
+        status = 200
         if self.path.startswith("/v1/query/") and self.path.endswith("/kill"):
             self.kill_requests.append(self.path)
             query_id = self.path.split("/")[-2]
@@ -67,11 +69,32 @@ class MockService(http.server.BaseHTTPRequestHandler):
                 return
             if question == "wait-spinner":
                 self.release_models.wait(10)
+            # Standard non-streaming OpenAI Chat Completions shape; the CLI uses
+            # the first assistant choice, not metadata, usage or service errors.
+            answer = "Mock answer grounded in cached records."
+            if question == "provider-suggest-sql":
+                answer = "DROP TABLE orders;"
+            elif question == "provider-controls":
+                answer = "\x1b[31mPrintable answer\r\n"
+            elif question == "provider-long-answer":
+                answer = "中" * 8000
             response = {
-                "choices": [
-                    {"message": {"content": "Mock answer grounded in cached records."}}
-                ]
+                "id": "chatcmpl-mock", "object": "chat.completion", "created": 1,
+                "model": request.get("model"),
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": answer}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
             }
+            if question in ["provider-unauthorized", "provider-rate-limit", "provider-unavailable"]:
+                status = {"provider-unauthorized": 401, "provider-rate-limit": 429, "provider-unavailable": 503}[question]
+                response = {"error": {"message": "private-provider-diagnostic", "type": "mock_error", "code": str(status)}}
+            elif question == "provider-invalid-json":
+                response = b"private-provider-diagnostic is not JSON"
+            elif question == "provider-empty-choices":
+                response["choices"] = []
+            elif question == "provider-no-text":
+                response["choices"][0]["message"]["content"] = None
+            elif question == "provider-oversized":
+                response["choices"][0]["message"]["content"] = "private-provider-diagnostic" + "x" * (128 * 1024)
         elif self.path == "/v1/query":
             sql = request["sql"]
             self.sql_requests.append(sql)
@@ -119,8 +142,8 @@ class MockService(http.server.BaseHTTPRequestHandler):
         else:
             self.send_error(404)
             return
-        body = json.dumps(response).encode()
-        self.send_response(200)
+        body = response if isinstance(response, bytes) else json.dumps(response, ensure_ascii=False).encode()
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -1287,8 +1310,80 @@ def exercise_prompt_templates(executable, env, port):
     write_config(env, "")
 
 
+def exercise_openai_provider(executable, env, port):
+    env = dict(env, MOCK_OPENAI_KEY="private-provider-key", MOCK_HEADER_KEY="private-header-key")
+    write_config(env, f'''[agent]
+backend = "mock-openai"
+timeout_secs = 2
+[agent.backends.mock-openai]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:{port}/v1/"
+model = "deployment-not-a-known-model"
+api_key_env = "MOCK_OPENAI_KEY"
+header_envs = {{ "X-API-Key" = "MOCK_HEADER_KEY" }}
+max_tokens = 1024
+''')
+    with Terminal(executable, env, port, mode="agent") as terminal:
+        terminal.expect("agent> ")
+        terminal.send("!sql SELECT 1;", "agent> ")
+        queries = len(MockService.sql_requests)
+        start = len(MockService.model_requests)
+        terminal.send("provider-success", "agent> ")
+        request = MockService.model_requests[-1]
+        assert len(MockService.model_requests) == start + 1
+        assert request["model"] == "deployment-not-a-known-model"
+        assert request["stream"] is False and request["max_tokens"] == 1024
+        assert MockService.model_headers[-1]["authorization"] == "Bearer private-provider-key"
+        assert MockService.model_headers[-1]["x-api-key"] == "private-header-key"
+        assert [m["role"] for m in request["messages"]] == ["system", "user"]
+        system = request["messages"][0]["content"]
+        for reference in ["databend/SKILL.md", "https://docs.databend.com/", "EXPLAIN <statement>",
+                          "EXPLAIN ANALYZE <statement>", "EXPLAIN ANALYZE GRAPHICAL <statement>", "Not a dry run"]:
+            assert reference in system
+        assert "Document excerpt truncated" not in system
+        context = last_context()
+        assert context["query_records"][0]["id"] == "Q1"
+        assert context["query_records"][0]["preview"]["complete"] is False
+        terminal.send("provider-follow-up", "agent> ")
+        assert len(MockService.model_requests[-1]["messages"]) == 4
+        for question, message in [
+            ("provider-unauthorized", "HTTP 401"), ("provider-rate-limit", "HTTP 429"),
+            ("provider-unavailable", "HTTP 503"), ("provider-invalid-json", "invalid chat completion response"),
+            ("provider-empty-choices", "no text answer"), ("provider-no-text", "no text answer"),
+            ("provider-oversized", "128 KiB limit"),
+        ]:
+            before = len(MockService.model_requests)
+            os.write(terminal.fd, question.encode() + b"\r")
+            terminal.expect(message)
+            terminal.expect("agent> ")
+            assert len(MockService.model_requests) == before + 1, "No implicit retries/provider fallback"
+            assert len(MockService.model_requests[-1]["messages"]) == 6, "Failures must not enter dialogue"
+        terminal.send("provider-recovered", "agent> ")
+        assert len(MockService.model_requests[-1]["messages"]) == 6
+        terminal.send("provider-suggest-sql", "agent> ")
+        assert len(MockService.sql_requests) == queries, "Suggested SQL must never be executed"
+        assert b"AI> DROP TABLE orders;" in b"".join(terminal.transcript)
+        terminal.send("provider-controls", "agent> ")
+        assert b"AI> [31mPrintable answer" in b"".join(terminal.transcript)
+        assert b"AI> \x1b[31m" not in b"".join(terminal.transcript)
+        terminal.send("provider-long-answer", "agent> ")
+        assert b"[Answer truncated at 8 KiB]" in b"".join(terminal.transcript)
+        terminal.send("!context clear", "agent> ")
+        terminal.send("provider-after-clear", "agent> ")
+        assert len(MockService.model_requests[-1]["messages"]) == 2
+        assert last_context()["query_records"] == []
+        assert "databend/SKILL.md" in MockService.model_requests[-1]["messages"][0]["content"]
+        for secret in [b"private-provider-diagnostic", b"private-provider-key", b"private-header-key"]:
+            assert secret not in b"".join(terminal.transcript)
+        terminal.finish()
+
+
 def main():
-    executable = os.path.abspath(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("executable")
+    parser.add_argument("--provider-only", action="store_true", help="Test the local OpenAI-compatible HTTP provider only")
+    args = parser.parse_args()
+    executable = os.path.abspath(args.executable)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockService)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = server.server_address[1]
@@ -1309,25 +1404,30 @@ def main():
             assert result.returncode != 0
             assert b"require an interactive terminal" in result.stderr
             assert not MockService.sql_requests
-            exercise_modes(executable, env, port)
-            exercise_missing_model(executable, env, port)
-            exercise_configured_backends(executable, env, port)
-            exercise_cli_backends(executable, env, port)
-            exercise_builtin_clis(executable, env, port)
-            exercise_acp_backend(executable, env, port)
-            exercise_smart_input_boundaries(executable, env, port)
-            exercise_sql_cancellation(executable, env, port)
-            exercise_default_backend_discovery(executable, env, port)
-            exercise_transient_ai_spinner(executable, env, port)
-            exercise_default_sql_modes_and_embedded_skills(executable, env, port)
-            exercise_prompt_templates(executable, env, port)
+            if not args.provider_only:
+                exercise_modes(executable, env, port)
+                exercise_missing_model(executable, env, port)
+                exercise_configured_backends(executable, env, port)
+                exercise_cli_backends(executable, env, port)
+                exercise_builtin_clis(executable, env, port)
+                exercise_acp_backend(executable, env, port)
+                exercise_smart_input_boundaries(executable, env, port)
+                exercise_sql_cancellation(executable, env, port)
+                exercise_default_backend_discovery(executable, env, port)
+                exercise_transient_ai_spinner(executable, env, port)
+                exercise_default_sql_modes_and_embedded_skills(executable, env, port)
+                exercise_prompt_templates(executable, env, port)
+            exercise_openai_provider(executable, env, port)
             assert not os.path.exists(os.path.join(home, ".bendsql_history"))
             for root, _, files in os.walk(home):
                 for name in files:
                     if name.startswith("bendsql.log"):
                         assert os.path.getsize(os.path.join(root, name)) == 0
+        if args.provider_only:
+            print("PASS: mock OpenAI provider; request/auth/config, Databend skill, multi-turn evidence, errors/budgets, no SQL execution and clear")
+            return
         print(
-            "PASS: three-mode PTY sessions, SQL/AI separation, partial/failed "
+            "PASS: mock OpenAI provider; three-mode PTY sessions, SQL/AI separation, partial/failed "
             "context, multiline guard, clear, query IDs, missing model, TTY and disk privacy; "
             "configured backends, headers, priority, switching and fail-closed configuration; "
             "Codex/Claude mock CLIs, stdin context, env isolation, errors, budgets and process cleanup; "

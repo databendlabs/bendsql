@@ -147,15 +147,49 @@ mod tests {
             .1;
         assert_eq!(std::fs::read(path.join("README.md")).unwrap(), resource);
         assert!(skills.prompt().contains(path.to_str().unwrap()));
+        assert!(skills.prompt().contains("Bundled skill definitions: 1."));
+        assert!(skills.prompt().contains("### databend/SKILL.md"));
         assert!(skills
             .prompt()
+            .contains("EXPLAIN ANALYZE GRAPHICAL <statement>"));
+        assert!(skills.prompt().contains("Not a dry run"));
+        assert!(skills.prompt().contains("https://docs.databend.com/"));
+        assert!(!skills.prompt().contains("Document excerpt truncated"));
+        assert!(!skills
+            .prompt()
             .contains("No task-specific skills are bundled yet"));
+        let skill = EMBEDDED_SKILLS
+            .iter()
+            .find(|(name, _)| *name == "databend/SKILL.md")
+            .unwrap()
+            .1;
+        assert!(skill.len() <= 4096);
+        assert_eq!(
+            std::fs::read(path.join("databend/SKILL.md")).unwrap(),
+            skill
+        );
         assert!(skills.prompt().contains("permissions"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(
                 std::fs::metadata(path.join("README.md"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o222,
+                0
+            );
+            assert_eq!(
+                std::fs::metadata(path.join("databend/SKILL.md"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o222,
+                0
+            );
+            assert_eq!(
+                std::fs::metadata(path.join("databend"))
                     .unwrap()
                     .permissions()
                     .mode()

@@ -498,10 +498,44 @@ written to the skill directory.
 Every backend's system message describes the directory, available SKILL.md files
 and bounded text excerpts (16 KiB total, at most 4 KiB per Markdown document). This
 also works for HTTP-only models, which cannot read a local path. Missing/truncated
-content is explicitly identified; no task-specific skills are bundled yet. Static
-resources are reference material, not new tool permissions: no scripts are executed,
+content is explicitly identified. The single bundled `databend/SKILL.md` points to
+https://docs.databend.com/ and covers SQL-reference lookup plus common troubleshooting:
+
+- `EXPLAIN <statement>` for plans, not actual operator runtimes.
+- `EXPLAIN ANALYZE <statement>` for actual execution statistics, with cost/side-effect warnings.
+- `EXPLAIN ANALYZE GRAPHICAL <statement>` for BendSQL's browser profile (BendSQL
+  v0.22.2+; the docs mark the page introduced/updated in Databend v1.2.647, not
+  necessarily the first supported server release); it also executes the statement.
+- Evidence-based slow/failed-query triage, missing schema, partial previews and unknown
+  execution state after cancellation. No invented counts, URLs, diagnoses or dry-run claims.
+
+The references are embedded in full within the per-document budget. Documentation
+links are not automatically fetched, and a reference does not grant browsing or
+live database access. Static resources are reference material, not new tool permissions: no scripts are executed,
 and skills cannot override the rules preventing automatic SQL or Shell execution.
 Future resources are capped at 256 files / 4 MiB total and 1 MiB per file.
+
+### Mock provider integration and CI
+
+The `agent-provider-mock` CI job runs CLI binary unit tests (including the embedded
+Databend skill), builds BendSQL, then exercises a local OpenAI-compatible Chat
+Completions service and the full mock CLI/ACP REPL suite. No real model credentials,
+external provider requests or Docker services are needed.
+
+```bash
+cargo test -p bendsql --bin bendsql --all-features
+cargo build -p bendsql --bin bendsql
+python3 cli/tests/agent_repl.py target/debug/bendsql --provider-only
+python3 cli/tests/agent_repl.py target/debug/bendsql
+```
+
+The focused provider test verifies arbitrary model/deployment names, endpoint/auth/
+custom-header settings, system skill text and cached query evidence, multi-turn
+history, reset, response control filtering and answer-size limits. HTTP 401/429/503,
+malformed/empty completions and oversized responses must not leak raw diagnostics,
+enter dialogue history, trigger fallback/retries or execute suggested SQL. The full
+suite additionally verifies timeouts/cancellation, spinner cleanup, input modes and
+native/ACP process cleanup. Live Codex tests remain opt-in and ignored by default.
 
 ### ACP adapters
 

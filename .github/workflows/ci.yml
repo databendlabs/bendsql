@@ -74,6 +74,28 @@ jobs:
           cache-key: unit
       - run: cargo test --all-features --lib -- --show-output
 
+  agent_provider:
+    name: agent-provider-mock
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: agent-provider
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test CLI unit behavior and embedded Databend skill
+        run: cargo test -p bendsql --bin bendsql --all-features
+      - name: Build CLI for provider integration
+        run: cargo build -p bendsql --bin bendsql
+      - name: Test mock OpenAI provider (no credentials, model calls or Docker)
+        run: python3 cli/tests/agent_repl.py target/debug/bendsql --provider-only
+      - name: Test interactive modes and mock CLI/ACP adapters
+        run: python3 cli/tests/agent_repl.py target/debug/bendsql
+
   integration:
     needs: check
     runs-on: ubuntu-latest
