@@ -746,8 +746,11 @@ impl Session {
                     eprintln!("No usable current Query ID: cancellation cannot be confirmed. The query may continue or commit; verify its state before retrying writes.");
                 }
             }
-            let id = self.agent.as_mut().unwrap().memory.push(record);
-            println!("[{id}] Query context cached. Use !context to inspect.");
+            let agent = self.agent.as_mut().unwrap();
+            let id = agent.memory.push(record);
+            if agent.mode != InteractionMode::Sql {
+                println!("[{id}] Query context cached. Use !context to inspect.");
+            }
         }
         result
     }

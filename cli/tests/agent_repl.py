@@ -1210,12 +1210,22 @@ def exercise_default_sql_modes_and_embedded_skills(executable, env, port):
         os.write(terminal.fd, b"\x03")
         terminal.expect("\x1b[?2004l")  # The old readline ended; ignore input redraw prompts.
         terminal.expect("sql> ")
+        before = len(b"".join(terminal.transcript))
         os.write(terminal.fd, b"SELECT 'private-query-value';\r")
-        terminal.expect("[Q1]")
         terminal.expect("sql> ")
+        sql_output = b"".join(terminal.transcript)[before:]
+        assert b"Query context cached" not in sql_output and b"[Q1]" not in sql_output
+        os.write(terminal.fd, b"!context\r")
+        terminal.expect("Q1: success")
+        terminal.expect("sql> ")
+        os.write(terminal.fd, b"!mode agent\r")
+        terminal.expect("Switched to agent mode.")
+        terminal.expect("agent> ")
         os.write(terminal.fd, b"!ask Explain Q1\r")
         terminal.expect("AI> ")
-        terminal.expect("sql> ")
+        terminal.expect("agent> ")
+        assert last_context()["query_records"][0]["id"] == "Q1"
+        assert last_context()["query_records"][0]["sql"] == "SELECT 'private-query-value'"
         system = MockService.model_requests[-1]["messages"][0]["content"]
         match = re.search(r"^Directory: (.+)$", system, re.MULTILINE)
         assert match and "BendSQL embedded skills" in system
@@ -1230,10 +1240,10 @@ def exercise_default_sql_modes_and_embedded_skills(executable, env, port):
         assert os.stat(directory).st_mode & 0o222 == 0
         os.write(terminal.fd, b"!context clear\r")
         terminal.expect("Query memory and conversation cleared.")
-        terminal.expect("sql> ")
+        terminal.expect("agent> ")
         os.write(terminal.fd, b"!ask Hello after clear\r")
         terminal.expect("AI> ")
-        terminal.expect("sql> ")
+        terminal.expect("agent> ")
         assert last_context()["query_records"] == []
         assert f"Directory: {directory}" in MockService.model_requests[-1]["messages"][0]["content"]
         terminal.finish()
@@ -1269,8 +1279,12 @@ def exercise_default_sql_modes_and_embedded_skills(executable, env, port):
         os.write(terminal.fd, b"!backend amp\r")
         terminal.expect("Backend unchanged:")
         terminal.expect("sql> ")
+        before = len(b"".join(terminal.transcript))
         os.write(terminal.fd, b"/mode smart;\r")
-        terminal.expect("[Q1]")
+        terminal.expect("sql> ")
+        assert b"Query context cached" not in b"".join(terminal.transcript)[before:]
+        os.write(terminal.fd, b"!context\r")
+        terminal.expect("Q1: success")
         terminal.expect("sql> ")
         terminal.finish()
 

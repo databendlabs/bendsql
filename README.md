@@ -656,6 +656,10 @@ Switched to sql mode.
 sql> SELECT ...;
 ```
 
+SQL mode caches query context silently, without the `[Q<n>] Query context cached`
+notice. Use `!context` to inspect it, or switch to smart/agent mode to ask about
+those same records. Smart/agent execution retains the cache notice.
+
 Explicit commands are available in all three modes:
 
 | Command | Behavior |
