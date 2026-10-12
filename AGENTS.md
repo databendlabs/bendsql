@@ -39,6 +39,7 @@ This repository is a Rust workspace for BendSQL plus a separate frontend, langua
 ## Task Routing
 
 - Rust behavior, CLI flags, REPL, output, or public Rust API changes: read `agents/rust-workspace.md`
+- Interactive modes, AI backends, query context, terminal Markdown, or embedded skills: also read `agents/agent-repl.md`
 - Browser UI, embedded assets, or frontend dev/proxy flow: read `agents/frontend.md`
 - Docker integration tests, Python bindings, or Node.js bindings: read `agents/integration-and-bindings.md`
 
