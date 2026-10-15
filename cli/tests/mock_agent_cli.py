@@ -75,9 +75,12 @@ def codex_app_server():
                 sys.stdout.flush()
                 continue
             if question == "overflow-stderr":
-                sys.stderr.write("private-cli-secret" * 3000)
+                sys.stderr.write("private-cli-secret" * 30000)
                 sys.stderr.flush()
-                continue
+            if question == "future-metadata":
+                event("item/completed", threadId=thread, turnId=turn,
+                      item={"type": "newPassiveMetadata", "id": "meta"})
+                send({"id": "server-meta", "method": "server/newMetadataRequest", "params": {}})
             if question == "failed-turn":
                 event("turn/completed", threadId=thread, turn={"id": turn, "status": "failed", "error": {"message": "private-cli-secret"}, "items": []})
                 continue
@@ -104,10 +107,14 @@ def main():
     if "--help" in sys.argv:
         text = sys.stdin.read()
         flags = [arg for arg in sys.argv if arg.startswith("--")]
+        if not pi:
+            flags += ["--print", "--input-format", "--output-format", "--no-session-persistence",
+                      "--tools", "--permission-mode", "--disable-slash-commands", "--safe-mode",
+                      "--no-chrome", "--setting-sources", "--settings", "--strict-mcp-config", "--mcp-config"]
         if pi and "--model" not in flags:
             flags.append("--model")
         if os.environ.get("CLI_TEST_OLD"):
-            flags.remove("--no-tools")
+            flags.remove("--no-tools" if pi else "--safe-mode")
         with open(record_path + ".help", "a") as file:
             file.write(json.dumps({"stdin": text, "flags": flags}) + "\n")
         print(" ".join(flags))
@@ -149,9 +156,8 @@ def main():
         sys.stdout.flush()
         return
     if question == "overflow-stderr":
-        sys.stderr.write("private-cli-secret" * 3000)
+        sys.stderr.write("private-cli-secret" * 30000)
         sys.stderr.flush()
-        return
     if question == "failed-turn":
         if pi:
             print(json.dumps({"type": "message_end", "message": {

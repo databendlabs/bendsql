@@ -50,6 +50,8 @@ pub struct SettingsConfig {
     pub max_col_width: Option<usize>,
     pub max_width: Option<usize>,
     pub ai_output: Option<AiOutput>,
+    pub save_history: Option<bool>,
+    pub continuation_prompt: Option<String>,
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -74,6 +76,8 @@ impl From<&str> for ExpandMode {
 pub struct Settings {
     pub display_pretty_sql: bool,
     pub prompt: String,
+    pub continuation_prompt: String,
+    pub save_history: bool,
     pub progress_color: String,
     pub no_auto_complete: bool,
 
@@ -192,6 +196,10 @@ impl Settings {
 
         self.display_pretty_sql = cfg.display_pretty_sql.unwrap_or(self.display_pretty_sql);
         self.prompt = cfg.prompt.unwrap_or_else(|| self.prompt.clone());
+        self.continuation_prompt = cfg
+            .continuation_prompt
+            .unwrap_or_else(|| self.continuation_prompt.clone());
+        self.save_history = cfg.save_history.unwrap_or(self.save_history);
         self.progress_color = cfg
             .progress_color
             .unwrap_or_else(|| self.progress_color.clone());
@@ -220,6 +228,8 @@ impl Settings {
         match cmd_name {
             "display_pretty_sql" => self.display_pretty_sql = cmd_value.parse()?,
             "prompt" => self.prompt = cmd_value.to_string(),
+            "continuation_prompt" => self.continuation_prompt = cmd_value.to_string(),
+            "save_history" => self.save_history = cmd_value.parse()?,
             "progress_color" => self.progress_color = cmd_value.to_string(),
             "show_progress" => self.show_progress = cmd_value.parse()?,
             "show_stats" => self.show_stats = cmd_value.parse()?,
@@ -330,7 +340,9 @@ impl Default for Settings {
         Settings {
             display_pretty_sql: true,
             progress_color: "cyan".to_string(),
-            prompt: "{mode}> ".to_string(),
+            prompt: "{user}@{warehouse}/{catalog}/{database}> ".to_string(),
+            continuation_prompt: "> ".to_string(),
+            save_history: true,
             no_auto_complete: false,
             output_format: OutputFormat::Table,
             ai_output: AiOutput::Markdown,

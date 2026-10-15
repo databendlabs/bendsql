@@ -422,10 +422,9 @@ pub async fn main() -> Result<()> {
     std::fs::create_dir_all(&log_dir)
         .with_context(|| format!("failed to create log directory {log_dir}"))?;
 
-    // Interactive sessions can switch to AI at any time. Keep SQL/chat memory
-    // off disk in every interactive mode; batch logging remains unchanged.
-    let log_level = if is_repl { "off" } else { &args.log_level };
-    let _guards = trace::init_logging(&log_dir, log_level).await?;
+    // Respect the user's log level in SQL and batch sessions. Payload protection
+    // is activated separately when AI is explicitly enabled.
+    let _guards = trace::init_logging(&log_dir, &args.log_level).await?;
     info!("-> bendsql version: {}", VERSION.as_str());
 
     let initial_mode = args.mode.unwrap_or_default();

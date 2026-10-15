@@ -38,7 +38,7 @@ pub fn detect_local(config: &AgentConfig) -> Result<String> {
         bail!("Local coding CLI backends currently require Unix; select a configured HTTP backend. SQL remains available.");
     }
     detect_local_with(settings, |command| resolve_executable(command).is_ok())
-        .ok_or_else(|| anyhow!("No local coding CLI found. Install/login codex, Claude Code (claude), or pi, or select a configured backend with --backend or /backend. SQL remains available."))
+        .ok_or_else(|| anyhow!("No local coding CLI found. Install/login codex, Claude Code (claude), or pi, or select a configured backend with --backend or !backend. SQL remains available."))
 }
 
 fn detect_local_with(
@@ -72,10 +72,10 @@ pub fn build(config: &AgentConfig, name: &str) -> Result<Box<dyn ChatBackend>> {
         return Ok(Box::new(LlmClient::from_env(settings.timeout_secs)?));
     }
     if name.is_empty() {
-        bail!("Select an AI backend using agent.backend, --backend, or /backend <name>. SQL remains available.");
+        bail!("Select an AI backend using agent.backend, --backend, or !backend <name>. SQL remains available.");
     }
     let backend = settings.backend(name).ok_or_else(|| {
-        anyhow!("Unknown AI backend; use /backend to list built-in and configured names")
+        anyhow!("Unknown AI backend; use !backend to list built-in and configured names")
     })?;
     match backend.as_ref() {
         BackendConfig::OpenAiCompatible {

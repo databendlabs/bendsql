@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use anyhow::{bail, Result};
-use serde::{Deserialize, Deserializer};
+use serde::{de::IntoDeserializer, Deserialize, Deserializer};
 
 pub const ENV_BACKEND: &str = "env";
 pub const BUILTIN_BACKENDS: [&str; 3] = ["local-claude", "local-codex", "local-pi"];
@@ -34,6 +34,9 @@ fn default_max_tokens() -> u32 {
 #[serde(deny_unknown_fields)]
 pub struct AgentSettings {
     pub backend: Option<String>,
+    /// Explicit permission to send questions and subsequently captured data.
+    #[serde(default)]
+    pub allow_data_sharing: bool,
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
     #[serde(default)]
@@ -57,6 +60,7 @@ impl Default for AgentSettings {
     fn default() -> Self {
         Self {
             backend: None,
+            allow_data_sharing: false,
             timeout_secs: default_timeout(),
             backends: BTreeMap::new(),
         }
@@ -129,8 +133,8 @@ fn builtin_backend(name: &str) -> Option<BackendConfig> {
         command: None,
         model: None,
         env_allowlist: Vec::new(),
-        // AI questions use local CLI discovery when no backend is selected.
-        // Discovery checks executables only; a question starts the process.
+        // This enables the built-in execution profile, not data-sharing consent.
+        // AgentSession gates every request on explicit config/session permission.
         allow_external_agent: true,
     })
 }
@@ -141,6 +145,7 @@ fn builtin_backend(name: &str) -> Option<BackendConfig> {
 pub struct AgentConfig {
     settings: AgentSettings,
     invalid: bool,
+    invalid_path: Option<String>,
 }
 
 impl AgentConfig {
@@ -153,7 +158,7 @@ impl AgentConfig {
 
     pub fn settings(&self) -> Result<&AgentSettings> {
         if self.invalid {
-            bail!("AI configuration is invalid; check [agent] in config.toml. SQL remains available. No fallback backend will be used.");
+            bail!("AI configuration is invalid at {}; check config.toml. SQL remains available. No fallback backend will be used.", self.invalid_path.as_deref().unwrap_or("agent"));
         }
         if !(1..=3600).contains(&self.settings.timeout_secs) {
             bail!("agent.timeout_secs must be between 1 and 3600");
@@ -217,13 +222,53 @@ impl<'de> Deserialize<'de> for AgentConfig {
                 }
             }
         }
-        Ok(match raw.try_into::<AgentSettings>() {
-            Ok(settings) => Self {
-                settings,
-                invalid: false,
+        Ok(
+            match serde_path_to_error::deserialize::<_, AgentSettings>(raw.into_deserializer()) {
+                Ok(settings) => Self {
+                    settings,
+                    invalid: false,
+                    invalid_path: None,
+                },
+                Err(error) => {
+                    // Path only: serde/toml diagnostic messages can quote secret values.
+                    let mut path = String::from("agent");
+                    let mut dynamic = false;
+                    for segment in error.path().iter() {
+                        let key = match segment {
+                            serde_path_to_error::Segment::Map { key } => key.as_str(),
+                            _ => "*",
+                        };
+                        let known = matches!(
+                            key,
+                            "backend"
+                                | "backends"
+                                | "allow_data_sharing"
+                                | "timeout_secs"
+                                | "type"
+                                | "base_url"
+                                | "model"
+                                | "api_key_env"
+                                | "headers"
+                                | "header_envs"
+                                | "max_tokens"
+                                | "adapter"
+                                | "command"
+                                | "args"
+                                | "env_allowlist"
+                                | "allow_external_agent"
+                        );
+                        path.push('.');
+                        path.push_str(if known && !dynamic { key } else { "*" });
+                        dynamic = matches!(key, "backends" | "headers" | "header_envs");
+                    }
+                    Self {
+                        invalid: true,
+                        invalid_path: Some(path),
+                        ..Self::default()
+                    }
+                }
             },
-            Err(_) => Self::invalid(),
-        })
+        )
     }
 }
 
@@ -231,6 +276,25 @@ impl<'de> Deserialize<'de> for AgentConfig {
 mod tests {
     use super::*;
     use crate::config::Config;
+
+    #[test]
+    fn sharing_is_opt_in_and_configuration_errors_have_redacted_key_paths() {
+        assert!(
+            !AgentConfig::default()
+                .settings()
+                .unwrap()
+                .allow_data_sharing
+        );
+        let config: Config =
+            toml::from_str("[agent]\nallow_data_sharing='private-secret'").unwrap();
+        let error = config.agent.settings().err().unwrap().to_string();
+        assert!(error.contains("agent.allow_data_sharing"));
+        assert!(!error.contains("private-secret"));
+        let config: Config = toml::from_str("[agent.backends.private-name]\ntype='openai-compatible'\nbase_url='http://localhost/v1'\nmodel=123").unwrap();
+        let error = config.agent.settings().err().unwrap().to_string();
+        assert!(error.contains("agent.backends.*"));
+        assert!(!error.contains("private-name"));
+    }
 
     #[test]
     fn builtin_clis_need_no_configuration_and_selection_defaults_to_discovery() {

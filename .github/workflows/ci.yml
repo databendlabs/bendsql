@@ -93,6 +93,8 @@ jobs:
         run: cargo build -p bendsql --bin bendsql
       - name: Test mock OpenAI provider (no credentials, model calls or Docker)
         run: python3 cli/tests/agent_repl.py target/debug/bendsql --provider-only
+      - name: Test SQL compatibility and AI sharing boundaries (no provider credentials)
+        run: python3 cli/tests/agent_repl.py target/debug/bendsql --privacy-only
       - name: Test interactive modes and mock CLI/ACP adapters
         run: python3 cli/tests/agent_repl.py target/debug/bendsql
 

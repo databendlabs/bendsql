@@ -395,7 +395,7 @@ async fn run(
         }
     };
     tokio::pin!(protocol);
-    let errors = super::cli::read_bounded(stderr, 32 * 1024);
+    let errors = super::cli::drain_stderr(stderr);
     tokio::pin!(errors);
     let mut stderr_done = false;
     let result = tokio::select! {

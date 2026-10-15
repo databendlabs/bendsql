@@ -75,6 +75,8 @@ pub struct QueryPreview {
     bytes: usize,
     #[serde(skip)]
     stopped: bool,
+    #[serde(skip)]
+    pub sensitive: bool,
 }
 
 impl QueryPreview {
@@ -83,6 +85,10 @@ impl QueryPreview {
             schema_truncated: schema.fields().len() > MAX_COLUMNS,
             ..Self::default()
         };
+        preview.sensitive = schema
+            .fields()
+            .iter()
+            .any(|f| super::privacy::sensitive(&f.name));
         for field in schema.fields().iter().take(MAX_COLUMNS) {
             let (name, name_cut) = bounded_text(&field.name, 256);
             let (ty, type_cut) = bounded_text(&field.data_type, 256);
@@ -120,6 +126,7 @@ impl QueryPreview {
                     }
                     _ => bounded_text(value, 512),
                 };
+                self.sensitive |= super::privacy::sensitive(&text);
                 bytes += text.len() + 8;
                 truncated |= cut;
                 cells.push(Some(text));
@@ -198,7 +205,16 @@ pub struct Memory {
 }
 
 impl Memory {
-    pub fn push(&mut self, mut record: QueryRecord) -> String {
+    pub fn push(&mut self, mut record: QueryRecord) -> Option<String> {
+        if record.preview.sensitive
+            || super::privacy::sensitive(&record.sql)
+            || record
+                .error
+                .as_deref()
+                .is_some_and(super::privacy::sensitive)
+        {
+            return None;
+        }
         self.next_id += 1;
         record.id = format!("Q{}", self.next_id);
         let id = record.id.clone();
@@ -206,7 +222,7 @@ impl Memory {
             .expect("query record is serializable")
             .len();
         if bytes > MAX_MEMORY_BYTES {
-            return id;
+            return None;
         }
         while self.records.len() >= MAX_RECORDS || self.bytes + bytes > MAX_MEMORY_BYTES {
             if let Some((_, size)) = self.records.pop_front() {
@@ -215,7 +231,7 @@ impl Memory {
         }
         self.bytes += bytes;
         self.records.push_back((record, bytes));
-        id
+        Some(id)
     }
 
     pub fn clear(&mut self) {
@@ -292,6 +308,24 @@ impl Memory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejected_records_do_not_claim_ids_or_evict_existing_context() {
+        let mut memory = Memory::default();
+        memory.push(QueryRecord::new("SELECT 1"));
+        let original = memory.context("Q1", 4096);
+        let mut huge = QueryRecord::new("SELECT 2");
+        huge.error = Some("x".repeat(MAX_MEMORY_BYTES));
+        assert!(memory.push(huge).is_none());
+        assert_eq!(memory.context("Q1", 4096), original);
+        assert!(memory
+            .push(QueryRecord::new("CREATE USER x IDENTIFIED BY 'private'"))
+            .is_none());
+        let mut record = QueryRecord::new("SELECT * FROM users");
+        record.preview.sensitive = true;
+        assert!(memory.push(record).is_none());
+        assert_eq!(memory.context("Q1", 4096), original);
+    }
 
     #[test]
     fn text_is_bounded_and_utf8_safe() {
@@ -385,6 +419,9 @@ mod tests {
         assert!(parsed.as_array().unwrap().iter().any(|v| v["id"] == "Q25"));
         memory.clear();
         assert_eq!(memory.context("Q6", 1000), "[]");
-        assert_eq!(memory.push(QueryRecord::new("SELECT 1")), "Q26");
+        assert_eq!(
+            memory.push(QueryRecord::new("SELECT 1")),
+            Some("Q26".into())
+        );
     }
 }

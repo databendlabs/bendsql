@@ -275,7 +275,7 @@ impl Rpc {
             .as_str()
             .ok_or_else(|| anyhow!("Invalid Codex notification method"))?;
         if let Some(id) = frame.get("id") {
-            self.denied = true;
+            self.denied |= method.contains("requestApproval") || method == "item/tool/call";
             let result = match method {
                 "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
                     Some(serde_json::json!({"decision":"cancel"}))
@@ -345,7 +345,17 @@ impl Rpc {
                 self.answer = Some(super::llm::normalize_answer(text)?);
             }
             Some("agentMessage" | "reasoning" | "plan" | "userMessage" | "contextCompaction") => {}
-            _ => self.denied = true,
+            Some(
+                "commandExecution"
+                | "fileChange"
+                | "mcpToolCall"
+                | "dynamicToolCall"
+                | "webSearch"
+                | "imageGeneration"
+                | "collabAgentToolCall",
+            ) => self.denied = true,
+            Some(_) => {} // New passive metadata items do not grant capabilities.
+            None => bail!("Codex returned an invalid item type"),
         }
         Ok(())
     }
@@ -473,7 +483,7 @@ async fn run(
             .take()
             .ok_or_else(|| anyhow!("Codex completed the turn without an answer"))
     };
-    let errors = super::cli::read_bounded(stderr, 32 * 1024);
+    let errors = super::cli::drain_stderr(stderr);
     tokio::pin!(errors);
     let mut stderr_done = false;
     let result = {

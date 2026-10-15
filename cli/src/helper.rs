@@ -86,7 +86,9 @@ fn mode_candidates(line: &str, pos: usize) -> Option<(usize, Vec<Pair>)> {
 
 impl Highlighter for CliHelper {
     fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
-        if self.mode == InteractionMode::Sql {
+        // Highlighting is presentation, not a SQL size limit. The AST formatter
+        // can exhaust its stack on very large pasted literals; keep them verbatim.
+        if self.mode == InteractionMode::Sql && line.len() <= 8192 {
             Cow::Owned(highlight_query(line))
         } else {
             Cow::Borrowed(line)

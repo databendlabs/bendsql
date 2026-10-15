@@ -58,15 +58,15 @@ impl Conversation {
 
     pub(super) fn remember(&mut self, question: String, answer: String) {
         let size = question.len() + answer.len();
+        if size > MAX_CHAT_BYTES {
+            return;
+        }
         while self.turns.len() >= 8 || self.bytes + size > MAX_CHAT_BYTES {
             if let Some((q, a)) = self.turns.pop_front() {
                 self.bytes -= q.content.len() + a.content.len();
             } else {
                 break;
             }
-        }
-        if size > MAX_CHAT_BYTES {
-            return;
         }
         self.bytes += size;
         self.turns.push_back((
@@ -410,6 +410,17 @@ mod tests {
         assert!(error.to_string().contains("401"));
         assert!(!error.to_string().contains("secret"));
         server.await.unwrap();
+    }
+
+    #[test]
+    fn oversized_turn_preserves_prior_dialogue() {
+        let mut conversation = Conversation::default();
+        conversation.remember("question".into(), "answer".into());
+        conversation.remember("x".repeat(8192), "y".repeat(8192 + 32));
+        let messages = conversation.messages("next", &Memory::default());
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[1].content, "question");
+        assert_eq!(messages[2].content, "answer");
     }
 
     #[test]

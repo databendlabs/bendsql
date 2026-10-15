@@ -20,6 +20,7 @@ pub mod config;
 pub mod llm;
 pub(crate) mod markdown;
 pub mod memory;
+pub(crate) mod privacy;
 pub(crate) mod progress;
 pub mod router;
 mod skills;
@@ -48,14 +49,6 @@ impl InteractionMode {
         }
     }
 
-    pub fn prompt(self, pending_sql: bool) -> String {
-        if pending_sql {
-            format!("{}(sql)> ", self.name())
-        } else {
-            format!("{}> ", self.name())
-        }
-    }
-
     pub fn route(self, line: &str, delimiter: char) -> router::Input<'_> {
         let line = line.trim();
         if line.is_empty() {
@@ -75,6 +68,8 @@ impl InteractionMode {
 pub struct AgentSession {
     pub mode: InteractionMode,
     pub memory: Memory,
+    sharing_allowed: bool,
+    configured_consent: bool,
     conversation: Conversation,
     config: AgentConfig,
     selected: Option<String>,
@@ -93,8 +88,11 @@ impl AgentSession {
         let selected = selected
             .or_else(|| config.selected())
             .or_else(|| backend::detect_local(&config).ok());
+        let configured_consent = config.settings().is_ok_and(|s| s.allow_data_sharing);
         Self {
             mode: InteractionMode::default(),
+            sharing_allowed: configured_consent,
+            configured_consent,
             memory: Memory::default(),
             conversation: Conversation::default(),
             config,
@@ -102,6 +100,37 @@ impl AgentSession {
             backend: None,
             skills: None,
         }
+    }
+
+    pub fn validate_config(&self) -> Result<()> {
+        self.config.settings().map(|_| ())
+    }
+
+    pub fn consent_backend_label(&self) -> String {
+        match self.selected.as_deref() {
+            Some(name)
+                if name == ENV_BACKEND
+                    || self
+                        .config
+                        .settings()
+                        .is_ok_and(|s| s.backend(name).is_some()) =>
+            {
+                name.into()
+            }
+            _ => "the configured/discovered backend".into(),
+        }
+    }
+
+    pub fn sharing_allowed(&self) -> bool {
+        self.sharing_allowed
+    }
+
+    pub fn approve_sharing(&mut self) {
+        self.sharing_allowed = true;
+    }
+
+    pub fn captures_queries(&self) -> bool {
+        self.sharing_allowed && self.mode != InteractionMode::Sql
     }
 
     pub fn clear(&mut self) {
@@ -150,6 +179,7 @@ impl AgentSession {
         let backend = backend::build(&self.config, name)?;
         self.backend = Some(backend);
         self.selected = Some(name.into());
+        self.sharing_allowed = self.configured_consent;
         self.conversation.clear();
         Ok(())
     }
@@ -160,6 +190,9 @@ impl AgentSession {
         }
         if question.len() > MAX_TEXT_BYTES {
             bail!("Question exceeds the 8 KiB limit; please shorten it");
+        }
+        if !self.sharing_allowed {
+            bail!("AI data sharing is not approved. Confirm in the REPL or configure agent.allow_data_sharing=true; no request was sent.");
         }
         // Discovery inspects executables only. Fix the selected backend before
         // building/sending a request; never try another service on failure.
@@ -202,14 +235,15 @@ agent>  AI questions with cached query context; no SQL execution or autocomplete
 !backend [name]  List backends or switch (clears conversation, retains query memory)\n\
 !sql <SQL>       Execute explicitly (no trailing delimiter required)\n\
 !ask <question>  Ask AI explicitly; suggested SQL is never executed\n\
-!context [clear] List cached query summaries, or clear query/conversation memory\n\
+!context [clear] List AI-mode query summaries, or clear query/conversation memory\n\
+SQL mode never captures query data. First AI use requires confirmation unless allow_data_sharing is configured.\n\
 !help           Show this help\n\
 !configs        Show current settings\n\
 !set            Set settings (ai_output: markdown|plain)\n\
 !source <file>  Execute SQL from a file\n\
 !exit / !quit   Exit; Ctrl+C clears pending SQL or interrupts work\n\
 Questions send selected SQL, result previews, errors and conversation to the configured model backend.\n\
-BendSQL history is not saved to disk; external CLIs/services have their own access and retention policies.\n\
+SQL-only history is saved by default. AI activation stops disk history for this session; external services have their own retention policies.\n\
 Use !context clear before discussing unrelated or sensitive data.";
 
 #[cfg(test)]
@@ -241,6 +275,7 @@ mod tests {
             r#"
 [agent]
 backend = "first"
+allow_data_sharing = true
 timeout_secs = 1
 [agent.backends.first]
 type = "openai-compatible"
@@ -344,6 +379,33 @@ model = "second-model"
         assert_eq!(session.selected.as_deref(), Some(""));
     }
 
+    #[tokio::test]
+    async fn sharing_requires_explicit_permission_and_sql_never_captures() {
+        let mut session = AgentSession::new(AgentConfig::default(), None);
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        session.backend = Some(Box::new(FakeBackend {
+            fail: false,
+            requests: requests.clone(),
+        }));
+        session.mode = InteractionMode::Smart;
+        assert!(!session.captures_queries());
+        assert!(session
+            .ask("hello")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("not approved"));
+        assert!(requests.lock().unwrap().is_empty());
+        session.approve_sharing();
+        assert!(session.captures_queries());
+        // Give the fake backend a fixed selected label; no external discovery.
+        session.selected = Some("env".into());
+        session.ask("hello").await.unwrap();
+        assert_eq!(requests.lock().unwrap().len(), 1);
+        session.mode = InteractionMode::Sql;
+        assert!(!session.captures_queries());
+    }
+
     #[test]
     fn modes_control_routing_and_prompts() {
         let sql = "SELECT 1;";
@@ -368,8 +430,6 @@ model = "second-model"
                 mode.route("!mode smart", ';'),
                 Input::Command("!mode smart")
             );
-            assert_eq!(mode.prompt(false), format!("{}> ", mode.name()));
-            assert_eq!(mode.prompt(true), format!("{}(sql)> ", mode.name()));
         }
     }
 }

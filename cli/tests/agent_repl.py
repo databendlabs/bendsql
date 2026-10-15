@@ -100,7 +100,7 @@ class MockService(http.server.BaseHTTPRequestHandler):
         elif self.path == "/v1/query":
             sql = request["sql"]
             self.sql_requests.append(sql)
-            fail = sql.startswith("Not SQL") or "SPOOF_INTERRUPTED" in sql
+            fail = sql.startswith("Not SQL") or "SPOOF_INTERRUPTED" in sql or "SENSITIVE_ERROR" in sql
             query_id = f"query-{len(self.sql_requests)}"
             if "BLOCK_SUBMISSION" in sql:
                 self.release_queries.wait(10)
@@ -118,12 +118,12 @@ class MockService(http.server.BaseHTTPRequestHandler):
                 "session_id": None,
                 "session": None,
                 "schema": ([{"name": "name", "type": "String"}, {"name": "type", "type": "String"}]
-                           if completion_query else [{"name": "value", "type": "String"}]),
-                "data": [] if fail or "BLOCK_PAGE" in sql else data,
+                           if completion_query else [{"name": "password" if "SENSITIVE_PREVIEW" in sql else "value", "type": "String"}]),
+                "data": [] if fail or "BLOCK_PAGE" in sql else [["private-result-secret"]] if "SENSITIVE_PREVIEW" in sql else data,
                 "state": "Failed" if fail else "Running" if "BLOCK_PAGE" in sql else "Succeeded",
                 "settings": None,
                 "error": (
-                    {"code": 1005, "message": "Interrupted by Ctrl+C in SPOOF_INTERRUPTED result" if "SPOOF_INTERRUPTED" in sql else "Mock syntax error", "detail": None}
+                    {"code": 1005, "message": "secret_access_key=private-error-secret" if "SENSITIVE_ERROR" in sql else "Interrupted by Ctrl+C in SPOOF_INTERRUPTED result" if "SPOOF_INTERRUPTED" in sql else "Mock syntax error", "detail": None}
                     if fail else None
                 ),
                 "warnings": None,
@@ -285,6 +285,7 @@ def exercise_modes(executable, env, port):
         assert len(MockService.sql_requests) == 3
         assert len(MockService.model_requests) == 1
         terminal.send("!mode smart")
+        terminal.send("!sql Not SQL;")
         terminal.send("!ask Explain Q2")
         failed = next(r for r in last_context()["query_records"] if r["id"] == "Q2")
         assert failed["status"] == "failed"
@@ -292,10 +293,10 @@ def exercise_modes(executable, env, port):
 
         terminal.send("SELECT * FROM", "smart(sql)> ")
         terminal.send("!mode agent", "smart(sql)> ")
-        assert len(MockService.sql_requests) == 3
+        assert len(MockService.sql_requests) == 4
         assert len(MockService.model_requests) == 2
         terminal.send("numbers;")
-        assert len(MockService.sql_requests) == 4
+        assert len(MockService.sql_requests) == 5
         terminal.send("!context clear")
         terminal.send("!context")
         terminal.send("!ask Hello after clearing")
@@ -321,7 +322,23 @@ def exercise_missing_model(executable, env, port):
         terminal.finish()
 
 
-def write_config(env, text):
+def write_config(env, text, consent=True, standard_prompt=True):
+    import re
+    # Existing behavior tests explicitly authorize their mock backend. Privacy
+    # tests opt out; no fake CLI/service should ever need interactive consent.
+    if consent and "allow_data_sharing" not in text:
+        if re.search(r"(?m)^\[agent\]\s*$", text):
+            text = re.sub(r"(?m)^\[agent\]\s*$", "[agent]\\nallow_data_sharing=true", text, count=1)
+        else:
+            text = '[agent]\nallow_data_sharing=true\n' + text
+    if standard_prompt:
+        additions = []
+        if not re.search(r"(?m)^prompt\s*=", text): additions.append('prompt="{mode}> "')
+        if "continuation_prompt" not in text: additions.append('continuation_prompt="{mode}(sql)> "')
+        if re.search(r"(?m)^\[settings\]\s*$", text):
+            text = re.sub(r"(?m)^\[settings\]\s*$", "[settings]\\n" + "\\n".join(additions), text, count=1)
+        elif additions:
+            text = '[settings]\n' + '\n'.join(additions) + '\n' + text
     directory = os.path.join(env["HOME"], ".config", "bendsql")
     os.makedirs(directory, exist_ok=True)
     with open(os.path.join(directory, "config.toml"), "w") as file:
@@ -416,14 +433,15 @@ model = "broken-model"
         "[agent\nsecret='private-config-secret'",
     ]:
         write_config(env, invalid)
-        with Terminal(executable, env, port) as terminal:
-            terminal.expect("smart> ")
+        prompt = f"root@127.0.0.1:{port}/default/default> " if invalid.startswith("[agent\n") else "smart> "
+        with Terminal(executable, env, port, startup_prompt=prompt) as terminal:
+            terminal.expect(prompt)
             count = len(MockService.model_requests)
             sql_count = len(MockService.sql_requests)
-            terminal.send("!ask Bad configuration")
-            terminal.send("!backend env")
+            terminal.send("!ask Bad configuration", prompt)
+            terminal.send("!backend env", prompt)
             assert len(MockService.model_requests) == count
-            terminal.send("SELECT 1;")
+            terminal.send("SELECT 1;", prompt)
             assert len(MockService.sql_requests) == sql_count + 1
             assert b"private-config-secret" not in b"".join(terminal.transcript)
             terminal.finish()
@@ -558,11 +576,18 @@ allow_external_agent = true
                 expected_id = "Q1" if backend == "claude" else "Q2"
                 assert context["query_records"][0]["id"] == expected_id
                 assert len(record["messages"]) == 2
-                for question in ["exit-error", "bad-json", "failed-turn", "overflow-stdout", "overflow-stderr"]:
+                for question in ["exit-error", "bad-json", "failed-turn", "overflow-stdout"]:
                     terminal.send(f"!ask {question}")
                     assert len(cli_records(record_path)[-1]["messages"]) == 4
                 terminal.send("!ask After failed requests")
                 assert len(cli_records(record_path)[-1]["messages"]) == 4
+                before_output = len(b"".join(terminal.transcript))
+                terminal.send("!ask overflow-stderr")
+                assert b"AI> " in b"".join(terminal.transcript)[before_output:]
+                if backend == "codex":
+                    before_output = len(b"".join(terminal.transcript))
+                    terminal.send("!ask future-metadata")
+                    assert b"AI> " in b"".join(terminal.transcript)[before_output:]
                 terminal.send("!ask long-answer")
                 assert b"[Answer truncated at 8 KiB]" in b"".join(terminal.transcript)
                 terminal.send("!context clear")
@@ -607,10 +632,8 @@ allow_external_agent = true
 
 
 def exercise_builtin_clis(executable, env, port):
-    # No backend tables, model variables or consent flags are required.
-    config_path = os.path.join(env["HOME"], ".config", "bendsql", "config.toml")
-    if os.path.exists(config_path):
-        os.unlink(config_path)
+    # Built-ins need no backend tables, but sharing requires explicit consent.
+    write_config(env, "")
     source = os.path.join(os.path.dirname(__file__), "mock_agent_cli.py")
     with open(source) as file:
         contents = file.read()
@@ -675,11 +698,14 @@ def exercise_builtin_clis(executable, env, port):
                 help_count = len(cli_records(record_path + ".help"))
                 terminal.send("!ask Explain Q1")
                 assert len(cli_records(record_path + ".help")) == help_count + 1
-                for question in ["exit-error", "bad-json", "failed-turn", "overflow-stdout", "overflow-stderr", "tool-policy"]:
+                for question in ["exit-error", "bad-json", "failed-turn", "overflow-stdout", "tool-policy"]:
                     terminal.send(f"!ask {question}")
                     assert len(cli_records(record_path)[-1]["messages"]) == 4
                 terminal.send("!ask After failures")
                 assert len(cli_records(record_path)[-1]["messages"]) == 4
+                before_output = len(b"".join(terminal.transcript))
+                terminal.send("!ask overflow-stderr")
+                assert b"AI> " in b"".join(terminal.transcript)[before_output:]
                 terminal.send("!ask long-answer")
                 assert b"[Answer truncated at 8 KiB]" in b"".join(terminal.transcript)
                 assert len(cli_records(record_path + ".help")) == help_count + 1
@@ -703,7 +729,7 @@ def exercise_builtin_clis(executable, env, port):
                 for secret in [b"private-cli-secret", b"private-thinking", b"private-pi-key"]:
                     assert secret not in b"".join(terminal.transcript)
         # Old versions fail before receiving context. No downgrade and no service fallback.
-        for name in ["pi"]:
+        for name in ["pi", "claude"]:
             write_config(cli_env, f'[agent.backends.local-{name}]\nenv_allowlist=["CLI_TEST_OLD"]')
             old_env = dict(cli_env, CLI_TEST_OLD="1")
             with Terminal(executable, old_env, port, backend=name) as terminal:
@@ -817,7 +843,7 @@ command = {json.dumps(mock)}
             assert len(prompt["messages"]) == 4
             wait_stopped(prompt)
             failures = ["rpc-error", "bad-json", "wrong-session", "malformed-update", "unsupported-content",
-                        "overflow-frame", "overflow-wire", "overflow-stderr", "tool-call", "permission",
+                        "overflow-frame", "overflow-wire", "tool-call", "permission",
                         "read-file", "write-file", "terminal", "extension", "failed-turn", "no-answer"]
             for question in failures:
                 terminal.send(f"!ask {question}")
@@ -1211,15 +1237,14 @@ def exercise_default_sql_modes_and_embedded_skills(executable, env, port):
         terminal.expect("\x1b[?2004l")  # The old readline ended; ignore input redraw prompts.
         terminal.expect("sql> ")
         before = len(b"".join(terminal.transcript))
-        os.write(terminal.fd, b"SELECT 'private-query-value';\r")
-        terminal.expect("sql> ")
-        sql_output = b"".join(terminal.transcript)[before:]
-        assert b"Query context cached" not in sql_output and b"[Q1]" not in sql_output
-        os.write(terminal.fd, b"!context\r")
-        terminal.expect("Q1: success")
-        terminal.expect("sql> ")
         os.write(terminal.fd, b"!mode agent\r")
         terminal.expect("Switched to agent mode.")
+        terminal.expect("agent> ")
+        os.write(terminal.fd, b"!sql SELECT 'private-query-value';\r")
+        terminal.expect("[Q1] Query context cached")
+        terminal.expect("agent> ")
+        os.write(terminal.fd, b"!context\r")
+        terminal.expect("Q1: success")
         terminal.expect("agent> ")
         os.write(terminal.fd, b"!ask Explain Q1\r")
         terminal.expect("AI> ")
@@ -1227,17 +1252,10 @@ def exercise_default_sql_modes_and_embedded_skills(executable, env, port):
         assert last_context()["query_records"][0]["id"] == "Q1"
         assert last_context()["query_records"][0]["sql"] == "SELECT 'private-query-value'"
         system = MockService.model_requests[-1]["messages"][0]["content"]
-        match = re.search(r"^Directory: (.+)$", system, re.MULTILINE)
-        assert match and "BendSQL embedded skills" in system
-        directory = match.group(1)
-        assert os.path.isdir(directory)
-        resource = os.path.join(directory, "README.md")
-        with open(resource) as file:
-            contents = file.read()
-        assert "private-query-value" not in contents
-        assert "SKILL.md" in contents
-        assert os.stat(resource).st_mode & 0o222 == 0
-        assert os.stat(directory).st_mode & 0o222 == 0
+        assert "BendSQL embedded skills" in system and "databend/SKILL.md" in system
+        assert "Directory:" not in system and "### README.md" not in system
+        assert "private-query-value" not in system
+        assert "supplied inline" in system
         os.write(terminal.fd, b"!context clear\r")
         terminal.expect("Query memory and conversation cleared.")
         terminal.expect("agent> ")
@@ -1245,9 +1263,8 @@ def exercise_default_sql_modes_and_embedded_skills(executable, env, port):
         terminal.expect("AI> ")
         terminal.expect("agent> ")
         assert last_context()["query_records"] == []
-        assert f"Directory: {directory}" in MockService.model_requests[-1]["messages"][0]["content"]
+        assert "databend/SKILL.md" in MockService.model_requests[-1]["messages"][0]["content"]
         terminal.finish()
-        assert not os.path.exists(directory)
     # No SQL catalog request in smart/agent startup. It is fetched lazily once
     # when the user explicitly enters SQL mode, without enabling hints elsewhere.
     for mode in ["smart", "agent"]:
@@ -1284,7 +1301,7 @@ def exercise_default_sql_modes_and_embedded_skills(executable, env, port):
         terminal.expect("sql> ")
         assert b"Query context cached" not in b"".join(terminal.transcript)[before:]
         os.write(terminal.fd, b"!context\r")
-        terminal.expect("Q1: success")
+        terminal.expect("No cached queries.")
         terminal.expect("sql> ")
         terminal.finish()
 
@@ -1451,10 +1468,122 @@ def exercise_ai_markdown_output(executable, env, port):
         terminal.finish()
 
 
+def exercise_sql_compatibility_and_sharing_consent(executable, env, port):
+    with tempfile.TemporaryDirectory(prefix="bendsql-privacy-home-") as home:
+        local = dict(env, HOME=home, TERM="xterm")
+        write_config(local, '[agent]\nbackend="env"', consent=False, standard_prompt=False)
+        prompt = f"root@127.0.0.1:{port}/default/default> "
+        before = len(MockService.model_requests)
+        def command(terminal, text):
+            os.write(terminal.fd, text.encode() + b"\r")
+            terminal.expect("\x1b[?2004l")
+            terminal.expect("\x1b[?2004h")
+            terminal.expect(prompt)
+        with Terminal(executable, local, port, mode=None, startup_prompt=prompt) as terminal:
+            terminal.expect(prompt)
+            command(terminal, "SELECT 123456;")
+            command(terminal, "CREATE USER local_user IDENTIFIED BY 'private-credential';")
+            command(terminal, "!context")
+            assert b"No cached queries" in b"".join(terminal.transcript)
+            assert len(MockService.model_requests) == before
+            terminal.finish()
+        history = os.path.join(home, ".bendsql_history")
+        with open(history) as file: persisted = file.read()
+        assert "SELECT 123456" in persisted and "private-credential" not in persisted
+        logs = b""
+        for directory, _, files in os.walk(home):
+            for name in files:
+                if name.startswith("bendsql.log"):
+                    with open(os.path.join(directory, name), "rb") as file: logs += file.read()
+        assert b"SELECT 123456" in logs, "SQL-only --log-level must remain effective"
+        assert b"private-credential" not in logs
+        with Terminal(executable, local, port, mode=None, startup_prompt=prompt) as terminal:
+            terminal.expect(prompt)
+            count = len(MockService.sql_requests)
+            os.write(terminal.fd, b"\x1b[A\r")
+            terminal.expect("\x1b[?2004l")
+            terminal.expect("\x1b[?2004h")
+            terminal.expect(prompt)
+            wait_http_count(MockService.sql_requests, count + 1)
+            assert MockService.sql_requests[-1] == "SELECT 123456"
+            # Bracketed paste exercises a statement larger than the removed 64 KiB cap.
+            sql = "INSERT INTO bulk_input VALUES " + ",".join("('value')" for _ in range(9000)) + ";"
+            payload = b"\x1b[200~" + sql.encode() + b"\x1b[201~\r"
+            deadline = time.monotonic() + 20
+            while payload or len(MockService.sql_requests) < count + 2:
+                if time.monotonic() > deadline: raise AssertionError("Large SQL paste did not execute")
+                readable, writable, _ = select.select([terminal.fd], [terminal.fd] if payload else [], [], 0.1)
+                if readable:
+                    chunk = os.read(terminal.fd, 65536)
+                    terminal.pending += chunk
+                    terminal.transcript.append(chunk)
+                if writable:
+                    written = os.write(terminal.fd, payload[:1024])
+                    payload = payload[written:]
+            terminal.expect("\x1b[?2004l")
+            terminal.expect("\x1b[?2004h")
+            terminal.expect(prompt)
+            assert len(MockService.sql_requests[-1]) > 64 * 1024
+            os.write(terminal.fd, b"!ask private-ai-question\r")
+            terminal.expect("[y/N] ")
+            assert len(MockService.model_requests) == before
+            os.write(terminal.fd, b"\r")
+            terminal.expect("AI data sharing not approved")
+            terminal.expect(prompt)
+            assert len(MockService.model_requests) == before
+            os.write(terminal.fd, b"!mode smart\r")
+            terminal.expect("[y/N] ")
+            os.write(terminal.fd, b"yes\r")
+            terminal.expect("Switched to smart mode.")
+            terminal.expect(prompt)
+            for statement in [
+                "CREATE USER new_user IDENTIFIED BY 'private-credential'",
+                "CREATE STAGE s URL='s3://bucket' CONNECTION=(access_key_id='id',secret_access_key='private-credential')",
+                "CREATE CONNECTION c STORAGE_TYPE='s3' SECRET_ACCESS_KEY='private-credential'",
+                "COPY INTO t FROM 's3://bucket' CONNECTION=(AWS_KEY_ID='id',AWS_SECRET_KEY='private-credential')",
+                "SELECT SENSITIVE_PREVIEW", "SELECT SENSITIVE_ERROR",
+            ]:
+                command(terminal, f"!sql {statement};")
+            command(terminal, "!context")
+            assert b"Query context cached" not in b"".join(terminal.transcript)
+            command(terminal, "SELECT 1;")
+            command(terminal, "!ask approved-analysis")
+            assert len(MockService.model_requests) == before + 1
+            records = last_context()["query_records"]
+            assert len(records) == 1 and records[0]["sql"] == "SELECT 1"
+            request = json.dumps(MockService.model_requests[-1])
+            for private in ["private-credential", "private-result-secret", "private-error-secret", "SELECT 123456"]:
+                assert private not in request
+            assert "### README.md" not in request and "Directory:" not in request
+            # A new backend selection requires fresh consent even though old query
+            # evidence is retained. Config allow_data_sharing would be explicit opt-in.
+            command(terminal, "!backend env")
+            os.write(terminal.fd, b"!ask not-approved-after-switch\r")
+            terminal.expect("[y/N] ")
+            assert len(MockService.model_requests) == before + 1
+            os.write(terminal.fd, b"n\r")
+            terminal.expect("AI data sharing not approved")
+            terminal.expect(prompt)
+            terminal.finish()
+        with open(history) as file: persisted = file.read()
+        assert "approved-analysis" not in persisted and "private-ai-question" not in persisted
+        assert "CREATE USER" not in persisted and "private-credential" not in persisted
+        # Explicitly disabling SQL history is supported independently of AI use.
+        os.unlink(history)
+        write_config(local, '[settings]\nsave_history=false', consent=False)
+        with Terminal(executable, local, port, mode=None) as terminal:
+            terminal.expect("sql> ")
+            terminal.send("SELECT 2;", "sql> ")
+            terminal.finish()
+        assert not os.path.exists(history)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("executable")
-    parser.add_argument("--provider-only", action="store_true", help="Test the local OpenAI-compatible HTTP provider only")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--provider-only", action="store_true", help="Test the local OpenAI-compatible HTTP provider only")
+    group.add_argument("--privacy-only", action="store_true", help="Test restored SQL history/logging and AI sharing boundaries")
     args = parser.parse_args()
     executable = os.path.abspath(args.executable)
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MockService)
@@ -1477,7 +1606,9 @@ def main():
             assert result.returncode != 0
             assert b"require an interactive terminal" in result.stderr
             assert not MockService.sql_requests
-            if not args.provider_only:
+            if args.privacy_only:
+                exercise_sql_compatibility_and_sharing_consent(executable, env, port)
+            elif not args.provider_only:
                 exercise_modes(executable, env, port)
                 exercise_missing_model(executable, env, port)
                 exercise_configured_backends(executable, env, port)
@@ -1490,13 +1621,21 @@ def main():
                 exercise_transient_ai_spinner(executable, env, port)
                 exercise_default_sql_modes_and_embedded_skills(executable, env, port)
                 exercise_prompt_templates(executable, env, port)
-            exercise_openai_provider(executable, env, port)
-            exercise_ai_markdown_output(executable, env, port)
-            assert not os.path.exists(os.path.join(home, ".bendsql_history"))
+                exercise_sql_compatibility_and_sharing_consent(executable, env, port)
+            if not args.privacy_only:
+                exercise_openai_provider(executable, env, port)
+                exercise_ai_markdown_output(executable, env, port)
+            # SQL-only history/logging are intentionally restored. Neither may
+            # contain model requests, raw provider diagnostics or credentials.
             for root, _, files in os.walk(home):
                 for name in files:
-                    if name.startswith("bendsql.log"):
-                        assert os.path.getsize(os.path.join(root, name)) == 0
+                    if name.startswith("bendsql.log") or name == ".bendsql_history":
+                        with open(os.path.join(root, name), "rb") as file: data = file.read()
+                        for forbidden in [b"private-provider-key", b"private-provider-diagnostic", b"Mock answer grounded in cached records."]:
+                            assert forbidden not in data
+        if args.privacy_only:
+            print("PASS: SQL history/load, logging, large SQL, consent/no egress, sensitive context exclusion and backend consent reset")
+            return
         if args.provider_only:
             print("PASS: mock OpenAI provider; request/auth/config, Databend skill, multi-turn evidence, errors/budgets, no SQL execution, clear and terminal Markdown/plain presentation")
             return

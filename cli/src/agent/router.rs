@@ -29,7 +29,9 @@ pub enum Input<'a> {
 /// True only for whitespace or completely closed comments. Unclosed comments
 /// and string literals remain pending SQL, even if tokenization fails.
 pub fn comments_only(text: &str) -> bool {
-    tokenize_sql(text).is_ok_and(|tokens| tokens.iter().all(|t| t.kind == TokenKind::EOI))
+    // Only the first meaningful token matters. Do not parse an entire bulk
+    // statement just to learn that its first token is SELECT/INSERT, not a comment.
+    matches!(Tokenizer::new(text).next(), Some(Ok(token)) if token.kind == TokenKind::EOI)
 }
 
 fn statement_is_sql(text: &str) -> bool {

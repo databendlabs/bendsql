@@ -5,9 +5,9 @@ binary in both debug and release builds. Add a skill under `<name>/SKILL.md`, wi
 optional Markdown reference documents alongside it. Do not add credentials,
 private data, executable scripts or symlinks.
 
-BendSQL extracts these resources into a private, read-only directory for an AI
-session. Its prompt identifies the directory, the resource paths and bounded
-UTF-8 document content so model-only HTTP backends can also use the references.
+BendSQL supplies resource names and bounded UTF-8 Markdown content directly from
+compiled bytes. There is no extraction directory or local path for the model to
+read. Only SKILL.md subtrees enter the prompt; this maintainer README does not.
 Resources are reference material: they do not grant database, filesystem or Shell
 permissions and must not override the execution rules of the session.
 

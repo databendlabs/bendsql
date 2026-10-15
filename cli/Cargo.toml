@@ -52,6 +52,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 rust-embed = "8.7.0"
 rustyline = "15.0"
 serde = { version = "1.0", features = ["derive"] }
+serde_path_to_error = "0.1"
 serde_json = "1.0"
 sled = "0.34"
 sqlformat = "0.3.3"

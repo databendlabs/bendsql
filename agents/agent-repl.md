@@ -36,7 +36,12 @@ produces an actionable error without blocking SQL. Amp is not supported. Merely
 defining HTTP profiles or setting legacy model
 environment variables does not select them.
 
-The session has three modes, sharing the same query memory and conversation:
+SQL mode never captures query data. Smart/agent capture and every backend request
+require session confirmation or `agent.allow_data_sharing = true`. No pre-approval
+SQL is recovered from history. Built-in execution profiles do not bypass consent.
+Switching backends resets session permission unless configuration authorizes it.
+
+The modes share only approved query memory and conversation:
 
 | Mode | Prompt | Input behavior |
 | --- | --- | --- |
@@ -46,7 +51,7 @@ The session has three modes, sharing the same query memory and conversation:
 
 Select an initial mode with `bendsql --mode sql`, or switch during the
 session with `!mode smart`, `!mode sql`, or `!mode agent`. Pending multi-line SQL
-uses a prompt such as `smart(sql)>`; finish it or press Ctrl+C before switching.
+uses `settings.continuation_prompt` (default `"> "`); finish it or press Ctrl+C before switching.
 Mode switching does not clear context. Typing `!mode` displays the three choices
 as an inline hint, and Tab completes the mode argument. Executing `!mode` lists
 `sql | smart | agent`; use `!mode <choice>` to switch.
@@ -57,7 +62,7 @@ Server table/field keywords are loaded only when SQL mode is first entered (unle
 `--no-auto-complete` is set), so starting in smart/agent mode avoids that catalog
 query. Returning to SQL restores completion without reloading the same catalog.
 The complete prompt is controlled by `settings.prompt`, whose default template
-is `"{mode}> "`. No mode prefix or suffix is added outside the template. `{mode}`
+is `"{user}@{warehouse}/{catalog}/{database}> "`. No mode prefix or suffix is added outside the template. `{mode}`
 expands to `sql`, `smart` or `agent` on each input; omitting it intentionally hides
 the mode (use `!mode` to inspect it). Existing `{host}`, `{port}`, `{user}`,
 `{catalog}`, `{database}` and `{warehouse}` placeholders remain supported.
@@ -70,8 +75,8 @@ prompt = "🐳 @{database} [{mode}]:) "
 This renders `🐳 @default [sql]:) ` and updates after mode switches. With
 `prompt = "🐳 @{database}:) "`, it renders `🐳 @default:) ` in all modes, without
 an extra `sql>`/`smart>`/`agent>` prefix. Configured whitespace is preserved; include
-a trailing space if desired. Pending SQL uses the separate `sql(sql)> ` or
-`smart(sql)> ` continuation prompt rather than repeating the full template.
+a trailing space if desired. Pending SQL uses the separate `settings.continuation_prompt` template (default
+`"> "`, supporting the same variables), rather than repeating the full template.
 
 Smart mode is conservative: `SELECT 1; Explain the result` executes **nothing**,
 not the SQL prefix. The same whole-input check applies to multi-line continuation,
@@ -128,6 +133,8 @@ precedence, following the usual BendSQL config loading rules.
 ```toml
 [agent]
 backend = "my-api"
+# Optional explicit permission instead of an interactive confirmation:
+# allow_data_sharing = true
 timeout_secs = 60
 
 [agent.backends.my-api]
@@ -286,7 +293,7 @@ The adapters use distinct structured-output protocols:
   `message_end`, followed by a completed run, is shown; thinking/deltas are ignored.
   Aborts, final errors, incomplete retries and reported tool use do not become answers.
 
-Pi performs a bounded `--help` check before its first question, with empty
+Pi and Claude Code perform a bounded `--help` check before its first question, with empty
 stdin and the same restrictive options/settings. Required advertised flags must be
 present; old/unsupported versions receive no conversation or query context. Successful
 checks are cached for that backend instance, not globally, and reset when the backend
@@ -323,8 +330,9 @@ not inherited automatically. `HOME` allows native CLI login credentials to work,
 so the environment restriction does not isolate the filesystem.
 
 Input is capped at 256 KiB; captured stdout at 1 MiB, each JSONL event at 128 KiB,
-and stderr at 32 KiB. Raw diagnostics are suppressed because they can contain
-credentials or SQL. Answers share the HTTP backend's 8 KiB limit and terminal
+while stderr is continuously drained/discarded in fixed-size buffers. Verbose
+warnings do not invalidate a successful answer. Raw diagnostics can contain
+credentials or SQL and are never displayed. Answers share the HTTP backend's 8 KiB limit and terminal
 control-character filtering. Any CLI failure leaves the existing conversation
 unchanged, and SQL remains available.
 
@@ -334,7 +342,12 @@ clean up the group and temporary directory. A malicious process can detach from
 its group; this cleanup is not containment, and abrupt termination of BendSQL
 cannot guarantee cleanup. On other platforms, use the HTTP backend.
 
-BendSQL itself does not persist CLI input/output. Ephemeral/no-session flags request
+Pure SQL sessions load/save `~/.bendsql_history` and honor `--log-level`.
+`settings.save_history = false` disables disk history. Starting in an AI mode or
+activating AI stops disk history for the rest of the session; questions and consent
+responses are never history entries. SQL history is navigation only, not AI evidence.
+Known credential statements are excluded from new history. File logs omit AI payloads,
+sensitive statements and database payloads after AI activation; the logger remains active. Ephemeral/no-session flags request
 that Codex/Claude Code/Pi not save conversation history, but CLI diagnostics, managed
 settings and upstream service retention can still apply. `!context clear` removes local
 BendSQL context, not files or history previously retained by an external CLI/service.
@@ -346,14 +359,12 @@ BendSQL context, not files or history previously retained by an external CLI/ser
 all resource bytes into the CLI in **debug and release**, tracks directory changes,
 and rejects symlinks. This does not change the frontend's asset-loading behavior.
 
-The first AI request extracts only these static resources into a private directory;
-Unix files/directories are marked read-only. The directory lives with the interactive
-session and is removed on exit. Clearing query/conversation context does not remove
-built-in references. No SQL, result data, questions, responses or credentials are
-written to the skill directory.
+Compiled resources are supplied inline with no runtime extraction or advertised
+local path, avoiding orphan directories on SIGKILL. Only Markdown within SKILL.md
+subtrees is sent; the top-level maintainer README is excluded. Clearing context
+does not remove built-in references.
 
-Every backend's system message describes the directory, available SKILL.md files
-and bounded text excerpts (16 KiB total, at most 4 KiB per Markdown document). This
+Every backend's system message lists available SKILL.md files and bounded text excerpts (16 KiB total, at most 4 KiB per Markdown document). This
 also works for HTTP-only models, which cannot read a local path. Missing/truncated
 content is explicitly identified. The single bundled `databend/SKILL.md` points to
 https://docs.databend.com/ and covers SQL-reference lookup plus common troubleshooting:
@@ -454,7 +465,8 @@ Transport limits are 128 KiB per incoming JSON-RPC line, 1 MiB total incoming da
 and 4096 frames per invocation. Outgoing data is capped at 1 MiB (512 KiB per line)
 including the escaped prompt. Only individual newline-delimited JSON-RPC 2.0
 objects are accepted, not batches. Prompt text remains capped at 256 KiB, retained
-answer text at 8 KiB, and stderr at 32 KiB. Pipes are serviced concurrently. All
+answer text at 8 KiB. Stderr is drained/discarded with fixed memory; diagnostic
+volume does not invalidate a successful result. Pipes are serviced concurrently. All
 protocol/process diagnostics are sanitized rather than exposing server error text,
 private paths or credentials. Static arguments are limited to 32 / 16 KiB total.
 
@@ -487,9 +499,10 @@ Switched to sql mode.
 sql> SELECT ...;
 ```
 
-SQL mode caches query context silently, without the `[Q<n>] Query context cached`
-notice. Use `!context` to inspect it, or switch to smart/agent mode to ask about
-those same records. Smart/agent execution retains the cache notice.
+SQL mode never caches query context. Use approved smart/agent mode to execute
+queries for AI analysis. A cache ID is printed only if the record is retained.
+Known credential statements, sensitive columns/preview values and credential-bearing
+errors are excluded entirely. This is not a general personal-data detector.
 
 Explicit commands are available in all three modes:
 
@@ -533,10 +546,11 @@ are also limited to 8 KiB and marked if truncated.
 **Privacy:** asking a question sends selected SQL, previews, errors and recent
 conversation to the configured model backend (or external CLI). Review its data-handling policy before
 using sensitive data. SQL and cell contents are treated as untrusted evidence, not
-instructions; this does not guarantee the model's answers are correct. All interactive sessions
-do not load/save disk history, and BendSQL client file logging is disabled in them.
-The bounded query/conversation cache stays in RAM; the only resource extraction is
-static compiled skill documentation.
+instructions; this does not guarantee correct answers. Pure SQL history/logging
+preserve ordinary behavior; AI activation stops disk history and protects logged
+payloads. Query/conversation cache remains RAM-only. There is no skills extraction
+or SQL-mode cache. SQL input has no AI-specific 64 KiB limit. Reconnect does not
+automatically replay statements (see CHANGELOG.md).
 Normal database-side logging and model-service retention policies still apply.
 Use `!context clear` to remove local context before changing topics.
 

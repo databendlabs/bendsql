@@ -103,10 +103,16 @@ impl CliBackend {
         if let Some(model) = &self.model {
             args.extend(["--model".into(), model.into()]);
         }
-        if self.adapter == CliAdapter::Pi {
+        if matches!(self.adapter, CliAdapter::Pi | CliAdapter::ClaudeCode) {
             self.capabilities_checked
                 .get_or_try_init(|| async {
-                    let mut probe = args.clone();
+                    let mut probe = if self.adapter == CliAdapter::ClaudeCode {
+                        // Probe before passing newer flags; older clients should
+                        // identify the missing option, not fail argument parsing.
+                        Vec::new()
+                    } else {
+                        args.clone()
+                    };
                     probe.push("--help".into());
                     let help = self.invoke(directory.path(), &probe, "").await?;
                     validate_capabilities(self.adapter, &help)
@@ -163,7 +169,7 @@ impl CliBackend {
         let (_, stdout, _) = tokio::try_join!(
             write,
             read_bounded(stdout, MAX_STDOUT_BYTES),
-            read_bounded(stderr, MAX_STDERR_BYTES),
+            drain_stderr(stderr),
         )?;
         let status = guard
             .child
@@ -359,8 +365,6 @@ const MAX_INPUT_BYTES: usize = 256 * 1024;
 #[cfg(unix)]
 const MAX_STDOUT_BYTES: usize = 1024 * 1024;
 #[cfg(unix)]
-const MAX_STDERR_BYTES: usize = 32 * 1024;
-#[cfg(unix)]
 const MAX_EVENT_BYTES: usize = 128 * 1024;
 
 #[cfg(unix)]
@@ -432,6 +436,21 @@ fn validate_capabilities(adapter: CliAdapter, help: &[u8]) -> Result<()> {
             "--offline",
             "--system-prompt",
         ],
+        CliAdapter::ClaudeCode => &[
+            "--print",
+            "--input-format",
+            "--output-format",
+            "--no-session-persistence",
+            "--tools",
+            "--permission-mode",
+            "--disable-slash-commands",
+            "--safe-mode",
+            "--no-chrome",
+            "--setting-sources",
+            "--settings",
+            "--strict-mcp-config",
+            "--mcp-config",
+        ],
         _ => &[],
     };
     let advertised: std::collections::BTreeSet<_> = text
@@ -440,8 +459,8 @@ fn validate_capabilities(adapter: CliAdapter, help: &[u8]) -> Result<()> {
             word.trim_matches(|c: char| matches!(c, ',' | '[' | ']' | '(' | ')' | ':' | '`'))
         })
         .collect();
-    if required.iter().any(|flag| !advertised.contains(flag)) {
-        bail!("CLI version does not advertise the required safety/protocol options; update the CLI separately. Context was not sent and no fallback will be used.");
+    if let Some(missing) = required.iter().find(|flag| !advertised.contains(**flag)) {
+        bail!("CLI version lacks required option {missing}; update the CLI separately. Context was not sent and no fallback will be used.");
     }
     Ok(())
 }
@@ -498,6 +517,20 @@ pub(super) async fn read_bounded(
         bail!("CLI output exceeded its byte budget; output suppressed");
     }
     Ok(bytes)
+}
+
+/// Diagnostics are never forwarded or retained. Drain with fixed memory rather
+/// than failing a successful answer because a CLI emits verbose startup warnings.
+#[cfg(unix)]
+pub(super) async fn drain_stderr(mut reader: impl tokio::io::AsyncRead + Unpin) -> Result<()> {
+    use tokio::io::AsyncReadExt;
+    let mut buffer = [0u8; 8192];
+    loop {
+        match reader.read(&mut buffer).await {
+            Ok(0) | Err(_) => return Ok(()),
+            Ok(_) => {}
+        }
+    }
 }
 
 #[cfg(unix)]

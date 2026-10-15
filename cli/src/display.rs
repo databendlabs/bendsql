@@ -71,6 +71,7 @@ pub struct FormatDisplay<'a> {
     stats: Option<ServerStats>,
     interrupted: Arc<AtomicBool>,
     preview: Option<QueryPreview>,
+    interruptible: bool,
 }
 
 impl<'a> FormatDisplay<'a> {
@@ -94,10 +95,16 @@ impl<'a> FormatDisplay<'a> {
             stats: None,
             interrupted,
             preview: None,
+            interruptible: false,
         }
     }
 
+    pub fn enable_interrupt(&mut self) {
+        self.interruptible = true;
+    }
+
     pub fn enable_capture(&mut self) {
+        self.interruptible = true;
         self.preview = Some(QueryPreview::new(&self.data.schema()));
     }
 
@@ -119,8 +126,15 @@ impl<'a> FormatDisplay<'a> {
     }
 
     async fn next_row(&mut self) -> Result<Option<databend_driver::Result<RowWithStats>>> {
-        if self.preview.is_none() {
+        if !self.interruptible {
             return Ok(self.data.next().await);
+        }
+        if self.interrupted.load(Ordering::SeqCst) {
+            return Err(anyhow!(INTERRUPTED_MESSAGE));
+        }
+        // Ready buffered rows never allocate a timer or cancellation future.
+        if let Some(row) = futures_util::FutureExt::now_or_never(self.data.next()) {
+            return Ok(row);
         }
         let interrupted = self.interrupted.clone();
         tokio::select! {
@@ -969,6 +983,55 @@ mod agent_tests {
                 assert_eq!(preview.total_rows, if fail { None } else { Some(50) });
                 assert!(!preview.complete);
                 assert_eq!(display.latest_stats().unwrap().read_rows, 1000);
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "local ready-row throughput benchmark; no database or model"]
+    async fn benchmark_ready_rows_cancellation_overhead() {
+        for format in [OutputFormat::CSV, OutputFormat::TSV] {
+            for interruptible in [false, true] {
+                let settings = Settings {
+                    output_format: format.clone(),
+                    ..Settings::default()
+                };
+                let schema = Arc::new(Schema::from_vec(vec![databend_driver::Field {
+                    name: "value".into(),
+                    data_type: databend_driver::DataType::String,
+                }]));
+                let rows = (0..200_000).map({
+                    let schema = schema.clone();
+                    move |n| {
+                        Ok(RowWithStats::Row(Row::new(
+                            schema.clone(),
+                            vec![Value::String(n.to_string())],
+                        )))
+                    }
+                });
+                let stream = RowStatsIterator::new(schema, Box::pin(tokio_stream::iter(rows)));
+                let mut display = FormatDisplay::new(
+                    &settings,
+                    "SELECT value",
+                    false,
+                    Instant::now(),
+                    stream,
+                    Arc::new(AtomicBool::new(false)),
+                );
+                if interruptible {
+                    display.enable_interrupt();
+                }
+                let start = Instant::now();
+                let mut count = 0;
+                while display.next_row().await.unwrap().is_some() {
+                    count += 1;
+                }
+                assert_eq!(count, 200_000);
+                assert!(display.preview.is_none());
+                println!(
+                    "{format:?}: interruptible={interruptible}, rows={count}, elapsed_ms={}",
+                    start.elapsed().as_millis()
+                );
             }
         }
     }

@@ -193,16 +193,20 @@ or select a mode directly:
 | `agent` | Ask AI using cached queries and results; suggested SQL is not executed. |
 
 ```text
-sql> SELECT count(*) FROM orders;
+...> !mode smart
+Allow AI data sharing with ...? [y/N] y
+...> SELECT count(*) FROM orders;
 ... query result ...
-sql> !mode agent
-agent> Explain the previous result.
+...> Explain the previous result.
 AI> ...
-agent> !mode sql
+...> !mode sql
 ```
 
-Queries are cached in memory in every mode. SQL mode does not print cache notices.
-Use `!context` to inspect the cache and `!context clear` to reset it. Completion is
+SQL mode does not cache query data for AI. Pure SQL sessions retain their normal
+`~/.bendsql_history` and configured logging. First AI use requires confirmation;
+only subsequent smart/agent-mode queries enter memory, not earlier SQL history.
+AI activation stops disk history for the rest of that session. Use
+`!context` to inspect query memory and `!context clear` to reset it. Completion is
 disabled in smart/agent mode, except for `!mode` choices. Batch and piped SQL do not
 invoke AI.
 
@@ -222,6 +226,8 @@ For an OpenAI-compatible service, add a named backend to
 ```toml
 [agent]
 backend = "my-api"
+# Optional: explicit permission instead of the per-session confirmation.
+# allow_data_sharing = true
 
 [agent.backends.my-api]
 type = "openai-compatible"
@@ -234,8 +240,9 @@ Explicit `--backend` selection overrides configuration. A failed request does no
 switch providers automatically; SQL remains available without an AI backend.
 Local CLI/ACP backends currently require Unix; HTTP backends are also available.
 
-**AI requests share selected SQL, errors and result previews with the configured
-backend.** Use trusted services/CLIs and clear context before changing topics.
+**After approval, AI requests share questions and selected smart/agent-mode SQL,
+errors and result previews with the configured backend.** Known credential-bearing
+statements/results are excluded; this is not a general personal-data detector. Use trusted services/CLIs and clear context before changing topics.
 External CLIs can access local files; BendSQL's restrictions are not a sandbox.
 Incomplete previews are not full results, and cancellation does not guarantee a
 server-side rollback. The bundled Databend skill provides documentation and
@@ -249,10 +256,17 @@ prompt = "🐳 @{database} [{mode}]:) "
 ai_output = "markdown" # or "plain"
 ```
 
-The default prompt is `"{mode}> "`. Custom templates are used as-is; omit `{mode}`
-to hide the mode. AI answers use terminal Markdown, with a temporary spinner that
+The default connection/database prompt is unchanged:
+`"{user}@{warehouse}/{catalog}/{database}> "`. Add `{mode}` to display the mode,
+or use `prompt = "{mode}> "` for the short form. Pending SQL uses
+`continuation_prompt = "> "`, which also supports the same template variables.
+Use `save_history = false` to disable SQL disk history explicitly. Custom templates
+are used as-is; omit `{mode}` to hide the mode. AI answers use terminal Markdown, with a temporary spinner that
 clears before the answer. Switch styles with `!set ai_output plain` or
 `!set ai_output markdown`; SQL result formatting is unchanged.
+
+Authentication recovery reconnects but does not automatically replay a statement;
+verify execution state before retrying writes. See [compatibility notes](CHANGELOG.md).
 
 Use `!help` for commands. See [the maintainer reference](agents/agent-repl.md) for
 advanced backend configuration, protocols, cache limits, embedded skills and tests.

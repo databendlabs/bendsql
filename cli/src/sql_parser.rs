@@ -339,6 +339,32 @@ impl SqlParser {
 
     /// Parse accumulated query text to extract complete statements
     pub(crate) fn parse_statements(&self, query: &str) -> ParseResult {
+        // The debug Logos lexer can recurse per character inside long quoted
+        // tokens. Keep bulk SQL off the small UI stack, without rejecting input.
+        if query.len() > 16 * 1024 {
+            let result = std::thread::scope(|scope| {
+                std::thread::Builder::new()
+                    .name("bendsql-bulk-parser".into())
+                    .stack_size(
+                        (query.len().saturating_mul(512))
+                            .clamp(64 * 1024 * 1024, 256 * 1024 * 1024),
+                    )
+                    .spawn_scoped(scope, || self.parse_statements_inner(query))
+                    .map(|handle| handle.join())
+            });
+            return match result {
+                Ok(Ok(parsed)) => parsed,
+                _ => ParseResult {
+                    statements: Vec::new(),
+                    remaining: query.into(),
+                    err: "Cannot parse bulk SQL on the parser stack; input retained".into(),
+                },
+            };
+        }
+        self.parse_statements_inner(query)
+    }
+
+    fn parse_statements_inner(&self, query: &str) -> ParseResult {
         // Split off the unclosed block-comment tail so the tokenizer only
         // sees text it can handle.  Statements before the `/*` are still
         // extracted normally; the comment portion stays in `remaining`.
@@ -429,6 +455,17 @@ pub fn parse_sql_for_web(sql_text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_quoted_sql_is_retained_and_split_without_a_ui_stack_overflow() {
+        let query = format!("SELECT '{}'; SELECT 2;", "x".repeat(70 * 1024));
+        let parser = SqlParser::new(';', true, true);
+        let parsed = parser.parse_statements(&query);
+        assert!(parsed.err.is_empty());
+        assert_eq!(parsed.statements.len(), 2);
+        assert!(parsed.statements[0].len() > 64 * 1024);
+        assert_eq!(parsed.statements[1], "SELECT 2");
+    }
 
     #[test]
     fn test_task_script_block() {

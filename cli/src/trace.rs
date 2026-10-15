@@ -22,6 +22,19 @@ use tracing_appender::rolling::RollingFileAppender;
 use tracing_appender::rolling::Rotation;
 
 const MAX_LOG_FILES: usize = 10;
+static AI_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn protect_ai_payloads() {
+    AI_ACTIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn protected_message(target: &str, message: &str) -> bool {
+    let provider = target.starts_with("agent_client") || target.starts_with("bendsql::agent");
+    let database = target.starts_with("databend_");
+    provider
+        || crate::agent::privacy::sensitive(message)
+        || (database && AI_ACTIVE.load(std::sync::atomic::Ordering::SeqCst))
+}
 
 #[allow(dyn_drop)]
 pub async fn init_logging(
@@ -42,12 +55,18 @@ pub async fn init_logging(
     guards.push(Box::new(flush_guard));
     let dispatch_file = fern::Dispatch::new()
         .format(|out, message, record| {
+            let message = message.to_string();
+            let text = if protected_message(record.target(), &message) {
+                "[payload omitted for privacy]"
+            } else {
+                &message
+            };
             out.finish(format_args!(
                 "[{}] - {} - [{}] {}",
                 chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                 record.level(),
                 record.target(),
-                message
+                text
             ))
         })
         .level(LevelFilter::from_str(level)?)
