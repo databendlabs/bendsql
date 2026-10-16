@@ -392,7 +392,9 @@ mod tests {
         .await;
         let client = LlmClient::new(&base, "test-model".into(), Some("test-key".into())).unwrap();
         let mut memory = Memory::default();
-        memory.push(super::super::memory::QueryRecord::new("SELECT 1"));
+        memory
+            .push(super::super::memory::QueryRecord::new("SELECT 1"))
+            .unwrap();
         let conversation = Conversation::default();
         let messages = conversation.messages("Explain Q1", &memory);
         let answer = client.complete(&messages).await.unwrap();

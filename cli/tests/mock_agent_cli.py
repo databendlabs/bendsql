@@ -77,6 +77,11 @@ def codex_app_server():
             if question == "overflow-stderr":
                 sys.stderr.write("private-cli-secret" * 30000)
                 sys.stderr.flush()
+            if question == "future-tool-item":
+                event("item/completed", threadId=thread, turnId=turn,
+                      item={"type": "newProviderToolCall", "id": "future-tool"})
+            if question == "future-tool-request":
+                send({"id": "future-tool-request", "method": "item/futureExecution", "params": {}})
             if question == "future-metadata":
                 event("item/completed", threadId=thread, turnId=turn,
                       item={"type": "newPassiveMetadata", "id": "meta"})

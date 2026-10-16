@@ -102,13 +102,33 @@ fn get_history_path() -> String {
     )
 }
 
-fn suspend_history(rl: &mut Editor<CliHelper, DefaultHistory>, path: &str, active: &mut bool) {
-    if *active {
-        let _ = rl.save_history(path);
-        *active = false;
+struct HistoryPolicy {
+    ai_active: bool,
+}
+
+impl HistoryPolicy {
+    fn saves_to_disk(&self, enabled: bool) -> bool {
+        enabled && !self.ai_active
     }
-    // Loaded SQL history is navigation only; it is never AI context.
-    let _ = rl.clear_history();
+
+    fn activate_ai(
+        &mut self,
+        rl: &mut Editor<CliHelper, DefaultHistory>,
+        path: &str,
+        enabled: bool,
+    ) {
+        if self.saves_to_disk(enabled) {
+            let _ = rl.save_history(path);
+        }
+        // Keep SQL navigation in RAM. It is never copied into AI memory or
+        // persisted again after AI activation, even after returning to SQL.
+        self.ai_active = true;
+    }
+}
+
+fn recoverable_readline_error(error: &ReadlineError) -> bool {
+    matches!(error, ReadlineError::Io(error) if matches!(error.kind(),
+        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut))
 }
 
 fn usable_query_id(id: &str) -> bool {
@@ -426,17 +446,16 @@ impl Session {
         let mut rl = Editor::<CliHelper, DefaultHistory>::with_config(config)?;
         rl.set_helper(Some(CliHelper::new(self.keywords.clone())));
         let history_path = get_history_path();
-        let mut disk_history = self.settings.save_history && mode == InteractionMode::Sql;
-        if disk_history {
+        let mut history = HistoryPolicy {
+            ai_active: mode != InteractionMode::Sql,
+        };
+        if history.saves_to_disk(self.settings.save_history) {
             let _ = rl.load_history(&history_path);
         }
         if mode != InteractionMode::Sql {
             crate::trace::protect_ai_payloads();
         }
         'repl: loop {
-            if !self.settings.save_history {
-                disk_history = false;
-            }
             let mode = self.agent.as_ref().unwrap().mode;
             rl.helper_mut().unwrap().set_mode(mode);
             let prompt = self.prompt(mode).await;
@@ -450,6 +469,9 @@ impl Session {
                 Err(ReadlineError::Eof) => break,
                 Err(error) => {
                     eprintln!("input error: {error}");
+                    if recoverable_readline_error(&error) {
+                        continue;
+                    }
                     break;
                 }
             };
@@ -490,7 +512,7 @@ impl Session {
                     continue;
                 }
                 Input::Question(question) => {
-                    self.ask_agent(question, &mut rl, &history_path, &mut disk_history)
+                    self.ask_agent(question, &mut rl, &history_path, &mut history)
                         .await;
                     continue;
                 }
@@ -512,10 +534,10 @@ impl Session {
                                             if !self.confirm_ai_sharing(&mut rl) {
                                                 continue;
                                             }
-                                            suspend_history(
+                                            history.activate_ai(
                                                 &mut rl,
                                                 &history_path,
-                                                &mut disk_history,
+                                                self.settings.save_history,
                                             );
                                             crate::trace::protect_ai_payloads();
                                         }
@@ -549,7 +571,7 @@ impl Session {
                             if argument.is_empty() {
                                 eprintln!("Usage: !ask <question>");
                             } else {
-                                self.ask_agent(argument, &mut rl, &history_path, &mut disk_history)
+                                self.ask_agent(argument, &mut rl, &history_path, &mut history)
                                     .await;
                             }
                             continue;
@@ -568,10 +590,7 @@ impl Session {
                         }
                         "context" if argument == "clear" => {
                             self.agent.as_mut().unwrap().clear();
-                            // Clearing AI context must never erase SQL-only history.
-                            if !disk_history {
-                                rl.clear_history()?;
-                            }
+                            // Query/dialogue memory is separate from SQL navigation.
                             println!("Query memory and conversation cleared.");
                             continue;
                         }
@@ -601,9 +620,7 @@ impl Session {
                 Input::Sql(_) => self.append_query(&line),
             };
             for query in queries {
-                if !query.trim_start().starts_with('!')
-                    && !matches!(query.trim(), "exit" | "quit")
-                    && !crate::agent::privacy::sensitive(&query)
+                if !query.trim_start().starts_with('!') && !matches!(query.trim(), "exit" | "quit")
                 {
                     let _ =
                         rl.add_history_entry(format!("{}{}", query, self.settings.sql_delimiter));
@@ -630,7 +647,7 @@ impl Session {
                 }
             }
         }
-        if disk_history && self.settings.save_history {
+        if history.saves_to_disk(self.settings.save_history) {
             let _ = rl.save_history(&history_path);
         }
         self.agent = None;
@@ -651,7 +668,7 @@ impl Session {
             return true;
         }
         let backend = self.agent.as_ref().unwrap().consent_backend_label();
-        let prompt = format!("Allow AI data sharing with {backend} (questions and future AI-mode SQL/results/errors; external agents may access files and retain data)? [y/N] ");
+        let prompt = format!("Allow AI data sharing with {backend} (questions and selected cached/future AI-mode SQL/results/errors; external agents may access files and retain data)? [y/N] ");
         match rl.readline(&prompt) {
             Ok(answer) if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") => {
                 self.agent.as_mut().unwrap().approve_sharing();
@@ -669,12 +686,12 @@ impl Session {
         question: &str,
         rl: &mut Editor<CliHelper, DefaultHistory>,
         history_path: &str,
-        disk_history: &mut bool,
+        history: &mut HistoryPolicy,
     ) {
         if !self.confirm_ai_sharing(rl) {
             return;
         }
-        suspend_history(rl, history_path, disk_history);
+        history.activate_ai(rl, history_path, self.settings.save_history);
         crate::trace::protect_ai_payloads();
         let progress = AiProgress::new();
         let cancel = wait_for_interrupt(self.interrupted.clone());
@@ -822,22 +839,10 @@ impl Session {
                 }
             }
             let agent = self.agent.as_mut().unwrap();
-            if !record
-                .preview
-                .columns
-                .iter()
-                .any(|(name, _)| crate::agent::privacy::sensitive(name))
-                && !record
-                    .error
-                    .as_deref()
-                    .is_some_and(crate::agent::privacy::sensitive)
-            {
-                match agent.memory.push(record) {
-                    Some(id) => println!("[{id}] Query context cached. Use !context to inspect."),
-                    None => {
-                        eprintln!("Query context exceeded its memory budget and was not cached.")
-                    }
-                }
+            match agent.memory.push(record) {
+                Ok(id) => println!("[{id}] Query context cached. Use !context to inspect."),
+                Err(crate::agent::memory::CacheRejection::Sensitive) => eprintln!("Query context was not cached because it may contain credentials or sensitive data."),
+                Err(crate::agent::memory::CacheRejection::Budget) => eprintln!("Query context exceeded its memory budget and was not cached."),
             }
         }
         result
@@ -1224,6 +1229,54 @@ mod agent_boundary_tests {
             render_prompt("{database}", &info, InteractionMode::Sql),
             "default"
         );
+    }
+
+    #[test]
+    fn history_policy_keeps_navigation_but_stops_ai_disk_writes() {
+        use rustyline::history::History;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history");
+        let path = path.to_str().unwrap();
+        let mut editor = Editor::<CliHelper, DefaultHistory>::new().unwrap();
+        editor.add_history_entry("SELECT token FROM t;").unwrap();
+        editor.add_history_entry("CREATE STAGE typo;").unwrap();
+        let mut policy = HistoryPolicy { ai_active: false };
+        assert!(policy.saves_to_disk(true));
+        assert!(!policy.saves_to_disk(false));
+        assert!(policy.saves_to_disk(true)); // false -> true is not sticky.
+        policy.activate_ai(&mut editor, path, true);
+        assert_eq!(editor.history().len(), 2);
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("CREATE STAGE typo"));
+        editor.add_history_entry("SELECT private_ai_mode;").unwrap();
+        policy.activate_ai(&mut editor, path, true);
+        assert_eq!(editor.history().len(), 3);
+        assert!(!std::fs::read_to_string(path)
+            .unwrap()
+            .contains("private_ai_mode"));
+        assert!(!policy.saves_to_disk(true));
+    }
+
+    #[test]
+    fn transient_readline_errors_can_retry_without_spinning_on_a_dead_terminal() {
+        for kind in [
+            std::io::ErrorKind::Interrupted,
+            std::io::ErrorKind::WouldBlock,
+            std::io::ErrorKind::TimedOut,
+        ] {
+            assert!(recoverable_readline_error(&ReadlineError::Io(
+                std::io::Error::from(kind)
+            )));
+        }
+        for kind in [
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::NotConnected,
+        ] {
+            assert!(!recoverable_readline_error(&ReadlineError::Io(
+                std::io::Error::from(kind)
+            )));
+        }
     }
 
     #[test]

@@ -295,7 +295,10 @@ model = "second-model"
     async fn switching_preserves_query_evidence_but_resets_conversation() {
         let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut session = configured_session();
-        session.memory.push(memory::QueryRecord::new("SELECT 1"));
+        session
+            .memory
+            .push(memory::QueryRecord::new("SELECT 1"))
+            .unwrap();
         session.backend = Some(Box::new(FakeBackend {
             fail: false,
             requests: requests.clone(),

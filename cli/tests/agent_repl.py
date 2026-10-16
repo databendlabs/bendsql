@@ -199,6 +199,7 @@ class Terminal:
         self.finished = False
         self.startup_prompt = startup_prompt or f"{mode or 'sql'}> "
         self.startup_checked = False
+        self.bracketed_paste = env.get("TERM", "dumb") != "dumb"
 
     def expect(self, text):
         deadline = time.monotonic() + 15
@@ -229,6 +230,11 @@ class Terminal:
 
     def send(self, line, prompt="smart> "):
         os.write(self.fd, line.encode() + b"\r")
+        if self.bracketed_paste:
+            # SQL highlighting redraws the same prompt while typing. Wait for
+            # readline exit/re-entry, not an earlier redraw, before sending more.
+            self.expect("\x1b[?2004l")
+            self.expect("\x1b[?2004h")
         self.expect(prompt)
 
     def finish(self):
@@ -588,6 +594,11 @@ allow_external_agent = true
                     before_output = len(b"".join(terminal.transcript))
                     terminal.send("!ask future-metadata")
                     assert b"AI> " in b"".join(terminal.transcript)[before_output:]
+                    for question in ["future-tool-item", "future-tool-request"]:
+                        before_output = len(b"".join(terminal.transcript))
+                        terminal.send(f"!ask {question}")
+                        output = b"".join(terminal.transcript)[before_output:]
+                        assert b"AI error:" in output and b"AI> " not in output
                 terminal.send("!ask long-answer")
                 assert b"[Answer truncated at 8 KiB]" in b"".join(terminal.transcript)
                 terminal.send("!context clear")
@@ -1489,14 +1500,14 @@ def exercise_sql_compatibility_and_sharing_consent(executable, env, port):
             terminal.finish()
         history = os.path.join(home, ".bendsql_history")
         with open(history) as file: persisted = file.read()
-        assert "SELECT 123456" in persisted and "private-credential" not in persisted
+        assert "SELECT 123456" in persisted and "private-credential" in persisted
         logs = b""
         for directory, _, files in os.walk(home):
             for name in files:
                 if name.startswith("bendsql.log"):
                     with open(os.path.join(directory, name), "rb") as file: logs += file.read()
         assert b"SELECT 123456" in logs, "SQL-only --log-level must remain effective"
-        assert b"private-credential" not in logs
+        assert b"private-credential" in logs, "SQL-only logs match main; AI redaction must not affect them"
         with Terminal(executable, local, port, mode=None, startup_prompt=prompt) as terminal:
             terminal.expect(prompt)
             count = len(MockService.sql_requests)
@@ -1505,12 +1516,15 @@ def exercise_sql_compatibility_and_sharing_consent(executable, env, port):
             terminal.expect("\x1b[?2004h")
             terminal.expect(prompt)
             wait_http_count(MockService.sql_requests, count + 1)
-            assert MockService.sql_requests[-1] == "SELECT 123456"
+            assert MockService.sql_requests[-1] == "CREATE USER local_user IDENTIFIED BY 'private-credential'"
+            for statement in ["SELECT token FROM t;", "SELECT * FROM t WHERE sig=1;", "SELECT secret FROM vault;", "CREATE STAGE typo;", "ALTER USER alice;"]:
+                command(terminal, statement)
             # Bracketed paste exercises a statement larger than the removed 64 KiB cap.
             sql = "INSERT INTO bulk_input VALUES " + ",".join("('value')" for _ in range(9000)) + ";"
             payload = b"\x1b[200~" + sql.encode() + b"\x1b[201~\r"
             deadline = time.monotonic() + 20
-            while payload or len(MockService.sql_requests) < count + 2:
+            large_count = len(MockService.sql_requests)
+            while payload or len(MockService.sql_requests) < large_count + 1:
                 if time.monotonic() > deadline: raise AssertionError("Large SQL paste did not execute")
                 readable, writable, _ = select.select([terminal.fd], [terminal.fd] if payload else [], [], 0.1)
                 if readable:
@@ -1545,7 +1559,10 @@ def exercise_sql_compatibility_and_sharing_consent(executable, env, port):
             ]:
                 command(terminal, f"!sql {statement};")
             command(terminal, "!context")
-            assert b"Query context cached" not in b"".join(terminal.transcript)
+            output = b"".join(terminal.transcript)
+            assert b"Query context cached" not in output
+            assert b"may contain credentials or sensitive data" in output
+            assert b"exceeded its memory budget" not in output
             command(terminal, "SELECT 1;")
             command(terminal, "!ask approved-analysis")
             assert len(MockService.model_requests) == before + 1
@@ -1567,7 +1584,10 @@ def exercise_sql_compatibility_and_sharing_consent(executable, env, port):
             terminal.finish()
         with open(history) as file: persisted = file.read()
         assert "approved-analysis" not in persisted and "private-ai-question" not in persisted
-        assert "CREATE USER" not in persisted and "private-credential" not in persisted
+        assert "CREATE USER local_user" in persisted and "private-credential" in persisted
+        for statement in ["SELECT token FROM t", "sig=1", "SELECT secret FROM vault", "CREATE STAGE typo", "ALTER USER alice"]:
+            assert statement in persisted
+        assert "new_user" not in persisted and "secret_access_key" not in persisted.lower()
         # Explicitly disabling SQL history is supported independently of AI use.
         os.unlink(history)
         write_config(local, '[settings]\nsave_history=false', consent=False)
@@ -1576,6 +1596,43 @@ def exercise_sql_compatibility_and_sharing_consent(executable, env, port):
             terminal.send("SELECT 2;", "sql> ")
             terminal.finish()
         assert not os.path.exists(history)
+        # Re-enabling save_history in a SQL-only session takes effect again.
+        with Terminal(executable, local, port, mode=None) as terminal:
+            terminal.expect("sql> ")
+            terminal.send("!set save_history true", "sql> ")
+            terminal.send("SELECT token FROM t WHERE sig=1;", "sql> ")
+            terminal.finish()
+        with open(history) as file: assert "SELECT token FROM t WHERE sig=1" in file.read()
+        # AI activation preserves SQL navigation while keeping disk frozen.
+        os.unlink(history)
+        write_config(local, '[agent]\nbackend="env"', consent=False)
+        with Terminal(executable, local, port, mode=None) as terminal:
+            terminal.expect("sql> ")
+            terminal.send("SELECT secret FROM vault;", "sql> ")
+            os.write(terminal.fd, b"!ask hello\r")
+            terminal.expect("[y/N] ")
+            os.write(terminal.fd, b"y\r")
+            terminal.expect("AI> ")
+            terminal.expect("sql> ")
+            count = len(MockService.sql_requests)
+            os.write(terminal.fd, b"\x1b[A\r")
+            terminal.expect("\x1b[?2004l")
+            terminal.expect("\x1b[?2004h")
+            terminal.expect("sql> ")
+            wait_http_count(MockService.sql_requests, count + 1)
+            assert MockService.sql_requests[-1] == "SELECT secret FROM vault"
+            terminal.send("!set save_history false", "sql> ")
+            terminal.send("!set save_history true", "sql> ")
+            terminal.send("SELECT after_ai;", "sql> ")
+            terminal.finish()
+        with open(history) as file: assert "after_ai" not in file.read()
+        # Debug builds must handle a literal larger than the old large-stack
+        # workaround could parse. Batch SQL does not invoke a real database.
+        literal = "SELECT '" + "x" * (3 * 1024 * 1024) + "';\nSELECT 7;\n"
+        dsn = f"databend://root:@127.0.0.1:{port}/default?sslmode=disable&login=disable"
+        result = subprocess.run([executable, "--dsn", dsn, "--log-level", "off"], input=literal.encode(), env=local, capture_output=True, timeout=30)
+        assert result.returncode == 0, result.stderr[-1000:]
+        assert len(MockService.sql_requests[-2]) > 3 * 1024 * 1024 and MockService.sql_requests[-1] == "SELECT 7"
 
 
 def main():

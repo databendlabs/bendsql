@@ -197,6 +197,12 @@ impl QueryRecord {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum CacheRejection {
+    Sensitive,
+    Budget,
+}
+
 #[derive(Default)]
 pub struct Memory {
     records: VecDeque<(QueryRecord, usize)>,
@@ -205,7 +211,7 @@ pub struct Memory {
 }
 
 impl Memory {
-    pub fn push(&mut self, mut record: QueryRecord) -> Option<String> {
+    pub fn push(&mut self, mut record: QueryRecord) -> Result<String, CacheRejection> {
         if record.preview.sensitive
             || super::privacy::sensitive(&record.sql)
             || record
@@ -213,17 +219,17 @@ impl Memory {
                 .as_deref()
                 .is_some_and(super::privacy::sensitive)
         {
-            return None;
+            return Err(CacheRejection::Sensitive);
         }
-        self.next_id += 1;
-        record.id = format!("Q{}", self.next_id);
+        record.id = format!("Q{}", self.next_id + 1);
         let id = record.id.clone();
         let bytes = serde_json::to_vec(&record)
             .expect("query record is serializable")
             .len();
         if bytes > MAX_MEMORY_BYTES {
-            return None;
+            return Err(CacheRejection::Budget);
         }
+        self.next_id += 1;
         while self.records.len() >= MAX_RECORDS || self.bytes + bytes > MAX_MEMORY_BYTES {
             if let Some((_, size)) = self.records.pop_front() {
                 self.bytes -= size;
@@ -231,7 +237,7 @@ impl Memory {
         }
         self.bytes += bytes;
         self.records.push_back((record, bytes));
-        Some(id)
+        Ok(id)
     }
 
     pub fn clear(&mut self) {
@@ -312,18 +318,18 @@ mod tests {
     #[test]
     fn rejected_records_do_not_claim_ids_or_evict_existing_context() {
         let mut memory = Memory::default();
-        memory.push(QueryRecord::new("SELECT 1"));
+        memory.push(QueryRecord::new("SELECT 1")).unwrap();
         let original = memory.context("Q1", 4096);
         let mut huge = QueryRecord::new("SELECT 2");
         huge.error = Some("x".repeat(MAX_MEMORY_BYTES));
-        assert!(memory.push(huge).is_none());
+        assert_eq!(memory.push(huge), Err(CacheRejection::Budget));
         assert_eq!(memory.context("Q1", 4096), original);
         assert!(memory
             .push(QueryRecord::new("CREATE USER x IDENTIFIED BY 'private'"))
-            .is_none());
+            .is_err());
         let mut record = QueryRecord::new("SELECT * FROM users");
         record.preview.sensitive = true;
-        assert!(memory.push(record).is_none());
+        assert_eq!(memory.push(record), Err(CacheRejection::Sensitive));
         assert_eq!(memory.context("Q1", 4096), original);
     }
 
@@ -394,7 +400,7 @@ mod tests {
         for _ in 0..100 {
             let mut record = QueryRecord::new(&"\u{0000}".repeat(MAX_TEXT_BYTES));
             record.error = Some("\u{0000}".repeat(4096));
-            memory.push(record);
+            memory.push(record).unwrap();
         }
         assert!(memory.bytes <= MAX_MEMORY_BYTES);
         assert!(memory.records.len() < MAX_RECORDS);
@@ -409,7 +415,9 @@ mod tests {
     fn memory_eviction_references_and_clear() {
         let mut memory = Memory::default();
         for n in 0..25 {
-            memory.push(QueryRecord::new(&format!("SELECT {n}")));
+            memory
+                .push(QueryRecord::new(&format!("SELECT {n}")))
+                .unwrap();
         }
         assert_eq!(memory.records.len(), MAX_RECORDS);
         assert!(!memory.summary().contains("Q1:"));
@@ -419,9 +427,6 @@ mod tests {
         assert!(parsed.as_array().unwrap().iter().any(|v| v["id"] == "Q25"));
         memory.clear();
         assert_eq!(memory.context("Q6", 1000), "[]");
-        assert_eq!(
-            memory.push(QueryRecord::new("SELECT 1")),
-            Some("Q26".into())
-        );
+        assert_eq!(memory.push(QueryRecord::new("SELECT 1")), Ok("Q26".into()));
     }
 }

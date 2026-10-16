@@ -342,12 +342,17 @@ clean up the group and temporary directory. A malicious process can detach from
 its group; this cleanup is not containment, and abrupt termination of BendSQL
 cannot guarantee cleanup. On other platforms, use the HTTP backend.
 
-Pure SQL sessions load/save `~/.bendsql_history` and honor `--log-level`.
-`settings.save_history = false` disables disk history. Starting in an AI mode or
-activating AI stops disk history for the rest of the session; questions and consent
-responses are never history entries. SQL history is navigation only, not AI evidence.
-Known credential statements are excluded from new history. File logs omit AI payloads,
-sensitive statements and database payloads after AI activation; the logger remains active. Ephemeral/no-session flags request
+Pure SQL sessions load/save `~/.bendsql_history` and honor `--log-level` without
+AI sensitive-word filtering, including column names such as token/secret and DDL.
+`settings.save_history = false` disables disk history; true re-enables it unless
+AI has already been activated. Starting in an AI mode or activating AI stops disk
+writes for the rest of the session, but never clears in-memory SQL navigation.
+Questions and consent responses are not history entries. SQL history is navigation
+only, not AI evidence. AI memory still excludes known credentials independently.
+File logging is unchanged before AI; after activation, query/payload and credential
+values are masked without discarding diagnostic message structure, level or target.
+The logger remains active; authentication/connection messages without payload values
+remain useful. This is not a universal log DLP mechanism. Ephemeral/no-session flags request
 that Codex/Claude Code/Pi not save conversation history, but CLI diagnostics, managed
 settings and upstream service retention can still apply. `!context clear` removes local
 BendSQL context, not files or history previously retained by an external CLI/service.
@@ -513,7 +518,7 @@ Explicit commands are available in all three modes:
 | `!sql <SQL>` | Execute SQL explicitly; a trailing delimiter is not required. |
 | `!ask <question>` | Ask AI explicitly, without executing generated SQL. |
 | `!context` | List cached query IDs, status and preview completeness. |
-| `!context clear` | Clear query records, conversation and in-memory input history. |
+| `!context clear` | Clear query records and conversation, preserving SQL input navigation. |
 | `!help` | Show mode and command help. |
 
 SQL uses the existing execution and output paths, without rewriting it, injecting

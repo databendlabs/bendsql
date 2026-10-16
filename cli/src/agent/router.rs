@@ -29,12 +29,15 @@ pub enum Input<'a> {
 /// True only for whitespace or completely closed comments. Unclosed comments
 /// and string literals remain pending SQL, even if tokenization fails.
 pub fn comments_only(text: &str) -> bool {
-    // Only the first meaningful token matters. Do not parse an entire bulk
-    // statement just to learn that its first token is SELECT/INSERT, not a comment.
-    matches!(Tokenizer::new(text).next(), Some(Ok(token)) if token.kind == TokenKind::EOI)
+    SqlParser::comments_only(text)
 }
 
 fn statement_is_sql(text: &str) -> bool {
+    // Smart classification must not feed oversized tokens into the AST lexer.
+    // Explicit SQL mode still accepts them through the iterative splitter.
+    if text.len() > 16 * 1024 {
+        return false;
+    }
     let text = text.trim().strip_suffix("\\G").unwrap_or(text).trim();
     tokenize_sql(text).is_ok_and(|tokens| parse_sql(&tokens, Dialect::Experimental).is_ok())
 }
@@ -62,7 +65,11 @@ pub fn smart_input_is_safe(text: &str, delimiter: char, multi_line: bool) -> boo
 fn first_keyword(text: &str) -> String {
     // Tokenizer skips ordinary comments. A lexical failure is not a reason to
     // send an otherwise recognizable SQL statement to a model.
-    for token in Tokenizer::new(text) {
+    let mut end = text.len().min(256);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    for token in Tokenizer::new(&text[..end]) {
         match token {
             Ok(token) if token.kind == TokenKind::EOI => continue,
             Ok(token) => return token.text().to_ascii_uppercase(),

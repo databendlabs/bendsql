@@ -205,8 +205,10 @@ AI> ...
 SQL mode does not cache query data for AI. Pure SQL sessions retain their normal
 `~/.bendsql_history` and configured logging. First AI use requires confirmation;
 only subsequent smart/agent-mode queries enter memory, not earlier SQL history.
-AI activation stops disk history for the rest of that session. Use
-`!context` to inspect query memory and `!context clear` to reset it. Completion is
+AI activation stops disk history for the rest of that session, without clearing
+SQL navigation in memory. SQL-only history/logs retain their ordinary contents;
+use `save_history = false` / `--log-level off` when appropriate. Use `!context` to
+inspect AI memory and `!context clear` to reset it, not SQL input history. Completion is
 disabled in smart/agent mode, except for `!mode` choices. Batch and piped SQL do not
 invoke AI.
 

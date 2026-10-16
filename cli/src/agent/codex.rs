@@ -72,6 +72,14 @@ impl CodexServer {
     }
 }
 
+fn tool_like(kind: &str) -> bool {
+    let name = kind.to_ascii_lowercase().replace(['/', '_', '-'], "");
+    name.ends_with("change")
+        || ["toolcall", "execution", "filechange"]
+            .iter()
+            .any(|part| name.contains(part))
+}
+
 fn phase_name(phase: u8) -> &'static str {
     match phase {
         0 => "starting app-server",
@@ -275,7 +283,9 @@ impl Rpc {
             .as_str()
             .ok_or_else(|| anyhow!("Invalid Codex notification method"))?;
         if let Some(id) = frame.get("id") {
-            self.denied |= method.contains("requestApproval") || method == "item/tool/call";
+            self.denied |= method.contains("requestApproval")
+                || method == "item/tool/call"
+                || tool_like(method);
             let result = match method {
                 "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
                     Some(serde_json::json!({"decision":"cancel"}))
@@ -354,7 +364,8 @@ impl Rpc {
                 | "imageGeneration"
                 | "collabAgentToolCall",
             ) => self.denied = true,
-            Some(_) => {} // New passive metadata items do not grant capabilities.
+            Some(kind) if tool_like(kind) => self.denied = true,
+            Some(_) => {} // Unknown passive metadata never grants client capabilities.
             None => bail!("Codex returned an invalid item type"),
         }
         Ok(())
@@ -522,6 +533,28 @@ async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn future_tool_types_are_not_treated_as_passive_metadata() {
+        for kind in [
+            "newToolCall",
+            "futureExecution",
+            "futureFileChange",
+            "item/future-tool_call",
+            "COMMAND_EXECUTION",
+        ] {
+            assert!(tool_like(kind));
+        }
+        for kind in [
+            "newPassiveMetadata",
+            "exchangeRateMetadata",
+            "tokenCount",
+            "plan",
+            "reasoning",
+        ] {
+            assert!(!tool_like(kind));
+        }
+    }
 
     #[test]
     fn execution_policy_preserves_native_model_routing_without_credential_arguments() {
