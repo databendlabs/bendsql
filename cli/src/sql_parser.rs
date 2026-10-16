@@ -121,6 +121,175 @@ impl TaskBlockTracker {
     }
 }
 
+/// Iterative boundary scanner: large strings never enter Logos' recursive
+/// debug matcher. The scanner does not validate SQL or modify executed text.
+struct SplitTokens<'a> {
+    source: &'a str,
+    offset: usize,
+}
+
+#[derive(Clone, Copy)]
+enum SplitError {
+    IncompleteComment,
+    IncompleteLiteral,
+    Invalid,
+}
+
+impl<'a> SplitTokens<'a> {
+    fn new(source: &'a str) -> Self {
+        Self { source, offset: 0 }
+    }
+    fn token(&self, start: usize, kind: TokenKind) -> Token<'a> {
+        Token {
+            source: self.source,
+            kind,
+            span: (start..self.offset).into(),
+        }
+    }
+}
+
+impl<'a> Iterator for SplitTokens<'a> {
+    type Item = Result<Token<'a>, SplitError>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let bytes = self.source.as_bytes();
+        loop {
+            while self.offset < bytes.len() && bytes[self.offset].is_ascii_whitespace() {
+                self.offset += 1;
+            }
+            if self.offset == bytes.len() {
+                return None;
+            }
+            let start = self.offset;
+            if bytes[start..].starts_with(b"--") {
+                while self.offset < bytes.len() && !matches!(bytes[self.offset], b'\n' | b'\x0c') {
+                    self.offset += 1;
+                }
+                continue;
+            }
+            if bytes[start..].starts_with(b"/*") {
+                self.offset += 2;
+                while self.offset + 1 < bytes.len() && !bytes[self.offset..].starts_with(b"*/") {
+                    self.offset += 1;
+                }
+                if self.offset + 1 >= bytes.len() {
+                    self.offset = bytes.len();
+                    return Some(Err(SplitError::IncompleteComment));
+                }
+                self.offset += 2;
+                continue;
+            }
+            if bytes[start..].starts_with(b"$$") {
+                self.offset += 2;
+                while self.offset + 1 < bytes.len() && !bytes[self.offset..].starts_with(b"$$") {
+                    self.offset += 1;
+                }
+                if self.offset + 1 >= bytes.len() {
+                    self.offset = bytes.len();
+                    return Some(Err(SplitError::IncompleteLiteral));
+                }
+                self.offset += 2;
+                return Some(Ok(self.token(start, TokenKind::LiteralCodeString)));
+            }
+            let quote = bytes[start];
+            if matches!(quote, b'\'' | b'"' | b'`') {
+                self.offset += 1;
+                while self.offset < bytes.len() {
+                    match bytes[self.offset] {
+                        b'\\' if quote != b'`' => self.offset = (self.offset + 2).min(bytes.len()),
+                        c if c == quote => {
+                            self.offset += 1;
+                            if quote != b'`'
+                                && self.offset < bytes.len()
+                                && bytes[self.offset] == quote
+                            {
+                                self.offset += 1;
+                            } else {
+                                return Some(Ok(self.token(start, TokenKind::LiteralString)));
+                            }
+                        }
+                        _ => self.offset += 1,
+                    }
+                }
+                return Some(Err(SplitError::IncompleteLiteral));
+            }
+            if bytes[start] == b'@' {
+                self.offset += 1;
+                while self.offset < bytes.len() {
+                    let c = bytes[self.offset];
+                    if c == b'\\' && self.offset + 1 < bytes.len() {
+                        self.offset += 2;
+                    } else if c.is_ascii_whitespace()
+                        || matches!(c, b',' | b'`' | b';' | b'\'' | b'"' | b'(' | b')')
+                    {
+                        break;
+                    } else {
+                        self.offset += 1;
+                    }
+                }
+                if self.offset == start + 1 {
+                    return Some(Err(SplitError::Invalid));
+                }
+                return Some(Ok(self.token(start, TokenKind::LiteralAtString)));
+            }
+            if bytes[start].is_ascii_alphanumeric()
+                || matches!(bytes[start], b'_' | b'$')
+                || bytes[start] >= 128
+            {
+                self.offset += 1;
+                while self.offset < bytes.len()
+                    && (bytes[self.offset].is_ascii_alphanumeric()
+                        || matches!(bytes[self.offset], b'_' | b'$')
+                        || bytes[self.offset] >= 128)
+                {
+                    self.offset += 1;
+                }
+                let word = &self.source[start..self.offset];
+                let kind = if word.len() > 256 {
+                    TokenKind::Ident
+                } else {
+                    let mut end = (start + 256).min(bytes.len());
+                    while !self.source.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    match Tokenizer::new(&self.source[start..end]).next() {
+                        Some(Ok(token)) => {
+                            self.offset = start + token.span.end as usize;
+                            token.kind
+                        }
+                        _ if end < bytes.len()
+                            && word.len() == 1
+                            && matches!(bytes[start], b'x' | b'X' | b'e' | b'E' | b'r' | b'R')
+                            && bytes.get(self.offset) == Some(&b'\'') =>
+                        {
+                            // A bounded lexer window may end inside a prefixed
+                            // literal. Keep the prefix and let the iterative quote
+                            // scanner consume the complete original literal next.
+                            TokenKind::Ident
+                        }
+                        _ => return Some(Err(SplitError::Invalid)),
+                    }
+                };
+                return Some(Ok(self.token(start, kind)));
+            }
+            // Operators have bounded lookahead; no long literal reaches Logos.
+            let mut end = (start + 256).min(bytes.len());
+            while !self.source.is_char_boundary(end) {
+                end -= 1;
+            }
+            match Tokenizer::new(&self.source[start..end]).next() {
+                Some(Ok(token)) if token.kind != TokenKind::EOI => {
+                    self.offset += token.span.end as usize;
+                    return Some(Ok(self.token(start, token.kind)));
+                }
+                _ => {
+                    self.offset += self.source[start..].chars().next().unwrap().len_utf8();
+                    return Some(Err(SplitError::Invalid));
+                }
+            }
+        }
+    }
+}
+
 /// SQL parser utility for splitting SQL text into individual statements
 pub struct SqlParser {
     delimiter: char,
@@ -135,6 +304,10 @@ impl SqlParser {
             multi_line,
             is_repl,
         }
+    }
+
+    pub(crate) fn comments_only(text: &str) -> bool {
+        SplitTokens::new(text).next().is_none()
     }
 
     /// Parse SQL text and return a vector of individual SQL statements
@@ -176,7 +349,6 @@ impl SqlParser {
             }
             current_query.push_str(line);
 
-            // Parse the accumulated query to find statement boundaries
             let parsed = self.parse_statements(&current_query);
             for statement in parsed.statements {
                 queries.push(statement);
@@ -232,7 +404,6 @@ impl SqlParser {
         }
         query_buffer.push_str(line);
 
-        // Parse the accumulated query to find statement boundaries
         let parsed = self.parse_statements(query_buffer);
 
         *err = parsed.err;
@@ -243,181 +414,61 @@ impl SqlParser {
         parsed.statements
     }
 
-    /// Find the byte offset where an unclosed block comment (`/*`) begins.
-    /// Returns `None` if all block comments are properly closed.
-    /// Skips `--` line comments, `$$` dollar-quoted strings, and respects
-    /// single/double-quoted string literals.
-    /// Block comments are non-nested (matches tokenizer behaviour): the
-    /// first `*/` always closes the comment.
-    fn unclosed_block_comment_start(s: &str) -> Option<usize> {
-        let mut in_block_comment = false;
-        let mut open_pos = None;
-        let mut in_single_quote = false;
-        let mut in_double_quote = false;
-        let mut in_dollar_quote = false;
-        let mut in_line_comment = false;
-        let bytes = s.as_bytes();
-        let mut i = 0;
-        while i < bytes.len() {
-            let c = bytes[i];
-
-            // Newline resets line-comment state.
-            if c == b'\n' {
-                in_line_comment = false;
-                i += 1;
-                continue;
-            }
-            if in_line_comment {
-                i += 1;
-                continue;
-            }
-
-            // Inside a block comment, only look for `*/`.
-            if in_block_comment {
-                if c == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-                    in_block_comment = false;
-                    open_pos = None;
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-                continue;
-            }
-
-            // Inside a dollar-quoted string, only look for `$$`.
-            if in_dollar_quote {
-                if c == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'$' {
-                    in_dollar_quote = false;
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-                continue;
-            }
-
-            match c {
-                b'\'' if !in_double_quote => in_single_quote = !in_single_quote,
-                b'"' if !in_single_quote => in_double_quote = !in_double_quote,
-                b'$' if !in_single_quote
-                    && !in_double_quote
-                    && i + 1 < bytes.len()
-                    && bytes[i + 1] == b'$' =>
-                {
-                    in_dollar_quote = true;
-                    i += 2;
-                    continue;
-                }
-                b'-' if !in_single_quote
-                    && !in_double_quote
-                    && i + 1 < bytes.len()
-                    && bytes[i + 1] == b'-' =>
-                {
-                    in_line_comment = true;
-                    i += 2;
-                    continue;
-                }
-                b'/' if !in_single_quote
-                    && !in_double_quote
-                    && i + 1 < bytes.len()
-                    && bytes[i + 1] == b'*' =>
-                {
-                    in_block_comment = true;
-                    open_pos = Some(i);
-                    i += 2;
-                    continue;
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        if in_block_comment {
-            open_pos
-        } else {
-            None
-        }
-    }
-
-    /// Parse accumulated query text to extract complete statements
-    fn parse_statements(&self, query: &str) -> ParseResult {
-        // Split off the unclosed block-comment tail so the tokenizer only
-        // sees text it can handle.  Statements before the `/*` are still
-        // extracted normally; the comment portion stays in `remaining`.
-        let (to_parse, comment_tail) = match Self::unclosed_block_comment_start(query) {
-            Some(pos) => (&query[..pos], &query[pos..]),
-            None => (query, ""),
-        };
-
+    /// Split in one iterative scan with original byte spans. Incomplete literals
+    /// and comments stay in the caller's buffer, never partially executed.
+    pub(crate) fn parse_statements(&self, query: &str) -> ParseResult {
         let mut statements = Vec::new();
-        let mut remaining_query = to_parse.to_string();
+        let mut start = 0;
+        let mut valid = true;
         let mut err = String::new();
-
-        let delimiter_str = self.delimiter.to_string();
-
-        'Parser: loop {
-            let mut is_valid = true;
-            let tokenizer = Tokenizer::new(&remaining_query);
-            let mut previous_token_backslash = false;
-            let mut tracker = TaskBlockTracker::new();
-
-            for token in tokenizer {
-                match token {
-                    Ok(token) => {
-                        tracker.feed(&token, &delimiter_str);
-
-                        // SQL end with `;` or `\G` in repl
-                        let is_end_query = token.text() == delimiter_str;
-                        let is_slash_g = self.is_repl
-                            && (previous_token_backslash
-                                && token.kind == TokenKind::Ident
-                                && token.text() == "G")
-                            || (token.text().ends_with("\\G"));
-
-                        if is_end_query || is_slash_g {
-                            if tracker.in_block() {
-                                // Skip inner delimiters within the block.
-                                previous_token_backslash =
-                                    matches!(token.kind, TokenKind::Backslash);
-                                continue;
-                            }
-                            // Extract the statement and continue with remaining text
-                            let (sql, remain) = remaining_query.split_at(token.span.end as usize);
-                            if is_valid && !sql.is_empty() && sql.trim() != delimiter_str {
-                                let sql = sql.trim_end_matches(self.delimiter);
-                                statements.push(sql.trim().to_string());
-                            }
-                            remaining_query = remain.to_string();
-                            continue 'Parser;
-                        }
-                        previous_token_backslash = matches!(token.kind, TokenKind::Backslash);
-                    }
-                    Err(e) => {
-                        // ignore current query if have invalid token.
-                        is_valid = false;
-                        err = e.to_string();
-                        continue;
-                    }
+        let delimiter = self.delimiter.to_string();
+        let mut previous_backslash = false;
+        let mut tracker = TaskBlockTracker::new();
+        for token in SplitTokens::new(query) {
+            let token = match token {
+                Ok(token) => token,
+                Err(SplitError::IncompleteComment) => break,
+                Err(SplitError::IncompleteLiteral) => {
+                    err = "unable to recognize the rest tokens".into();
+                    break;
                 }
+                Err(SplitError::Invalid) => {
+                    valid = false;
+                    err = "unable to recognize the rest tokens".into();
+                    continue;
+                }
+            };
+            tracker.feed(&token, &delimiter);
+            let slash_g = self.is_repl
+                && previous_backslash
+                && token.kind == TokenKind::Ident
+                && token.text() == "G";
+            if (token.text() == delimiter || slash_g) && !tracker.in_block() {
+                let end = token.span.end as usize;
+                let sql = query[start..end].trim_end_matches(self.delimiter).trim();
+                if valid && !sql.is_empty() {
+                    statements.push(sql.to_owned());
+                }
+                start = end;
+                tracker = TaskBlockTracker::new();
+                valid = true;
+                previous_backslash = false;
+            } else {
+                previous_backslash = token.kind == TokenKind::Backslash;
             }
-            break;
         }
-
-        // Re-attach the unclosed comment tail so it keeps accumulating.
-        if !comment_tail.is_empty() {
-            remaining_query.push_str(comment_tail);
-        }
-
         ParseResult {
             statements,
-            remaining: remaining_query,
+            remaining: query[start..].to_owned(),
             err,
         }
     }
 }
 
-struct ParseResult {
-    statements: Vec<String>,
-    remaining: String,
-    err: String,
+pub(crate) struct ParseResult {
+    pub(crate) statements: Vec<String>,
+    pub(crate) remaining: String,
+    pub(crate) err: String,
 }
 
 /// Parse SQL text for web API (non-REPL mode)
@@ -429,6 +480,117 @@ pub fn parse_sql_for_web(sql_text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_lexer_does_not_drop_long_prefixed_literals() {
+        for prefix in ['x', 'X', 'e', 'E', 'r', 'R'] {
+            for length in [240, 252, 253, 254, 255, 256, 400, 8192, 3 * 1024 * 1024] {
+                let insert = format!(
+                    "INSERT INTO t VALUES ({prefix}'{}')",
+                    "ab".repeat(length / 2)
+                );
+                let input = format!("{insert}; SELECT 2;");
+                for multiline in [false, true] {
+                    for repl in [false, true] {
+                        let parser = SqlParser::new(';', multiline, repl);
+                        let parsed = parser.parse_statements(&input);
+                        assert!(parsed.err.is_empty(), "prefix={prefix} length={length}");
+                        assert_eq!(parsed.statements, [insert.clone(), "SELECT 2".into()]);
+                        let expected = if multiline {
+                            vec![insert.clone(), "SELECT 2".into()]
+                        } else {
+                            vec![input.clone()]
+                        };
+                        assert_eq!(parser.parse(&input), expected);
+                        let mut buffer = String::new();
+                        let mut error = String::new();
+                        assert_eq!(parser.parse_line(&input, &mut buffer, &mut error), expected);
+                        assert!(buffer.is_empty() && error.is_empty());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_token_diagnostic_matches_existing_sql_suite() {
+        let parser = SqlParser::new(';', true, false);
+        for input in [
+            "select * from 🥹;",
+            "explain select * from c where b in （'x');",
+        ] {
+            let mut buffer = String::new();
+            let mut error = String::new();
+            assert!(parser.parse_line(input, &mut buffer, &mut error).is_empty());
+            assert_eq!(error, "unable to recognize the rest tokens");
+        }
+    }
+
+    #[test]
+    fn large_quoted_sql_is_retained_and_split_without_a_ui_stack_overflow() {
+        let query = format!("SELECT '{}'; SELECT 2;", "x".repeat(3 * 1024 * 1024));
+        let parser = SqlParser::new(';', true, true);
+        let parsed = parser.parse_statements(&query);
+        assert!(parsed.err.is_empty());
+        assert_eq!(parsed.statements.len(), 2);
+        assert!(parsed.statements[0].len() > 3 * 1024 * 1024);
+        assert_eq!(parsed.statements[1], "SELECT 2");
+    }
+
+    #[test]
+    fn large_literals_comments_and_multiline_input_use_constant_stack() {
+        let parser = SqlParser::new(';', true, true);
+        for literal in [
+            format!("'{}'", "中;\\G".repeat(200_000)),
+            format!("\"{}\"", "x;".repeat(600_000)),
+            format!("`{}`", "x;".repeat(600_000)),
+            format!("$${}$$", "x;".repeat(600_000)),
+        ] {
+            let sql = format!("SELECT {literal}; SELECT 2;");
+            let parsed = parser.parse_statements(&sql);
+            assert!(parsed.err.is_empty());
+            assert_eq!(
+                parsed.statements,
+                [format!("SELECT {literal}"), "SELECT 2".into()]
+            );
+        }
+        let mut buffer = String::new();
+        let mut error = String::new();
+        assert!(parser
+            .parse_line("SELECT '", &mut buffer, &mut error)
+            .is_empty());
+        for _ in 0..64 {
+            assert!(parser
+                .parse_line(&"x".repeat(50 * 1024), &mut buffer, &mut error)
+                .is_empty());
+        }
+        let statements = parser.parse_line("'; SELECT 3;", &mut buffer, &mut error);
+        assert_eq!(statements.len(), 2);
+        assert!(statements[0].len() > 3 * 1024 * 1024);
+        assert!(buffer.is_empty());
+        assert!(error.is_empty());
+        let sql = format!("SELECT 1; /* {}", "x".repeat(3 * 1024 * 1024));
+        let pending = parser.parse_statements(&sql);
+        assert_eq!(pending.statements, ["SELECT 1"]);
+        assert!(pending.remaining.starts_with(" /*"));
+    }
+
+    #[test]
+    fn escaped_quotes_and_comments_do_not_change_boundaries() {
+        let parser = SqlParser::new(';', true, true);
+        for text in [
+            r#"SELECT 'a\';b'; SELECT 2;"#,
+            "SELECT 'a'';b'; SELECT 2;",
+            r#"SELECT "a\";b"; SELECT 2;"#,
+            "SELECT `a;b`; SELECT 2;",
+            "SELECT $$a;b$$; SELECT 2;",
+            "SELECT 1 /* ; */; -- ;\n SELECT 2;",
+        ] {
+            let parsed = parser.parse_statements(text);
+            assert!(parsed.err.is_empty(), "{text}");
+            assert_eq!(parsed.statements.len(), 2, "{text}");
+        }
+    }
 
     #[test]
     fn test_task_script_block() {

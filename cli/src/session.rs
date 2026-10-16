@@ -17,6 +17,10 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::agent::memory::{bounded_text, QueryRecord};
+use crate::agent::progress::AiProgress;
+use crate::agent::router::{comments_only, smart_input_is_safe, Input};
+use crate::agent::{AgentSession, InteractionMode};
 use crate::ast::quote_string_in_box_display;
 use crate::ast::QueryKind;
 use crate::config::ExpandMode;
@@ -32,9 +36,9 @@ use anyhow::anyhow;
 use anyhow::Result;
 use async_recursion::async_recursion;
 use chrono::NaiveDateTime;
+use clap::ValueEnum;
 use databend_common_ast::parser::all_reserved_keywords;
-use databend_driver::{Client, Connection, LoadMethod, ServerStats, TryFromRow};
-use log::error;
+use databend_driver::{Client, Connection, ConnectionInfo, LoadMethod, ServerStats, TryFromRow};
 use once_cell::sync::Lazy;
 use rustyline::config::Builder;
 use rustyline::error::ReadlineError;
@@ -59,6 +63,92 @@ static VERSION_SHORT: Lazy<String> = Lazy::new(|| {
     }
 });
 
+/// Expand template tokens once. Connection values are literal data: a database
+/// called `{mode}` must not become a second template or change the mode label.
+fn render_prompt(template: &str, info: &ConnectionInfo, mode: InteractionMode) -> String {
+    let port = info.port.to_string();
+    let warehouse = info
+        .warehouse
+        .as_ref()
+        .map(|w| format!("({w})"))
+        .unwrap_or_else(|| format!("{}:{}", info.host, info.port));
+    let mut output = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        output.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let Some(end) = rest.find('}') else { break };
+        let value = match &rest[1..end] {
+            "mode" => mode.name(),
+            "host" => &info.host,
+            "user" => &info.user,
+            "port" => &port,
+            "catalog" => info.catalog.as_deref().unwrap_or("default"),
+            "database" => info.database.as_deref().unwrap_or("default"),
+            "warehouse" => &warehouse,
+            _ => &rest[..=end],
+        };
+        output.push_str(value);
+        rest = &rest[end + 1..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn get_history_path() -> String {
+    format!(
+        "{}/.bendsql_history",
+        std::env::var("HOME").unwrap_or_else(|_| ".".into())
+    )
+}
+
+struct HistoryPolicy {
+    ai_active: bool,
+}
+
+impl HistoryPolicy {
+    fn loads_from_disk(&self, enabled: bool) -> bool {
+        enabled
+    }
+
+    fn saves_to_disk(&self, enabled: bool) -> bool {
+        enabled && !self.ai_active
+    }
+
+    fn activate_ai(
+        &mut self,
+        rl: &mut Editor<CliHelper, DefaultHistory>,
+        path: &str,
+        enabled: bool,
+    ) {
+        if self.saves_to_disk(enabled) {
+            let _ = rl.save_history(path);
+        }
+        // Keep SQL navigation in RAM. It is never copied into AI memory or
+        // persisted again after AI activation, even after returning to SQL.
+        self.ai_active = true;
+    }
+}
+
+fn recoverable_readline_error(error: &ReadlineError) -> bool {
+    matches!(error, ReadlineError::Io(error) if matches!(error.kind(),
+        std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut))
+}
+
+fn usable_query_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 256
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
+async fn wait_for_interrupt(interrupted: Arc<AtomicBool>) {
+    while !interrupted.load(Ordering::SeqCst) {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 pub struct Session {
     client: Client,
     pub conn: Connection,
@@ -66,16 +156,22 @@ pub struct Session {
 
     settings: Settings,
     query: String,
-    sql_parser: SqlParser,
+    agent: Option<AgentSession>,
 
     server_handle: Option<JoinHandle<std::io::Result<()>>>,
 
     keywords: Option<Arc<sled::Db>>,
+    server_keywords_loaded: bool,
     interrupted: Arc<AtomicBool>,
 }
 
 impl Session {
-    pub async fn try_new(dsn: String, settings: Settings, is_repl: bool) -> Result<Self> {
+    pub async fn try_new(
+        dsn: String,
+        settings: Settings,
+        is_repl: bool,
+        initial_mode: InteractionMode,
+    ) -> Result<Self> {
         let client =
             Client::new(dsn.clone()).with_name(format!("bendsql/{}", VERSION_SHORT.as_str()));
         let conn = client.get_conn().await?;
@@ -136,30 +232,6 @@ impl Session {
                 }
                 db.apply_batch(batch)?;
             }
-            // server keywords
-            if !settings.no_auto_complete {
-                let rows = conn.query_iter(PROMPT_SQL).await;
-                match rows {
-                    Ok(mut rows) => {
-                        let mut count = 0;
-                        let mut batch = sled::Batch::default();
-                        while let Some(Ok(row)) = rows.next().await {
-                            let (w, t): (String, String) = row.try_into().unwrap();
-                            batch.insert(w.as_str(), t.as_str());
-                            count += 1;
-                            if count % 1000 == 0 {
-                                db.apply_batch(batch)?;
-                                batch = sled::Batch::default();
-                            }
-                        }
-                        db.apply_batch(batch)?;
-                        println!("Loaded {} auto complete keywords from server.", db.len());
-                    }
-                    Err(e) => {
-                        eprintln!("WARN: loading auto complete keywords failed: {e}");
-                    }
-                }
-            }
             keywords = Some(Arc::new(db));
         }
 
@@ -192,47 +264,76 @@ impl Session {
             .expect("Error setting Ctrl-C handler");
         }
 
-        // Create SQL parser with session settings
-        let sql_parser = SqlParser::new(settings.sql_delimiter, settings.multi_line, is_repl);
-
-        Ok(Self {
+        let mut session = Self {
             client,
             conn,
             is_repl,
             settings,
             query: String::new(),
-            sql_parser,
+            agent: None,
             keywords,
+            server_keywords_loaded: false,
             server_handle,
             interrupted,
-        })
+        };
+        if is_repl && initial_mode == InteractionMode::Sql {
+            session.load_server_keywords().await;
+        }
+        Ok(session)
     }
 
-    async fn prompt(&self) -> String {
+    /// Optional completion data: every failure is a warning and SQL stays usable.
+    async fn load_server_keywords(&mut self) {
+        if self.server_keywords_loaded || self.settings.no_auto_complete {
+            return;
+        }
+        let Some(db) = &self.keywords else {
+            return;
+        };
+        let mut rows = match self.conn.query_iter(PROMPT_SQL).await {
+            Ok(rows) => rows,
+            Err(_) => {
+                eprintln!("WARN: loading autocomplete keywords failed; SQL remains available.");
+                return;
+            }
+        };
+        let mut batch = sled::Batch::default();
+        let mut count = 0;
+        while let Some(row) = rows.next().await {
+            let parsed = row
+                .map_err(|_| ())
+                .and_then(|row| <(String, String)>::try_from(row).map_err(|_| ()));
+            let (word, category) = match parsed {
+                Ok(row) => row,
+                Err(_) => {
+                    eprintln!("WARN: invalid autocomplete data; SQL remains available.");
+                    return;
+                }
+            };
+            batch.insert(word.to_ascii_lowercase().as_str(), category.as_str());
+            count += 1;
+            if count % 1000 == 0 && db.apply_batch(std::mem::take(&mut batch)).is_err() {
+                eprintln!("WARN: saving autocomplete keywords failed; SQL remains available.");
+                return;
+            }
+        }
+        if db.apply_batch(batch).is_err() {
+            eprintln!("WARN: saving autocomplete keywords failed; SQL remains available.");
+            return;
+        }
+        self.server_keywords_loaded = true;
+        println!("Loaded {} auto complete keywords from server.", db.len());
+    }
+
+    async fn prompt(&self, mode: InteractionMode) -> String {
         if !self.query.trim().is_empty() {
-            "> ".to_owned()
+            render_prompt(
+                &self.settings.continuation_prompt,
+                &self.conn.info().await,
+                mode,
+            )
         } else {
-            let info = self.conn.info().await;
-            let mut prompt = self.settings.prompt.clone();
-            prompt = prompt.replace("{host}", &info.host);
-            prompt = prompt.replace("{user}", &info.user);
-            prompt = prompt.replace("{port}", &info.port.to_string());
-            if let Some(catalog) = &info.catalog {
-                prompt = prompt.replace("{catalog}", catalog);
-            } else {
-                prompt = prompt.replace("{catalog}", "default");
-            }
-            if let Some(database) = &info.database {
-                prompt = prompt.replace("{database}", database);
-            } else {
-                prompt = prompt.replace("{database}", "default");
-            }
-            if let Some(warehouse) = &info.warehouse {
-                prompt = prompt.replace("{warehouse}", &format!("({warehouse})"));
-            } else {
-                prompt = prompt.replace("{warehouse}", &format!("{}:{}", info.host, info.port));
-            }
-            format!("{} ", prompt.trim_end())
+            render_prompt(&self.settings.prompt, &self.conn.info().await, mode)
         }
     }
 
@@ -336,86 +437,294 @@ impl Session {
         Ok(())
     }
 
-    pub async fn handle_repl(&mut self) {
+    pub async fn handle_repl(
+        &mut self,
+        mode: InteractionMode,
+        config: crate::agent::config::AgentConfig,
+        backend: Option<String>,
+    ) -> Result<()> {
+        let mut agent = AgentSession::new(config, backend);
+        agent.mode = mode;
+        self.agent = Some(agent);
         let config = Builder::new()
             .completion_prompt_limit(10)
             .completion_type(CompletionType::List)
             .build();
-        let mut rl = Editor::<CliHelper, DefaultHistory>::with_config(config).unwrap();
-
+        let mut rl = Editor::<CliHelper, DefaultHistory>::with_config(config)?;
         rl.set_helper(Some(CliHelper::new(self.keywords.clone())));
-        rl.load_history(&get_history_path()).ok();
-
-        'F: loop {
-            match rl.readline(&self.prompt().await) {
-                Ok(line) => {
-                    let queries = self.append_query(&line);
-                    for query in queries {
-                        if !query.starts_with('!') {
-                            let _ = rl.add_history_entry(format!(
-                                "{}{}",
-                                query, self.settings.sql_delimiter
-                            ));
-                        }
-
-                        match self.handle_query(true, &query).await {
-                            Ok(None) => {
-                                break 'F;
-                            }
-                            Ok(Some(_)) => {}
-                            Err(e) => {
-                                if e.to_string().contains("Unauthenticated") {
-                                    if let Err(e) = self.reconnect().await {
-                                        eprintln!("reconnect error: {e}");
-                                    } else if let Err(e) = self.handle_query(true, &query).await {
-                                        eprintln!("error: {e}");
-                                    }
-                                } else {
-                                    eprintln!("error: {e}");
-                                    if e.to_string().contains(INTERRUPTED_MESSAGE) {
-                                        if let Some(query_id) = self.conn.last_query_id() {
-                                            println!("killing query: {query_id}");
-                                            let _ = self.conn.kill_query(&query_id).await;
-                                        }
-                                    }
-                                    self.query.clear();
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => match e {
-                    ReadlineError::Io(err) => {
-                        eprintln!("io err: {err}");
-                    }
-                    ReadlineError::Interrupted => {
-                        self.query.clear();
-                        println!("^C");
-                    }
-                    ReadlineError::Eof => {
-                        break;
-                    }
-                    #[cfg(unix)]
-                    ReadlineError::Errno(err) => {
-                        error!("Unix err: {err}");
-                        break;
-                    }
-                    #[cfg(windows)]
-                    ReadlineError::SystemError(err) => {
-                        error!("Windows err: {err}");
-                        break;
-                    }
-                    _ => {}
-                },
-            }
+        let history_path = get_history_path();
+        let mut history = HistoryPolicy {
+            ai_active: mode != InteractionMode::Sql,
+        };
+        if history.loads_from_disk(self.settings.save_history) {
+            let _ = rl.load_history(&history_path);
         }
-        // save history first to avoid loss data.
-        let _ = rl.save_history(&get_history_path());
-        if let Err(e) = self.conn.close().await {
-            println!("got error when closing session: {e}");
+        if mode != InteractionMode::Sql {
+            crate::trace::protect_ai_payloads();
+        }
+        // Normal exits and errors share the same history-save and close path.
+        let result = self.repl_loop(&mut rl, &history_path, &mut history).await;
+        if history.saves_to_disk(self.settings.save_history) {
+            let _ = rl.save_history(&history_path);
+        }
+        self.agent = None;
+        self.query.clear();
+        if let Err(error) = self.conn.close().await {
+            eprintln!("got error when closing session: {error}");
         }
         println!("Bye~");
+        result
+    }
+
+    async fn repl_loop(
+        &mut self,
+        rl: &mut Editor<CliHelper, DefaultHistory>,
+        history_path: &str,
+        history: &mut HistoryPolicy,
+    ) -> Result<()> {
+        'repl: loop {
+            let mode = self.agent.as_ref().unwrap().mode;
+            rl.helper_mut().unwrap().set_mode(mode);
+            let prompt = self.prompt(mode).await;
+            let line = match rl.readline(&prompt) {
+                Ok(line) => line,
+                Err(ReadlineError::Interrupted) => {
+                    self.query.clear();
+                    self.interrupted.store(false, Ordering::SeqCst);
+                    continue;
+                }
+                Err(ReadlineError::Eof) => break,
+                Err(error) => {
+                    eprintln!("input error: {error}");
+                    if recoverable_readline_error(&error) {
+                        continue;
+                    }
+                    break;
+                }
+            };
+            self.interrupted.store(false, Ordering::SeqCst);
+            let input = if self.query.is_empty() {
+                mode.route(&line, self.settings.sql_delimiter)
+            } else if line.trim_start().starts_with('!') {
+                eprintln!("SQL is pending. Finish it or press Ctrl+C before using a command.");
+                continue;
+            } else {
+                Input::Sql(&line)
+            };
+            if matches!(input, Input::Sql(_)) {
+                let candidate = if self.query.is_empty() {
+                    line.clone()
+                } else {
+                    format!("{}\n{line}", self.query)
+                };
+                if comments_only(&candidate) {
+                    self.query.clear();
+                    continue;
+                }
+                if mode == InteractionMode::Smart
+                    && !smart_input_is_safe(
+                        &candidate,
+                        self.settings.sql_delimiter,
+                        self.settings.multi_line,
+                    )
+                {
+                    eprintln!("Ambiguous input. No SQL executed; finish valid SQL or use !sql or sql mode. Pending SQL is unchanged; Ctrl+C clears it.");
+                    continue;
+                }
+            }
+            let queries = match input {
+                Input::Empty => continue,
+                Input::Ambiguous => {
+                    eprintln!("Ambiguous input. No SQL executed. Use !sql <SQL>, !ask <question>, or select sql/agent mode.");
+                    continue;
+                }
+                Input::Question(question) => {
+                    self.ask_agent(question, rl, history_path, history).await;
+                    continue;
+                }
+                Input::Command(command) => {
+                    let (name, argument) = command
+                        .split_once(char::is_whitespace)
+                        .map_or((command, ""), |(name, rest)| (name, rest.trim()));
+                    let name = name.strip_prefix('!').unwrap_or(name);
+                    match name {
+                        "mode" => {
+                            if argument.is_empty() {
+                                println!("Current mode: {}. Options: sql | smart | agent. Use !mode <choice> or Tab to select.", mode.name());
+                            } else {
+                                match InteractionMode::from_str(argument, true) {
+                                    Ok(mode) => {
+                                        if mode == InteractionMode::Sql {
+                                            self.load_server_keywords().await;
+                                        } else {
+                                            if !self.confirm_ai_sharing(rl) {
+                                                continue;
+                                            }
+                                            history.activate_ai(
+                                                rl,
+                                                history_path,
+                                                self.settings.save_history,
+                                            );
+                                            crate::trace::protect_ai_payloads();
+                                        }
+                                        self.agent.as_mut().unwrap().mode = mode;
+                                        rl.helper_mut().unwrap().set_mode(mode);
+                                        println!("Switched to {} mode.", mode.name());
+                                    }
+                                    Err(_) => eprintln!("Usage: !mode sql|smart|agent"),
+                                }
+                            }
+                            continue;
+                        }
+                        "backend" => {
+                            let agent = self.agent.as_mut().unwrap();
+                            if argument.is_empty() {
+                                match agent.backend_summary() {
+                                    Ok(summary) => println!("{summary}"),
+                                    Err(error) => eprintln!("AI configuration error: {error}"),
+                                }
+                            } else {
+                                match agent.select_backend(argument) {
+                                    Ok(()) => {
+                                        println!("Backend switched. Conversation reset; query memory retained.");
+                                    }
+                                    Err(error) => eprintln!("Backend unchanged: {error}"),
+                                }
+                            }
+                            continue;
+                        }
+                        "ask" => {
+                            if argument.is_empty() {
+                                eprintln!("Usage: !ask <question>");
+                            } else {
+                                self.ask_agent(argument, rl, history_path, history).await;
+                            }
+                            continue;
+                        }
+                        "sql" => {
+                            if argument.is_empty() {
+                                eprintln!("Usage: !sql <SQL>");
+                                continue;
+                            }
+                            SqlParser::new(
+                                self.settings.sql_delimiter,
+                                self.settings.multi_line,
+                                self.is_repl,
+                            )
+                            .parse(argument)
+                        }
+                        "context" if argument == "clear" => {
+                            self.agent.as_mut().unwrap().clear();
+                            // Query/dialogue memory is separate from SQL navigation.
+                            println!("Query memory and conversation cleared.");
+                            continue;
+                        }
+                        "context" if argument.is_empty() => {
+                            let summary = self.agent.as_ref().unwrap().memory.summary();
+                            println!(
+                                "{}",
+                                if summary.is_empty() {
+                                    "No cached queries.\n"
+                                } else {
+                                    &summary
+                                }
+                            );
+                            continue;
+                        }
+                        "context" => {
+                            eprintln!("Usage: !context [clear]");
+                            continue;
+                        }
+                        "help" => {
+                            println!("{}", crate::agent::HELP);
+                            continue;
+                        }
+                        _ => vec![command.to_owned()],
+                    }
+                }
+                Input::Sql(_) => self.append_query(&line),
+            };
+            for query in queries {
+                if !query.trim_start().starts_with('!') && !matches!(query.trim(), "exit" | "quit")
+                {
+                    let _ =
+                        rl.add_history_entry(format!("{}{}", query, self.settings.sql_delimiter));
+                }
+                if self.interrupted.load(Ordering::SeqCst) {
+                    eprintln!("Remaining SQL batch skipped after Ctrl+C.");
+                    self.query.clear();
+                    break;
+                }
+                match self.handle_query(true, &query).await {
+                    Ok(None) => break 'repl,
+                    Ok(Some(_)) => {}
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        if error.to_string().contains("Unauthenticated") {
+                            match self.reconnect().await {
+                                Ok(()) => eprintln!("Reconnected; the statement was not retried. Verify execution state before retrying writes."),
+                                Err(error) => eprintln!("reconnect error: {error}"),
+                            }
+                        }
+                        self.query.clear();
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn confirm_ai_sharing(&mut self, rl: &mut Editor<CliHelper, DefaultHistory>) -> bool {
+        if let Err(error) = self.agent.as_ref().unwrap().validate_config() {
+            eprintln!("AI error: {error}");
+            return false;
+        }
+        if self.agent.as_ref().unwrap().sharing_allowed() {
+            return true;
+        }
+        let backend = self.agent.as_ref().unwrap().consent_backend_label();
+        let prompt = format!("Allow AI data sharing with {backend} (questions and selected cached/future AI-mode SQL/results/errors; external agents may access files and retain data)? [y/N] ");
+        match rl.readline(&prompt) {
+            Ok(answer) if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") => {
+                self.agent.as_mut().unwrap().approve_sharing();
+                true
+            }
+            _ => {
+                eprintln!("AI data sharing not approved; no request sent.");
+                false
+            }
+        }
+    }
+
+    async fn ask_agent(
+        &mut self,
+        question: &str,
+        rl: &mut Editor<CliHelper, DefaultHistory>,
+        history_path: &str,
+        history: &mut HistoryPolicy,
+    ) {
+        if !self.confirm_ai_sharing(rl) {
+            return;
+        }
+        history.activate_ai(rl, history_path, self.settings.save_history);
+        crate::trace::protect_ai_payloads();
+        let progress = AiProgress::new();
+        let cancel = wait_for_interrupt(self.interrupted.clone());
+        let result = tokio::select! {
+            result = self.agent.as_mut().unwrap().ask(question) => Some(result),
+            _ = cancel => None,
+        };
+        // Join the ticker and erase its line before writing persistent output.
+        drop(progress);
+        match result {
+            Some(Ok(answer)) => print!(
+                "{}",
+                crate::agent::markdown::format_answer(&answer, self.settings.ai_output)
+            ),
+            Some(Err(error)) => eprintln!("AI error: {error}"),
+            None => eprintln!("AI request interrupted."),
+        }
     }
 
     pub async fn handle_reader<R: BufRead>(&mut self, r: R) -> Result<()> {
@@ -463,7 +772,15 @@ impl Session {
     pub fn append_query(&mut self, line: &str) -> Vec<String> {
         // Use the SQL parser to parse the line incrementally
         let mut err = String::new();
-        let queries = self.sql_parser.parse_line(line, &mut self.query, &mut err);
+        let parser = SqlParser::new(
+            self.settings.sql_delimiter,
+            self.settings.multi_line,
+            self.is_repl,
+        );
+        let queries = parser.parse_line(line, &mut self.query, &mut err);
+        if self.agent.is_some() && comments_only(&self.query) {
+            self.query.clear();
+        }
 
         if self.query.is_empty() && queries.is_empty() && !err.is_empty() {
             eprintln!("Parser '{}' failed\nwith error '{}'", line, err);
@@ -486,11 +803,106 @@ impl Session {
         is_repl: bool,
         raw_query: &str,
     ) -> Result<Option<ServerStats>> {
+        if self.agent.is_some() && self.interrupted.load(Ordering::SeqCst) {
+            return Err(anyhow!(INTERRUPTED_MESSAGE));
+        }
+        let is_command =
+            raw_query.trim_start().starts_with('!') || matches!(raw_query.trim(), "exit" | "quit");
+        let mut record = (self
+            .agent
+            .as_ref()
+            .is_some_and(AgentSession::captures_queries)
+            && !is_command
+            && !crate::agent::privacy::sensitive(raw_query)
+            && !matches!(QueryKind::from(raw_query), QueryKind::AlterUserPassword))
+        .then(|| QueryRecord::new(raw_query));
+        let previous_id = self.conn.last_query_id();
+        let start = Instant::now();
+        if let Some(record) = &mut record {
+            let info = self.conn.info().await;
+            record.database = info.database.map(|v| bounded_text(v, 256).0);
+            record.warehouse = info.warehouse.map(|v| bounded_text(v, 256).0);
+        }
+        let result = self
+            .execute_query(is_repl, raw_query, record.as_mut())
+            .await;
+        let query_id = self
+            .conn
+            .last_query_id()
+            .filter(|id| Some(id) != previous_id.as_ref() && usable_query_id(id));
+        let interrupted = self.agent.is_some()
+            && !is_command
+            && result.is_err()
+            && self.interrupted.load(Ordering::SeqCst);
+        let cancel_request_sent = if interrupted {
+            self.cancel_current_query(query_id.as_deref()).await
+        } else {
+            false
+        };
+        if let Some(mut record) = record {
+            record.elapsed_ms = start.elapsed().as_millis();
+            record.query_id = query_id;
+            record.cancel_request_sent = cancel_request_sent;
+            match &result {
+                Ok(_) => {
+                    record.status = "success".into();
+                }
+                Err(error) => {
+                    record.error = Some(bounded_text(error, 4096).0);
+                    if self.interrupted.load(Ordering::SeqCst) {
+                        record.status = "interrupted".into();
+                    }
+                }
+            }
+            let agent = self.agent.as_mut().unwrap();
+            match agent.memory.push(record) {
+                Ok(id) => println!("[{id}] Query context cached. Use !context to inspect."),
+                Err(crate::agent::memory::CacheRejection::Sensitive) => eprintln!("Query context was not cached because it may contain credentials or sensitive data."),
+                Err(crate::agent::memory::CacheRejection::Budget) => eprintln!("Query context exceeded its memory budget and was not cached."),
+            }
+        }
+        result
+    }
+
+    async fn cancel_current_query(&self, query_id: Option<&str>) -> bool {
+        let Some(query_id) = query_id else {
+            eprintln!("No usable current Query ID: cancellation cannot be confirmed. The query may continue or commit; verify its state before retrying writes.");
+            return false;
+        };
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            self.conn.kill_query(query_id),
+        )
+        .await
+        {
+            Ok(Ok(())) => {
+                eprintln!("Cancellation request sent for {query_id}; this does not confirm server termination or rollback.");
+                true
+            }
+            Ok(Err(error)) => {
+                eprintln!("Query cancellation failed: {error}");
+                false
+            }
+            Err(_) => {
+                eprintln!("Cancellation request timed out; server execution state is unknown.");
+                false
+            }
+        }
+    }
+
+    async fn execute_query(
+        &mut self,
+        is_repl: bool,
+        raw_query: &str,
+        record: Option<&mut QueryRecord>,
+    ) -> Result<Option<ServerStats>> {
         let mut query = raw_query
             .trim_end_matches(self.settings.sql_delimiter)
             .trim();
         let mut expand = None;
-        self.interrupted.store(false, Ordering::SeqCst);
+        if self.agent.is_none() {
+            self.interrupted.store(false, Ordering::SeqCst);
+        }
 
         if is_repl {
             if query.starts_with('!') {
@@ -516,16 +928,30 @@ impl Session {
                 Ok(None)
             }
             other => {
-                let quote_string = !if self.settings.quote_string {
-                    false
+                // Avoid expensive presentation-only AST parsing on bulk SQL.
+                let quote_string = if query.len() > 8192 {
+                    self.settings.quote_string
                 } else {
-                    quote_string_in_box_display(query)
+                    !if self.settings.quote_string {
+                        false
+                    } else {
+                        quote_string_in_box_display(query)
+                    }
                 };
 
                 let data = match other {
                     QueryKind::Put(l, r) => self.conn.put_files(&l, &r).await?,
                     QueryKind::Get(l, r) => self.conn.get_files(&l, &r).await?,
                     QueryKind::GenData(t, s, o) => self.gendata(t, s, o).await?,
+                    _ if self.agent.is_some() => {
+                        tokio::select! {
+                            biased;
+                            _ = wait_for_interrupt(self.interrupted.clone()) => {
+                                return Err(anyhow!("{INTERRUPTED_MESSAGE} during query submission: server execution may continue; its state and Query ID may be unknown"));
+                            }
+                            data = self.conn.query_iter_ext(query) => data?,
+                        }
+                    }
                     _ => self.conn.query_iter_ext(query).await?,
                 };
 
@@ -537,7 +963,20 @@ impl Session {
                     data,
                     self.interrupted.clone(),
                 );
-                let stats = displayer.display(expand).await?;
+                if is_repl {
+                    displayer.enable_interrupt();
+                }
+                if record.is_some() {
+                    displayer.enable_capture();
+                }
+                let result = displayer.display(expand).await;
+                if let Some(record) = record {
+                    record.preview = displayer.take_preview(result.is_ok()).unwrap_or_default();
+                    if let Some(stats) = displayer.latest_stats() {
+                        record.set_stats(stats);
+                    }
+                }
+                let stats = result?;
                 self.show_query_id_if_needed();
                 Ok(Some(stats))
             }
@@ -718,17 +1157,160 @@ impl Session {
     }
 }
 
-fn get_history_path() -> String {
-    format!(
-        "{}/.bendsql_history",
-        std::env::var("HOME").unwrap_or_else(|_| ".".to_string())
-    )
-}
-
 impl Drop for Session {
     fn drop(&mut self) {
         if let Some(handle) = self.server_handle.take() {
             handle.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod agent_boundary_tests {
+    use super::*;
+
+    fn connection_info() -> ConnectionInfo {
+        ConnectionInfo {
+            handler: "REST".into(),
+            host: "localhost".into(),
+            port: 8000,
+            user: "root".into(),
+            database: Some("analytics".into()),
+            catalog: None,
+            warehouse: None,
+        }
+    }
+
+    #[test]
+    fn prompt_template_controls_the_complete_prompt_in_every_mode() {
+        let info = connection_info();
+        assert_eq!(
+            Settings::default().prompt,
+            "{user}@{warehouse}/{catalog}/{database}> "
+        );
+        assert_eq!(Settings::default().continuation_prompt, "> ");
+        for mode in [
+            InteractionMode::Sql,
+            InteractionMode::Smart,
+            InteractionMode::Agent,
+        ] {
+            assert_eq!(
+                render_prompt(&Settings::default().prompt, &info, mode),
+                "root@localhost:8000/default/analytics> "
+            );
+            assert_eq!(
+                render_prompt("🐳 @{database}:) ", &info, mode),
+                "🐳 @analytics:) "
+            );
+            assert_eq!(
+                render_prompt("🐳 @{database} [{mode}]:) ", &info, mode),
+                format!("🐳 @analytics [{}]:) ", mode.name())
+            );
+        }
+    }
+
+    #[test]
+    fn prompt_expansion_preserves_old_fields_and_literal_values() {
+        let mut info = connection_info();
+        assert_eq!(
+            render_prompt(
+                "{user}@{warehouse}/{catalog}/{database}:{port}/{host}",
+                &info,
+                InteractionMode::Sql
+            ),
+            "root@localhost:8000/default/analytics:8000/localhost"
+        );
+        info.warehouse = Some("compute".into());
+        info.catalog = Some("catalog".into());
+        info.database = Some("{mode}".into());
+        assert_eq!(
+            render_prompt(
+                "{warehouse}/{catalog}/{database}/{mode}/{unknown}",
+                &info,
+                InteractionMode::Smart
+            ),
+            "(compute)/catalog/{mode}/smart/{unknown}"
+        );
+        assert_eq!(
+            render_prompt("  {mode}>  ", &info, InteractionMode::Agent),
+            "  agent>  "
+        );
+        assert_eq!(render_prompt("", &info, InteractionMode::Agent), "");
+        assert_eq!(
+            render_prompt("literal {", &info, InteractionMode::Sql),
+            "literal {"
+        );
+        info.database = None;
+        assert_eq!(
+            render_prompt("{database}", &info, InteractionMode::Sql),
+            "default"
+        );
+    }
+
+    #[test]
+    fn history_policy_keeps_navigation_but_stops_ai_disk_writes() {
+        use rustyline::history::History;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history");
+        let path = path.to_str().unwrap();
+        let mut editor = Editor::<CliHelper, DefaultHistory>::new().unwrap();
+        editor.add_history_entry("SELECT token FROM t;").unwrap();
+        editor.add_history_entry("CREATE STAGE typo;").unwrap();
+        let mut policy = HistoryPolicy { ai_active: false };
+        assert!(policy.saves_to_disk(true));
+        assert!(!policy.saves_to_disk(false));
+        assert!(policy.saves_to_disk(true)); // false -> true is not sticky.
+        policy.activate_ai(&mut editor, path, true);
+        assert_eq!(editor.history().len(), 2);
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("CREATE STAGE typo"));
+        editor.add_history_entry("SELECT private_ai_mode;").unwrap();
+        policy.activate_ai(&mut editor, path, true);
+        assert_eq!(editor.history().len(), 3);
+        assert!(!std::fs::read_to_string(path)
+            .unwrap()
+            .contains("private_ai_mode"));
+        assert!(!policy.saves_to_disk(true));
+        assert!(policy.loads_from_disk(true));
+        assert!(!policy.loads_from_disk(false));
+    }
+
+    #[test]
+    fn transient_readline_errors_can_retry_without_spinning_on_a_dead_terminal() {
+        for kind in [
+            std::io::ErrorKind::Interrupted,
+            std::io::ErrorKind::WouldBlock,
+            std::io::ErrorKind::TimedOut,
+        ] {
+            assert!(recoverable_readline_error(&ReadlineError::Io(
+                std::io::Error::from(kind)
+            )));
+        }
+        for kind in [
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::NotConnected,
+        ] {
+            assert!(!recoverable_readline_error(&ReadlineError::Io(
+                std::io::Error::from(kind)
+            )));
+        }
+    }
+
+    #[test]
+    fn query_ids_are_never_truncated_or_used_as_arbitrary_paths() {
+        assert!(usable_query_id("1234-5678_abcd"));
+        for id in [
+            "",
+            "../other-query",
+            "q/kill",
+            "q?redirect",
+            "q#fragment",
+            "q\nsecret",
+            "q\u{001b}[31m",
+        ] {
+            assert!(!usable_query_id(id));
+        }
+        assert!(!usable_query_id(&"x".repeat(257)));
     }
 }
