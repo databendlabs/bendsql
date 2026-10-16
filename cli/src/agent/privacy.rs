@@ -59,6 +59,7 @@ pub(crate) fn sensitive(text: &str) -> bool {
     if std::iter::once(first).chain(words).any(|word| {
         KEYS.iter().any(|key| word.eq_ignore_ascii_case(key))
             || (ddl && (word.eq_ignore_ascii_case("USER") || word.eq_ignore_ascii_case("STAGE")))
+            || sensitive_compound(word)
     }) {
         return true;
     }
@@ -69,6 +70,94 @@ pub(crate) fn sensitive(text: &str) -> bool {
             .next()
             .is_some_and(|authority| authority.contains('@'))
     })
+}
+
+/// Compound identifiers such as `password_hash`, `user_api_key` or `apiToken`.
+/// `KEY` and `TOKEN` alone are too common (`primary_key`, `token_count`), so they
+/// only count when paired with a qualifier or as the trailing name component.
+fn sensitive_compound(word: &str) -> bool {
+    // Sensitive wherever they appear in a compound name.
+    const ANYWHERE: &[&str] = &[
+        "PASSWORD",
+        "PASSWORDS",
+        "PASSWD",
+        "PWD",
+        "PASSPHRASE",
+        "SECRET",
+        "SECRETS",
+        "CREDENTIAL",
+        "CREDENTIALS",
+        "APIKEY",
+        "APIKEYS",
+        "ACCESSKEY",
+        "SECRETKEY",
+        "PRIVATEKEY",
+        "AUTHORIZATION",
+        "BEARER",
+    ];
+    // Sensitive as adjacent components, e.g. `api_key`, `privateKeyPem`.
+    const PAIRS: &[(&str, &str)] = &[
+        ("API", "KEY"),
+        ("API", "KEYS"),
+        ("ACCESS", "KEY"),
+        ("ACCESS", "KEYS"),
+        ("AWS", "KEY"),
+        ("PRIVATE", "KEY"),
+        ("ACCOUNT", "KEY"),
+        ("SIGNING", "KEY"),
+        ("ENCRYPTION", "KEY"),
+        ("MASTER", "KEY"),
+        ("SESSION", "KEY"),
+        ("AUTH", "KEY"),
+        ("SSH", "KEY"),
+        ("TOKEN", "VALUE"),
+        ("TOKEN", "HASH"),
+    ];
+    // Sensitive as the final component: `auth_token`, but not `token_count`.
+    const TRAILING: &[&str] = &["TOKEN", "SIGNATURE", "SIG"];
+    let is = |part: &str, keys: &[&str]| keys.iter().any(|key| part.eq_ignore_ascii_case(key));
+    let mut previous = "";
+    let mut last = "";
+    let mut parts = 0;
+    let found = for_each_component(word, |part| {
+        let hit = is(part, ANYWHERE)
+            || PAIRS
+                .iter()
+                .any(|(a, b)| previous.eq_ignore_ascii_case(a) && part.eq_ignore_ascii_case(b));
+        previous = part;
+        last = part;
+        parts += 1;
+        hit
+    });
+    found || (parts > 1 && is(last, TRAILING))
+}
+
+/// Visits `snake_case` and `camelCase` components; stops early when `visit` is true.
+/// Callers pass ASCII-alphanumeric words, so byte boundaries are char boundaries.
+fn for_each_component<'a>(word: &'a str, mut visit: impl FnMut(&'a str) -> bool) -> bool {
+    for piece in word.split('_').filter(|piece| !piece.is_empty()) {
+        let bytes = piece.as_bytes();
+        let mut start = 0;
+        for i in 1..bytes.len() {
+            let (before, current) = (bytes[i - 1], bytes[i]);
+            // `apiKey` -> api|Key, `APIKey` -> API|Key.
+            let boundary = current.is_ascii_uppercase()
+                && (before.is_ascii_lowercase()
+                    || before.is_ascii_digit()
+                    || (before.is_ascii_uppercase()
+                        && bytes.get(i + 1).is_some_and(u8::is_ascii_lowercase)));
+            if boundary {
+                if visit(&piece[start..i]) {
+                    return true;
+                }
+                start = i;
+            }
+        }
+        if visit(&piece[start..]) {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -89,5 +178,43 @@ mod tests {
         ] { assert!(sensitive(sql), "{sql}"); }
         assert!(!sensitive("SELECT count(*) FROM orders"));
         assert!(!sensitive("SELECT token_count FROM usage_stats"));
+    }
+
+    #[test]
+    fn compound_identifiers_are_excluded() {
+        for sql in [
+            "SELECT password_hash FROM users",
+            "SELECT id, user_api_key FROM accounts",
+            "SELECT aws_secret FROM settings",
+            "SELECT github_token FROM integrations",
+            "SELECT \"apiKey\", \"passwordHash\" FROM t",
+            "SELECT \"APIKey\" FROM t",
+            "SELECT private_key_pem FROM certs",
+            "SELECT db_pwd FROM legacy",
+            "SELECT request_signature FROM webhooks",
+            "SELECT token_hash FROM sessions",
+            "SELECT s3_access_key_id FROM stages",
+        ] {
+            assert!(sensitive(sql), "{sql}");
+        }
+        // Column names are checked one identifier at a time.
+        for column in [
+            "password_hash",
+            "user_api_key",
+            "aws_secret",
+            "refreshToken",
+        ] {
+            assert!(sensitive(column), "{column}");
+        }
+        for benign in [
+            "SELECT token_count, max_tokens, input_tokens FROM usage",
+            "SELECT primary_key, sort_key, cache_key, public_key FROM t",
+            "SELECT keyword, tokenizer, signal FROM t",
+            "SELECT o.order_key, sum(price) FROM orders o GROUP BY 1",
+            "token_count",
+            "partition_key",
+        ] {
+            assert!(!sensitive(benign), "{benign}");
+        }
     }
 }

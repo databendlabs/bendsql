@@ -26,7 +26,14 @@ pub(super) struct CodexServer {
     model: Option<String>,
     env: BTreeMap<OsString, OsString>,
     phase: Arc<AtomicU8>,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    version_checked: tokio::sync::OnceCell<()>,
 }
+
+/// First release accepting every app-server policy override in `policy_args`;
+/// 0.144.x and older reject `agents.enabled=false` at startup.
+#[cfg(unix)]
+const MIN_CODEX_VERSION: (u64, u64, u64) = (0, 145, 0);
 
 impl CodexServer {
     pub fn new(
@@ -39,6 +46,7 @@ impl CodexServer {
             model,
             env,
             phase: Arc::new(AtomicU8::new(0)),
+            version_checked: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -53,6 +61,14 @@ impl CodexServer {
         if input.len() > 256 * 1024 {
             bail!("Codex context exceeds the 256 KiB limit");
         }
+        // Checked once per backend before any context leaves BendSQL. Failures are
+        // not cached, so upgrading Codex takes effect on the next question.
+        self.version_checked
+            .get_or_try_init(|| async {
+                let output = version_output(&self.executable, &self.env).await?;
+                check_version(&output)
+            })
+            .await?;
         let token = CancellationToken::new();
         let worker_token = token.clone();
         let executable = self.executable.clone();
@@ -78,6 +94,55 @@ fn tool_like(kind: &str) -> bool {
         || ["toolcall", "execution", "filechange"]
             .iter()
             .any(|part| name.contains(part))
+}
+
+#[cfg(unix)]
+async fn version_output(
+    executable: &std::path::Path,
+    env: &BTreeMap<OsString, OsString>,
+) -> Result<Vec<u8>> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let mut command = tokio::process::Command::new(executable);
+    command
+        .arg("--version")
+        .env_clear()
+        .envs(env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    // Keep terminal signals for BendSQL; dropping the future kills the probe.
+    command.as_std_mut().process_group(0);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
+        .await
+        .map_err(|_| anyhow!("Timed out checking the Codex CLI version; context was not sent. SQL remains available."))?
+        .map_err(|_| anyhow!("Cannot start Codex CLI to check its version; context was not sent. SQL remains available."))?;
+    if !output.status.success() {
+        bail!("Codex CLI version check failed; context was not sent. SQL remains available.");
+    }
+    Ok(output.stdout)
+}
+
+/// Keep prerelease precedence: 0.145.0-alpha.1 is older than stable 0.145.0.
+#[cfg(unix)]
+fn parse_version(text: &str) -> Option<semver::Version> {
+    text.split_whitespace()
+        .find_map(|word| semver::Version::parse(word.trim_start_matches('v')).ok())
+}
+
+#[cfg(unix)]
+fn check_version(output: &[u8]) -> Result<()> {
+    let (major, minor, patch) = MIN_CODEX_VERSION;
+    let minimum = format!("{major}.{minor}.{patch}");
+    let upgrade = "Upgrade Codex (for example `npm install -g @openai/codex@latest`) or select another backend with !backend. Context was not sent; SQL remains available.";
+    let Some(found) = std::str::from_utf8(output).ok().and_then(parse_version) else {
+        bail!("Cannot determine the Codex CLI version; BendSQL requires Codex {minimum} or newer. {upgrade}");
+    };
+    if found < semver::Version::new(major, minor, patch) {
+        bail!("Codex CLI {found} is not supported; BendSQL requires Codex {minimum} or newer. {upgrade}");
+    }
+    Ok(())
 }
 
 fn phase_name(phase: u8) -> &'static str {
@@ -620,6 +685,42 @@ TOKEN = "private-secret"
         ] {
             assert!(identifier(&id).is_err());
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_version_gate_rejects_old_and_unknown_versions() {
+        use super::{check_version, parse_version};
+        assert_eq!(
+            parse_version("codex-cli 0.154.0\n"),
+            Some(semver::Version::new(0, 154, 0))
+        );
+        assert_eq!(
+            parse_version("codex-cli 0.155.0-alpha.1"),
+            Some(semver::Version::parse("0.155.0-alpha.1").unwrap())
+        );
+        assert_eq!(parse_version("codex 1.2"), None);
+        for ok in [
+            "codex-cli 0.145.0",
+            "codex-cli 0.145.0+build.1",
+            "codex-cli 0.154.0",
+            "codex-cli 0.155.0-alpha.1",
+            "codex-cli 1.0.0",
+        ] {
+            assert!(check_version(ok.as_bytes()).is_ok(), "{ok}");
+        }
+        for old in [
+            "codex-cli 0.142.5",
+            "codex-cli 0.144.6",
+            "codex-cli 0.145.0-alpha.1",
+            "codex-cli 0.145.0-rc.1",
+        ] {
+            let error = check_version(old.as_bytes()).unwrap_err().to_string();
+            assert!(error.contains("requires Codex 0.145.0 or newer"), "{error}");
+            assert!(error.contains("Context was not sent"), "{error}");
+        }
+        assert!(check_version(b"unexpected output").is_err());
+        assert!(check_version(&[0xff, 0xfe]).is_err());
     }
 
     #[cfg(unix)]

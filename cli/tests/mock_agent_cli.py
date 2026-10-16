@@ -104,6 +104,10 @@ def codex_app_server():
 
 
 def main():
+    if "--version" in sys.argv:
+        # BendSQL gates Codex on its version before sending context.
+        print("codex-cli 0.144.6" if os.environ.get("CLI_TEST_OLD") else "codex-cli 0.154.0")
+        return
     if "app-server" in sys.argv:
         codex_app_server()
         return

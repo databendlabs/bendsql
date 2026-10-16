@@ -256,6 +256,16 @@ impl<'a> Iterator for SplitTokens<'a> {
                             self.offset = start + token.span.end as usize;
                             token.kind
                         }
+                        _ if end < bytes.len()
+                            && word.len() == 1
+                            && matches!(bytes[start], b'x' | b'X' | b'e' | b'E' | b'r' | b'R')
+                            && bytes.get(self.offset) == Some(&b'\'') =>
+                        {
+                            // A bounded lexer window may end inside a prefixed
+                            // literal. Keep the prefix and let the iterative quote
+                            // scanner consume the complete original literal next.
+                            TokenKind::Ident
+                        }
                         _ => return Some(Err(SplitError::Invalid)),
                     }
                 };
@@ -300,11 +310,6 @@ impl SqlParser {
         SplitTokens::new(text).next().is_none()
     }
 
-    fn may_finish(&self, line: &str) -> bool {
-        line.contains(self.delimiter)
-            || (self.is_repl && (line.contains("\\G") || line.contains('G')))
-    }
-
     /// Parse SQL text and return a vector of individual SQL statements
     pub fn parse(&self, sql_text: &str) -> Vec<String> {
         let mut queries = Vec::new();
@@ -344,10 +349,6 @@ impl SqlParser {
             }
             current_query.push_str(line);
 
-            // No newly appended boundary can finish the accumulated statement.
-            if !self.may_finish(line) {
-                continue;
-            }
             let parsed = self.parse_statements(&current_query);
             for statement in parsed.statements {
                 queries.push(statement);
@@ -403,9 +404,6 @@ impl SqlParser {
         }
         query_buffer.push_str(line);
 
-        if !self.may_finish(line) {
-            return Vec::new();
-        }
         let parsed = self.parse_statements(query_buffer);
 
         *err = parsed.err;
@@ -429,10 +427,14 @@ impl SqlParser {
         for token in SplitTokens::new(query) {
             let token = match token {
                 Ok(token) => token,
-                Err(SplitError::IncompleteLiteral | SplitError::IncompleteComment) => break,
+                Err(SplitError::IncompleteComment) => break,
+                Err(SplitError::IncompleteLiteral) => {
+                    err = "unable to recognize the rest tokens".into();
+                    break;
+                }
                 Err(SplitError::Invalid) => {
                     valid = false;
-                    err = "Invalid SQL token; use explicit SQL or correct the input".into();
+                    err = "unable to recognize the rest tokens".into();
                     continue;
                 }
             };
@@ -478,6 +480,51 @@ pub fn parse_sql_for_web(sql_text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_lexer_does_not_drop_long_prefixed_literals() {
+        for prefix in ['x', 'X', 'e', 'E', 'r', 'R'] {
+            for length in [240, 252, 253, 254, 255, 256, 400, 8192, 3 * 1024 * 1024] {
+                let insert = format!(
+                    "INSERT INTO t VALUES ({prefix}'{}')",
+                    "ab".repeat(length / 2)
+                );
+                let input = format!("{insert}; SELECT 2;");
+                for multiline in [false, true] {
+                    for repl in [false, true] {
+                        let parser = SqlParser::new(';', multiline, repl);
+                        let parsed = parser.parse_statements(&input);
+                        assert!(parsed.err.is_empty(), "prefix={prefix} length={length}");
+                        assert_eq!(parsed.statements, [insert.clone(), "SELECT 2".into()]);
+                        let expected = if multiline {
+                            vec![insert.clone(), "SELECT 2".into()]
+                        } else {
+                            vec![input.clone()]
+                        };
+                        assert_eq!(parser.parse(&input), expected);
+                        let mut buffer = String::new();
+                        let mut error = String::new();
+                        assert_eq!(parser.parse_line(&input, &mut buffer, &mut error), expected);
+                        assert!(buffer.is_empty() && error.is_empty());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_token_diagnostic_matches_existing_sql_suite() {
+        let parser = SqlParser::new(';', true, false);
+        for input in [
+            "select * from 🥹;",
+            "explain select * from c where b in （'x');",
+        ] {
+            let mut buffer = String::new();
+            let mut error = String::new();
+            assert!(parser.parse_line(input, &mut buffer, &mut error).is_empty());
+            assert_eq!(error, "unable to recognize the rest tokens");
+        }
+    }
 
     #[test]
     fn large_quoted_sql_is_retained_and_split_without_a_ui_stack_overflow() {

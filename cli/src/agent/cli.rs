@@ -258,8 +258,24 @@ pub(super) fn resolve_executable(command: &str) -> Result<PathBuf> {
     bail!("CLI executable was not found or is not executable; install it separately or set an absolute command path")
 }
 
-// Start from an allowlist, never inherit the database environment or proxy keys.
+// Start from an allowlist, never inherit the database environment.
 // HOME is retained for CLI-native authentication; it is not a filesystem sandbox.
+// Proxy and CA variables are forwarded so a CLI that works standalone also works
+// behind a corporate proxy or custom CA when launched from BendSQL.
+const NETWORK_ENV: &[&str] = &[
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+];
+
 pub(super) fn child_environment(
     adapter: Option<CliAdapter>,
     extra: &[String],
@@ -277,7 +293,10 @@ pub(super) fn child_environment(
         "TMP",
         "TEMP",
         "SYSTEMROOT",
-    ] {
+    ]
+    .into_iter()
+    .chain(NETWORK_ENV.iter().copied())
+    {
         if let Some(value) = std::env::var_os(name) {
             env.insert(name.into(), value);
         }
@@ -681,6 +700,32 @@ mod tests {
             env.get(&OsString::from("CLAUDE_CODE_SAFE_MODE")),
             Some(&OsString::from("1"))
         );
+    }
+
+    #[test]
+    fn forwards_only_proxy_and_ca_network_settings() {
+        for name in NETWORK_ENV {
+            let upper = name.to_ascii_uppercase();
+            assert!(
+                upper.ends_with("_PROXY")
+                    || upper.starts_with("SSL_CERT_")
+                    || upper == "NODE_EXTRA_CA_CERTS"
+            );
+        }
+        // Not read by the Rust test process itself, so setting it is side-effect free.
+        std::env::set_var("NODE_EXTRA_CA_CERTS", "/tmp/bendsql-test-ca.pem");
+        for adapter in [
+            None,
+            Some(CliAdapter::Codex),
+            Some(CliAdapter::ClaudeCode),
+            Some(CliAdapter::Pi),
+        ] {
+            let env = child_environment(adapter, &[]).unwrap();
+            assert_eq!(
+                env.get(&OsString::from("NODE_EXTRA_CA_CERTS")),
+                Some(&OsString::from("/tmp/bendsql-test-ca.pem"))
+            );
+        }
     }
 
     #[cfg(unix)]

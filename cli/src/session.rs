@@ -107,6 +107,10 @@ struct HistoryPolicy {
 }
 
 impl HistoryPolicy {
+    fn loads_from_disk(&self, enabled: bool) -> bool {
+        enabled
+    }
+
     fn saves_to_disk(&self, enabled: bool) -> bool {
         enabled && !self.ai_active
     }
@@ -273,23 +277,24 @@ impl Session {
             interrupted,
         };
         if is_repl && initial_mode == InteractionMode::Sql {
-            session.load_server_keywords().await?;
+            session.load_server_keywords().await;
         }
         Ok(session)
     }
 
-    async fn load_server_keywords(&mut self) -> Result<()> {
+    /// Optional completion data: every failure is a warning and SQL stays usable.
+    async fn load_server_keywords(&mut self) {
         if self.server_keywords_loaded || self.settings.no_auto_complete {
-            return Ok(());
+            return;
         }
         let Some(db) = &self.keywords else {
-            return Ok(());
+            return;
         };
         let mut rows = match self.conn.query_iter(PROMPT_SQL).await {
             Ok(rows) => rows,
             Err(_) => {
                 eprintln!("WARN: loading autocomplete keywords failed; SQL remains available.");
-                return Ok(());
+                return;
             }
         };
         let mut batch = sled::Batch::default();
@@ -302,20 +307,22 @@ impl Session {
                 Ok(row) => row,
                 Err(_) => {
                     eprintln!("WARN: invalid autocomplete data; SQL remains available.");
-                    return Ok(());
+                    return;
                 }
             };
             batch.insert(word.to_ascii_lowercase().as_str(), category.as_str());
             count += 1;
-            if count % 1000 == 0 {
-                db.apply_batch(batch)?;
-                batch = sled::Batch::default();
+            if count % 1000 == 0 && db.apply_batch(std::mem::take(&mut batch)).is_err() {
+                eprintln!("WARN: saving autocomplete keywords failed; SQL remains available.");
+                return;
             }
         }
-        db.apply_batch(batch)?;
+        if db.apply_batch(batch).is_err() {
+            eprintln!("WARN: saving autocomplete keywords failed; SQL remains available.");
+            return;
+        }
         self.server_keywords_loaded = true;
         println!("Loaded {} auto complete keywords from server.", db.len());
-        Ok(())
     }
 
     async fn prompt(&self, mode: InteractionMode) -> String {
@@ -449,12 +456,32 @@ impl Session {
         let mut history = HistoryPolicy {
             ai_active: mode != InteractionMode::Sql,
         };
-        if history.saves_to_disk(self.settings.save_history) {
+        if history.loads_from_disk(self.settings.save_history) {
             let _ = rl.load_history(&history_path);
         }
         if mode != InteractionMode::Sql {
             crate::trace::protect_ai_payloads();
         }
+        // Normal exits and errors share the same history-save and close path.
+        let result = self.repl_loop(&mut rl, &history_path, &mut history).await;
+        if history.saves_to_disk(self.settings.save_history) {
+            let _ = rl.save_history(&history_path);
+        }
+        self.agent = None;
+        self.query.clear();
+        if let Err(error) = self.conn.close().await {
+            eprintln!("got error when closing session: {error}");
+        }
+        println!("Bye~");
+        result
+    }
+
+    async fn repl_loop(
+        &mut self,
+        rl: &mut Editor<CliHelper, DefaultHistory>,
+        history_path: &str,
+        history: &mut HistoryPolicy,
+    ) -> Result<()> {
         'repl: loop {
             let mode = self.agent.as_ref().unwrap().mode;
             rl.helper_mut().unwrap().set_mode(mode);
@@ -512,8 +539,7 @@ impl Session {
                     continue;
                 }
                 Input::Question(question) => {
-                    self.ask_agent(question, &mut rl, &history_path, &mut history)
-                        .await;
+                    self.ask_agent(question, rl, history_path, history).await;
                     continue;
                 }
                 Input::Command(command) => {
@@ -529,14 +555,14 @@ impl Session {
                                 match InteractionMode::from_str(argument, true) {
                                     Ok(mode) => {
                                         if mode == InteractionMode::Sql {
-                                            self.load_server_keywords().await?;
+                                            self.load_server_keywords().await;
                                         } else {
-                                            if !self.confirm_ai_sharing(&mut rl) {
+                                            if !self.confirm_ai_sharing(rl) {
                                                 continue;
                                             }
                                             history.activate_ai(
-                                                &mut rl,
-                                                &history_path,
+                                                rl,
+                                                history_path,
                                                 self.settings.save_history,
                                             );
                                             crate::trace::protect_ai_payloads();
@@ -571,8 +597,7 @@ impl Session {
                             if argument.is_empty() {
                                 eprintln!("Usage: !ask <question>");
                             } else {
-                                self.ask_agent(argument, &mut rl, &history_path, &mut history)
-                                    .await;
+                                self.ask_agent(argument, rl, history_path, history).await;
                             }
                             continue;
                         }
@@ -647,15 +672,6 @@ impl Session {
                 }
             }
         }
-        if history.saves_to_disk(self.settings.save_history) {
-            let _ = rl.save_history(&history_path);
-        }
-        self.agent = None;
-        self.query.clear();
-        if let Err(error) = self.conn.close().await {
-            eprintln!("got error when closing session: {error}");
-        }
-        println!("Bye~");
         Ok(())
     }
 
@@ -1256,6 +1272,8 @@ mod agent_boundary_tests {
             .unwrap()
             .contains("private_ai_mode"));
         assert!(!policy.saves_to_disk(true));
+        assert!(policy.loads_from_disk(true));
+        assert!(!policy.loads_from_disk(false));
     }
 
     #[test]

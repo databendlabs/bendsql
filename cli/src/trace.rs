@@ -37,7 +37,20 @@ fn log_message<'a>(target: &str, message: &'a str, ai_active: bool) -> std::borr
     // Hide query/payload values, not diagnostic records. SQL-only and batch
     // logs never enter this path. Non-payload authentication errors stay useful.
     if target.starts_with("databend_") {
-        for prefix in ["start query: ", "insert with stage: "] {
+        for prefix in [
+            "start query: ",
+            "insert with stage: ",
+            "exec: ",
+            "exec with params: ",
+            "query iter: ",
+            "query iter ext: ",
+            "query iter with params: ",
+            "query iter ext with params: ",
+            "query raw iter: ",
+            "load data: ",
+            "load file: ",
+            "stream load: ",
+        ] {
             if let Some(at) = message.find(prefix) {
                 return std::borrow::Cow::Owned(format!(
                     "{}[SQL payload omitted]",
@@ -199,6 +212,31 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn all_rest_driver_sql_entrypoints_are_masked_only_after_ai_activation() {
+        for prefix in [
+            "exec: ",
+            "exec with params: ",
+            "query iter: ",
+            "query iter ext: ",
+            "query iter with params: ",
+            "query iter ext with params: ",
+            "query raw iter: ",
+            "load data: ",
+            "load file: ",
+            "stream load: ",
+        ] {
+            let text = format!("{prefix}SELECT 'private-query', secret FROM vault");
+            for target in ["databend_driver::rest_api", "databend_driver::flight_sql"] {
+                assert_eq!(log_message(target, &text, false), text);
+                assert_eq!(
+                    log_message(target, &text, true),
+                    format!("{prefix}[SQL payload omitted]")
+                );
+            }
+        }
+    }
+
     #[test]
     fn ai_redaction_preserves_diagnostics_and_hides_only_values() {
         let status = "token refresh failed: connection refused (401), authorization expired";

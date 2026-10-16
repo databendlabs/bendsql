@@ -333,6 +333,39 @@ mod tests {
         assert_eq!(memory.context("Q1", 4096), original);
     }
 
+    fn named_schema(names: &[&str]) -> Schema {
+        Schema::from_vec(
+            names
+                .iter()
+                .map(|name| databend_driver::Field {
+                    name: (*name).into(),
+                    data_type: databend_driver::DataType::String,
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn compound_sensitive_sql_and_columns_are_not_cached() {
+        let mut memory = Memory::default();
+        // Sensitive SQL text, even with a harmless-looking result schema.
+        let mut record = QueryRecord::new("SELECT password_hash FROM users");
+        record.preview = QueryPreview::new(&named_schema(&["h"]));
+        assert_eq!(memory.push(record), Err(CacheRejection::Sensitive));
+        // Sensitive result column names behind `SELECT *`.
+        for column in ["password_hash", "user_api_key", "aws_secret"] {
+            let mut record = QueryRecord::new("SELECT * FROM users");
+            record.preview = QueryPreview::new(&named_schema(&["id", column]));
+            assert!(record.preview.sensitive, "{column}");
+            assert_eq!(memory.push(record), Err(CacheRejection::Sensitive));
+        }
+        // Benign compounds remain shareable.
+        let mut record = QueryRecord::new("SELECT model, token_count FROM usage");
+        record.preview = QueryPreview::new(&named_schema(&["model", "token_count"]));
+        assert!(!record.preview.sensitive);
+        assert_eq!(memory.push(record), Ok("Q1".into()));
+    }
+
     #[test]
     fn text_is_bounded_and_utf8_safe() {
         assert_eq!(bounded_text("中文abc", 4), ("中".into(), true));

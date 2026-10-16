@@ -222,6 +222,22 @@ or at startup:
 bendsql --mode agent --backend claude
 ```
 
+Codex 0.145.0 or newer is required (verified end to end with 0.154.0). BendSQL
+checks `codex --version` before sending any context; an older Codex reports an
+upgrade hint and SQL stays available. Claude Code and Pi are checked for the
+required flags through `--help`.
+
+Local CLIs start with a minimal environment rather than BendSQL's full
+environment, and database variables are never forwarded. Proxy and CA settings
+(`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` and lowercase forms,
+`SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`) are forwarded as-is. Any
+other variable a CLI needs must be listed explicitly:
+
+```toml
+[agent.backends.local-claude]
+env_allowlist = ["ANTHROPIC_BASE_URL"]
+```
+
 For an OpenAI-compatible service, add a named backend to
 `~/.config/bendsql/config.toml`:
 

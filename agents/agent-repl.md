@@ -61,6 +61,10 @@ smart/agent modes. The `!mode` choice helper remains available in every mode.
 Server table/field keywords are loaded only when SQL mode is first entered (unless
 `--no-auto-complete` is set), so starting in smart/agent mode avoids that catalog
 query. Returning to SQL restores completion without reloading the same catalog.
+Enabled SQL history is loaded for navigation even when starting with `--mode smart`
+or `--mode agent`; it is never copied into AI query memory. Such sessions still do
+not write history. AI-active log masking covers both core and REST-driver SQL entrypoints.
+
 The complete prompt is controlled by `settings.prompt`, whose default template
 is `"{user}@{warehouse}/{catalog}/{database}> "`. No mode prefix or suffix is added outside the template. `{mode}`
 expands to `sql`, `smart` or `agent` on each input; omitting it intentionally hides
@@ -243,7 +247,7 @@ consent fields:
 [agent.backends.local-claude]
 command = "/absolute/path/to/claude"
 model = "your-model"
-env_allowlist = ["HTTPS_PROXY", "CUSTOM_AUTH_KEY"]
+env_allowlist = ["CUSTOM_AUTH_KEY"]
 
 [agent.backends.local-codex]
 # Optional: disable this built-in, including its codex alias.
@@ -301,6 +305,12 @@ is rebuilt. This is protocol compatibility checking, not a security attestation 
 the executable. Native credential helpers and other installed CLI code are still
 trusted external programs.
 
+Codex `0.145.0` is the minimum supported version: it is the first release that
+accepts every `policy_args` override (0.144.x rejects `agents.enabled=false` with
+`expected struct AgentRoleToml`), confirmed by `initialize` + `thread/start` against
+npm releases. `CodexServer` runs `codex --version` once per backend instance before
+sending context; older or unparsable versions get an upgrade hint and the result is
+not cached on failure. Raise `MIN_CODEX_VERSION` when adding a newer override.
 Codex `0.154.0` was verified with its generated app-server schema and opt-in live
 `hi` checks (no database records), including returning to the interactive prompt.
 Claude Code `2.1.203` was checked through its help and mock print/JSON protocol. Older releases may lack required
@@ -322,8 +332,11 @@ The child environment is cleared and rebuilt from basic runtime variables
 `CODEX_HOME`, `OPENAI_API_KEY`, `CODEX_API_KEY` for Codex; `CLAUDE_CONFIG_DIR`,
 `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` for Claude Code; and Pi's config/package directory variables plus a fixed set of common provider
 credentials (including `OPENAI_API_KEY`, Anthropic keys/tokens, `GEMINI_API_KEY`,
-Groq/Mistral/OpenRouter keys). Additional provider, ambient cloud, proxy and certificate
-variables must be explicitly named in `env_allowlist`; missing/empty references are errors.
+Groq/Mistral/OpenRouter keys). Every CLI/ACP child also receives the network
+settings `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` (and lowercase forms),
+`SSL_CERT_FILE`, `SSL_CERT_DIR` and `NODE_EXTRA_CA_CERTS` when set, so a CLI that
+works standalone behind a proxy/custom CA also works from BendSQL. Additional provider
+or ambient cloud variables must be explicitly named in `env_allowlist`; missing/empty references are errors.
 Database-related names such as `BENDSQL_*`, `DATABEND_*`, `DSN`, `DATABASE_URL` and
 `DB_PASSWORD` cannot be forwarded through that list. Other secret variables are
 not inherited automatically. `HOME` allows native CLI login credentials to work,

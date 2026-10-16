@@ -740,7 +740,7 @@ def exercise_builtin_clis(executable, env, port):
                 for secret in [b"private-cli-secret", b"private-thinking", b"private-pi-key"]:
                     assert secret not in b"".join(terminal.transcript)
         # Old versions fail before receiving context. No downgrade and no service fallback.
-        for name in ["pi", "claude"]:
+        for name in ["pi", "claude", "codex"]:
             write_config(cli_env, f'[agent.backends.local-{name}]\nenv_allowlist=["CLI_TEST_OLD"]')
             old_env = dict(cli_env, CLI_TEST_OLD="1")
             with Terminal(executable, old_env, port, backend=name) as terminal:
@@ -749,7 +749,10 @@ def exercise_builtin_clis(executable, env, port):
                 terminal.send("!ask Context must not be delivered")
                 assert len(cli_records(record_path)) == count
                 assert b"Context was not sent" in b"".join(terminal.transcript)
-                assert cli_records(record_path + ".help")[-1]["stdin"] == ""
+                if name == "codex":
+                    assert b"requires Codex 0.145.0 or newer" in b"".join(terminal.transcript)
+                else:
+                    assert cli_records(record_path + ".help")[-1]["stdin"] == ""
                 terminal.send("SELECT 1;")
                 terminal.finish()
         assert all(record["stdin"] == "" for record in cli_records(record_path + ".help"))
@@ -1625,7 +1628,29 @@ def exercise_sql_compatibility_and_sharing_consent(executable, env, port):
             terminal.send("!set save_history true", "sql> ")
             terminal.send("SELECT after_ai;", "sql> ")
             terminal.finish()
-        with open(history) as file: assert "after_ai" not in file.read()
+        with open(history) as file: saved = file.read()
+        assert "after_ai" not in saved
+        # Startup AI modes may read SQL history for navigation; it remains
+        # separate from AI evidence and can never resume disk writes.
+        write_config(local, '[agent]\nbackend="env"')
+        for mode in ["smart", "agent"]:
+            with Terminal(executable, local, port, mode=mode) as terminal:
+                terminal.expect(f"{mode}> ")
+                os.write(terminal.fd, b"\x1b[A")
+                terminal.expect("SELECT secret FROM vault;")
+                os.write(terminal.fd, b"\x03")
+                terminal.expect(f"{mode}> ")
+                terminal.send("!ask startup-history-check", f"{mode}> ")
+                assert last_context()["query_records"] == []
+                assert "vault" not in json.dumps(MockService.model_requests[-1])
+                terminal.finish()
+            with open(history) as file: assert file.read() == saved
+        log_bytes = b""
+        for directory, _, files in os.walk(home):
+            for name in files:
+                if name.startswith("bendsql.log"):
+                    with open(os.path.join(directory, name), "rb") as file: log_bytes += file.read()
+        assert b"SELECT after_ai" not in log_bytes, "Driver SQL payload must also be masked after AI activation"
         # Debug builds must handle a literal larger than the old large-stack
         # workaround could parse. Batch SQL does not invoke a real database.
         literal = "SELECT '" + "x" * (3 * 1024 * 1024) + "';\nSELECT 7;\n"
@@ -1633,6 +1658,12 @@ def exercise_sql_compatibility_and_sharing_consent(executable, env, port):
         result = subprocess.run([executable, "--dsn", dsn, "--log-level", "off"], input=literal.encode(), env=local, capture_output=True, timeout=30)
         assert result.returncode == 0, result.stderr[-1000:]
         assert len(MockService.sql_requests[-2]) > 3 * 1024 * 1024 and MockService.sql_requests[-1] == "SELECT 7"
+        for prefix, size in [("x", 400), ("X", 400), ("X", 3 * 1024 * 1024)]:
+            insert = f"INSERT INTO hex_dump VALUES ({prefix}'" + "ab" * (size // 2) + "')"
+            before = len(MockService.sql_requests)
+            result = subprocess.run([executable, "--dsn", dsn, "--log-level", "off"], input=f"{insert}; SELECT 2;\n".encode(), env=local, capture_output=True, timeout=30)
+            assert result.returncode == 0, result.stderr[-1000:]
+            assert MockService.sql_requests[before:] == [insert, "SELECT 2"], "Neither the dump INSERT nor its successor may be lost"
 
 
 def main():
