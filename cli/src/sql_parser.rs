@@ -213,23 +213,34 @@ impl<'a> Iterator for SplitTokens<'a> {
                 return Some(Err(SplitError::IncompleteLiteral));
             }
             if bytes[start] == b'@' {
+                // Mirror the AST lexer's LiteralAtString rule:
+                // @([^\s,`;'"()]|\\\s|\\'|\\"|\\\\)+
+                // A backslash only escapes whitespace, quotes, or a backslash, so
+                // `@stage\G` keeps `\G` and `@stage\;` still ends at `;`.
                 self.offset += 1;
-                while self.offset < bytes.len() {
-                    let c = bytes[self.offset];
-                    if c == b'\\' && self.offset + 1 < bytes.len() {
-                        self.offset += 2;
-                    } else if c.is_ascii_whitespace()
-                        || matches!(c, b',' | b'`' | b';' | b'\'' | b'"' | b'(' | b')')
+                while let Some(c) = self.source[self.offset..].chars().next() {
+                    if c == '\\' {
+                        self.offset += 1;
+                        if let Some(next) = self.source[self.offset..].chars().next() {
+                            if next.is_whitespace() || matches!(next, '\'' | '"' | '\\') {
+                                self.offset += next.len_utf8();
+                            }
+                        }
+                    } else if c.is_whitespace()
+                        || matches!(c, ',' | '`' | ';' | '\'' | '"' | '(' | ')')
                     {
                         break;
                     } else {
-                        self.offset += 1;
+                        self.offset += c.len_utf8();
                     }
                 }
-                if self.offset == start + 1 {
-                    return Some(Err(SplitError::Invalid));
-                }
-                return Some(Ok(self.token(start, TokenKind::LiteralAtString)));
+                // A bare `@` is the abs operator, not an invalid token.
+                let kind = if self.offset == start + 1 {
+                    TokenKind::Abs
+                } else {
+                    TokenKind::LiteralAtString
+                };
+                return Some(Ok(self.token(start, kind)));
             }
             if bytes[start].is_ascii_alphanumeric()
                 || matches!(bytes[start], b'_' | b'$')
@@ -439,10 +450,13 @@ impl SqlParser {
                 }
             };
             tracker.feed(&token, &delimiter);
-            let slash_g = self.is_repl
+            // `\G` lexes as Backslash + Ident, except inside a stage location
+            // (`LIST @s1\G`), where it is the tail of the at-string token.
+            let slash_g = (self.is_repl
                 && previous_backslash
                 && token.kind == TokenKind::Ident
-                && token.text() == "G";
+                && token.text() == "G")
+                || (token.kind == TokenKind::LiteralAtString && token.text().ends_with("\\G"));
             if (token.text() == delimiter || slash_g) && !tracker.in_block() {
                 let end = token.span.end as usize;
                 let sql = query[start..end].trim_end_matches(self.delimiter).trim();
@@ -590,6 +604,78 @@ mod tests {
             assert!(parsed.err.is_empty(), "{text}");
             assert_eq!(parsed.statements.len(), 2, "{text}");
         }
+    }
+
+    #[test]
+    fn stage_locations_and_abs_operator_match_the_ast_lexer() {
+        let repl = SqlParser::new(';', true, true);
+        // `\G` at the end of a stage location still ends the statement.
+        for (input, statement) in [
+            ("LIST @s1\\G", "LIST @s1\\G"),
+            ("LIST @s1/dir/\\G", "LIST @s1/dir/\\G"),
+            ("LIST @s1 \\G", "LIST @s1 \\G"),
+        ] {
+            let parsed = repl.parse_statements(input);
+            assert!(parsed.err.is_empty(), "{input}");
+            assert_eq!(parsed.statements, [statement], "{input}");
+            assert!(parsed.remaining.is_empty(), "{input}");
+        }
+        // A backslash only escapes whitespace, quotes, and backslashes, so it
+        // never hides the delimiter.
+        let parsed = repl.parse_statements("LIST @s1\\; SELECT 2;");
+        assert_eq!(parsed.statements, ["LIST @s1\\", "SELECT 2"]);
+        let parsed = repl.parse_statements("COPY INTO t FROM @s/a\\ b.csv; SELECT 2;");
+        assert_eq!(
+            parsed.statements,
+            ["COPY INTO t FROM @s/a\\ b.csv", "SELECT 2"]
+        );
+        // A bare `@` is the abs operator, not an unrecognized token.
+        for parser in [repl, SqlParser::new(';', true, false)] {
+            let parsed = parser.parse_statements("SELECT 2 @ 3; SELECT @(-5);");
+            assert!(parsed.err.is_empty());
+            assert_eq!(parsed.statements, ["SELECT 2 @ 3", "SELECT @(-5)"]);
+        }
+    }
+
+    #[test]
+    fn split_tokens_match_ast_lexer_for_stage_locations() {
+        for input in [
+            "LIST @s1\\G",
+            "LIST @s1\\;",
+            "@s/a\\ b.csv,x",
+            "@s/a\\'b x",
+            "@s/a\\\"b x",
+            "@s\\\\G",
+            "@s/中文 x",
+            "@~/p (",
+            "@\\",
+            "SELECT 2 @ 3",
+            "SELECT @(-5)",
+            "@ @a @",
+        ] {
+            let expected: Vec<_> = Tokenizer::new(input)
+                .map(|t| t.unwrap())
+                .filter(|t| t.kind != TokenKind::EOI)
+                .map(|t| (t.kind, t.text().to_owned()))
+                .collect();
+            let actual: Vec<_> = SplitTokens::new(input)
+                .map(|t| t.ok().unwrap())
+                .map(|t| (t.kind, t.text().to_owned()))
+                .collect();
+            assert_eq!(actual, expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn single_line_task_script_block_is_one_statement() {
+        let parser = SqlParser::new(';', true, true);
+        let parsed =
+            parser.parse_statements("CREATE TASK t AS BEGIN select 1; select 2; END; SELECT 3;");
+        assert!(parsed.err.is_empty());
+        assert_eq!(
+            parsed.statements,
+            ["CREATE TASK t AS BEGIN select 1; select 2; END", "SELECT 3"]
+        );
     }
 
     #[test]

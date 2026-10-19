@@ -135,6 +135,15 @@ fn recoverable_readline_error(error: &ReadlineError) -> bool {
         std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut))
 }
 
+/// While SQL is pending, only `!name` lines are client commands. Lines starting
+/// with SQL operators (`!=`, `!~*`, `!!`, `! ...`) continue the statement.
+fn is_command_while_sql_pending(line: &str) -> bool {
+    line.trim_start()
+        .strip_prefix('!')
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|c| c.is_ascii_alphabetic())
+}
+
 fn usable_query_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 256
@@ -505,7 +514,7 @@ impl Session {
             self.interrupted.store(false, Ordering::SeqCst);
             let input = if self.query.is_empty() {
                 mode.route(&line, self.settings.sql_delimiter)
-            } else if line.trim_start().starts_with('!') {
+            } else if is_command_while_sql_pending(&line) {
                 eprintln!("SQL is pending. Finish it or press Ctrl+C before using a command.");
                 continue;
             } else {
@@ -928,15 +937,10 @@ impl Session {
                 Ok(None)
             }
             other => {
-                // Avoid expensive presentation-only AST parsing on bulk SQL.
-                let quote_string = if query.len() > 8192 {
-                    self.settings.quote_string
+                let quote_string = !if self.settings.quote_string {
+                    false
                 } else {
-                    !if self.settings.quote_string {
-                        false
-                    } else {
-                        quote_string_in_box_display(query)
-                    }
+                    quote_string_in_box_display(query)
                 };
 
                 let data = match other {
@@ -1168,6 +1172,16 @@ impl Drop for Session {
 #[cfg(test)]
 mod agent_boundary_tests {
     use super::*;
+
+    #[test]
+    fn pending_sql_keeps_operator_continuations() {
+        for line in ["!= 1;", "  != 1", "!~* 'a';", "!! 5;", "! AS f;", "!"] {
+            assert!(!is_command_while_sql_pending(line), "{line}");
+        }
+        for line in ["!ask why", "  !mode agent", "!sql select 1", "!help"] {
+            assert!(is_command_while_sql_pending(line), "{line}");
+        }
+    }
 
     fn connection_info() -> ConnectionInfo {
         ConnectionInfo {
