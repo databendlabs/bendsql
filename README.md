@@ -151,7 +151,7 @@ prompt = ":) "
 | Parameter            | Description                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `display_pretty_sql` | Whether to display SQL queries in a formatted way.                                                                  |
-| `prompt`             | The prompt to display before asking for input.                                                                      |
+| `prompt`             | Complete prompt template (default `{mode}> `). Supports `{mode}`, `{database}`, `{user}`, `{host}`, `{port}`, `{catalog}` and `{warehouse}`. |
 | `progress_color`     | The color to use for the progress bar.                                                                              |
 | `show_progress`      | Whether to show a progress bar when executing queries.                                                              |
 | `show_stats`         | Whether to show statistics after executing queries.                                                                 |
@@ -168,13 +168,126 @@ prompt = ":) "
 
 ## Commands in REPL
 
-| Commands       | Description             |
-| -------------- | ----------------------- |
-| `!exit`        | Exit bendsql            |
-| `!quit`        | Exit bendsql            |
-| `!configs`     | Show current settings   |
-| `!set`         | Set settings            |
-| `!source file` | Source file and execute |
+| Command | Description |
+| --- | --- |
+| `!exit` / `!quit` | Exit BendSQL |
+| `!configs` | Show current settings |
+| `!set` | Change settings |
+| `!source file` | Execute SQL from a file |
+| `!help` | Show available commands |
+| `!mode [sql\|smart\|agent]` | Show or switch mode (Tab completion) |
+| `!backend [name]` | Show or select an AI backend |
+| `!ask question` | Ask AI explicitly |
+| `!sql query` | Execute SQL explicitly |
+| `!context [clear]` | Inspect or clear query/dialogue context |
+
+## Interactive SQL + AI
+
+BendSQL starts in **SQL mode**. Use `!mode` to see the choices (Tab completion),
+or select a mode directly:
+
+| Mode | Behavior |
+| --- | --- |
+| `sql` (default) | Run SQL; keyword and file completion are enabled. |
+| `smart` | Route SQL to Databend and questions to AI; ambiguous input needs `!sql` or `!ask`. |
+| `agent` | Ask AI using cached queries and results; suggested SQL is not executed. |
+
+```text
+...> !mode smart
+Allow AI data sharing with ...? [y/N] y
+...> SELECT count(*) FROM orders;
+... query result ...
+...> Explain the previous result.
+AI> ...
+...> !mode sql
+```
+
+SQL mode does not cache query data for AI. Pure SQL sessions retain their normal
+`~/.bendsql_history` and configured logging. First AI use requires confirmation;
+only subsequent smart/agent-mode queries enter memory, not earlier SQL history.
+AI activation stops disk history for the rest of that session, without clearing
+SQL navigation in memory. SQL-only history/logs retain their ordinary contents;
+use `save_history = false` / `--log-level off` when appropriate. Use `!context` to
+inspect AI memory and `!context clear` to reset it, not SQL input history. Completion is
+disabled in smart/agent mode, except for `!mode` choices. Batch and piped SQL do not
+invoke AI.
+
+### Choose an AI backend
+
+By default, BendSQL uses the first installed CLI: **Codex → Claude Code → Pi**.
+Install and authenticate it separately. Select another backend with `!backend`
+or at startup:
+
+```bash
+bendsql --mode agent --backend claude
+```
+
+Codex 0.145.0 or newer is required (verified end to end with 0.154.0). BendSQL
+checks `codex --version` before sending any context; an older Codex reports an
+upgrade hint and SQL stays available. Claude Code and Pi are checked for the
+required flags through `--help`.
+
+Local CLIs start with a minimal environment rather than BendSQL's full
+environment, and database variables are never forwarded. Proxy and CA settings
+(`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` and lowercase forms,
+`SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`) are forwarded as-is. Any
+other variable a CLI needs must be listed explicitly:
+
+```toml
+[agent.backends.local-claude]
+env_allowlist = ["ANTHROPIC_BASE_URL"]
+```
+
+For an OpenAI-compatible service, add a named backend to
+`~/.config/bendsql/config.toml`:
+
+```toml
+[agent]
+backend = "my-api"
+# Optional: explicit permission instead of the per-session confirmation.
+# allow_data_sharing = true
+
+[agent.backends.my-api]
+type = "openai-compatible"
+base_url = "https://your-model-service.example/v1"
+model = "your-model"
+api_key_env = "MY_LLM_API_KEY" # omit for a local service without authentication
+```
+
+Explicit `--backend` selection overrides configuration. A failed request does not
+switch providers automatically; SQL remains available without an AI backend.
+Local CLI/ACP backends currently require Unix; HTTP backends are also available.
+
+**After approval, AI requests share questions and selected smart/agent-mode SQL,
+errors and result previews with the configured backend.** Known credential-bearing
+statements/results are excluded; this is not a general personal-data detector. Use trusted services/CLIs and clear context before changing topics.
+External CLIs can access local files; BendSQL's restrictions are not a sandbox.
+Incomplete previews are not full results, and cancellation does not guarantee a
+server-side rollback. The bundled Databend skill provides documentation and
+troubleshooting guidance; it does not execute SQL or grant tools.
+
+### Prompt and answer style
+
+```toml
+[settings]
+prompt = "🐳 @{database} [{mode}]:) "
+ai_output = "markdown" # or "plain"
+```
+
+The default connection/database prompt is unchanged:
+`"{user}@{warehouse}/{catalog}/{database}> "`. Add `{mode}` to display the mode,
+or use `prompt = "{mode}> "` for the short form. Pending SQL uses
+`continuation_prompt = "> "`, which also supports the same template variables.
+Use `save_history = false` to disable SQL disk history explicitly. Custom templates
+are used as-is; omit `{mode}` to hide the mode. AI answers use terminal Markdown, with a temporary spinner that
+clears before the answer. Switch styles with `!set ai_output plain` or
+`!set ai_output markdown`; SQL result formatting is unchanged.
+
+Authentication recovery reconnects but does not automatically replay a statement;
+verify execution state before retrying writes. See [compatibility notes](CHANGELOG.md).
+
+Use `!help` for commands. See [the maintainer reference](agents/agent-repl.md) for
+advanced backend configuration, protocols, cache limits, embedded skills and tests.
 
 ## Setting commands in REPL
 

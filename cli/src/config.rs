@@ -29,6 +29,8 @@ pub struct Config {
     pub settings: SettingsConfig,
     #[serde(default)]
     pub server: ServerConfig,
+    #[serde(default)]
+    pub agent: crate::agent::config::AgentConfig,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -47,6 +49,9 @@ pub struct SettingsConfig {
     pub max_display_rows: Option<usize>,
     pub max_col_width: Option<usize>,
     pub max_width: Option<usize>,
+    pub ai_output: Option<AiOutput>,
+    pub save_history: Option<bool>,
+    pub continuation_prompt: Option<String>,
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -71,6 +76,8 @@ impl From<&str> for ExpandMode {
 pub struct Settings {
     pub display_pretty_sql: bool,
     pub prompt: String,
+    pub continuation_prompt: String,
+    pub save_history: bool,
     pub progress_color: String,
     pub no_auto_complete: bool,
 
@@ -91,6 +98,8 @@ pub struct Settings {
     pub max_width: usize,
     /// Output format is set by the flag.
     pub output_format: OutputFormat,
+    /// AI presentation only; does not affect SQL output or raw conversation.
+    pub ai_output: AiOutput,
     // Output Quote Style.
     pub quote_style: OutputQuoteStyle,
     /// Expand table format display, default off, could be on/off/auto.
@@ -112,6 +121,25 @@ pub struct Settings {
     pub auto_open_browser: bool,
     /// Enable web UI interface (security risk)
     pub enable_ui: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiOutput {
+    #[default]
+    Markdown,
+    Plain,
+}
+
+impl TryFrom<&str> for AiOutput {
+    type Error = anyhow::Error;
+    fn try_from(value: &str) -> Result<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "markdown" => Ok(Self::Markdown),
+            "plain" => Ok(Self::Plain),
+            _ => Err(anyhow!("AI output must be markdown or plain")),
+        }
+    }
 }
 
 #[derive(ValueEnum, Clone, Debug, PartialEq, Deserialize)]
@@ -168,6 +196,10 @@ impl Settings {
 
         self.display_pretty_sql = cfg.display_pretty_sql.unwrap_or(self.display_pretty_sql);
         self.prompt = cfg.prompt.unwrap_or_else(|| self.prompt.clone());
+        self.continuation_prompt = cfg
+            .continuation_prompt
+            .unwrap_or_else(|| self.continuation_prompt.clone());
+        self.save_history = cfg.save_history.unwrap_or(self.save_history);
         self.progress_color = cfg
             .progress_color
             .unwrap_or_else(|| self.progress_color.clone());
@@ -184,6 +216,7 @@ impl Settings {
         self.max_width = cfg.max_width.unwrap_or(self.max_width);
         self.max_col_width = cfg.max_col_width.unwrap_or(self.max_col_width);
         self.max_display_rows = cfg.max_display_rows.unwrap_or(self.max_display_rows);
+        self.ai_output = cfg.ai_output.unwrap_or(self.ai_output);
         self.auto_open_browser = c.server.auto_open_browser;
         self.bind_address.clone_from(&c.server.bind_address);
         if self.bind_port == 0 {
@@ -195,10 +228,13 @@ impl Settings {
         match cmd_name {
             "display_pretty_sql" => self.display_pretty_sql = cmd_value.parse()?,
             "prompt" => self.prompt = cmd_value.to_string(),
+            "continuation_prompt" => self.continuation_prompt = cmd_value.to_string(),
+            "save_history" => self.save_history = cmd_value.parse()?,
             "progress_color" => self.progress_color = cmd_value.to_string(),
             "show_progress" => self.show_progress = cmd_value.parse()?,
             "show_stats" => self.show_stats = cmd_value.parse()?,
             "show_query_id" => self.show_query_id = cmd_value.parse()?,
+            "ai_output" => self.ai_output = cmd_value.try_into()?,
             "output_format" => {
                 self.output_format = match cmd_value.to_ascii_lowercase().as_str() {
                     "table" => OutputFormat::Table,
@@ -275,11 +311,25 @@ impl Config {
     }
 
     fn load_from_file(path: &str) -> Self {
-        match toml::from_str(&std::fs::read_to_string(path).unwrap()) {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(_) => {
+                eprintln!("failed to read config file {path}; using SQL defaults, AI disabled");
+                return Self {
+                    agent: crate::agent::config::AgentConfig::invalid(),
+                    ..Self::default()
+                };
+            }
+        };
+        match toml::from_str(&contents) {
             Ok(config) => config,
-            Err(e) => {
-                eprintln!("failed to load config file {path}: {e}, using defaults");
-                Self::default()
+            Err(_) => {
+                // Parser diagnostics can include source lines containing credentials.
+                eprintln!("failed to parse config file {path}; using SQL defaults, AI disabled");
+                Self {
+                    agent: crate::agent::config::AgentConfig::invalid(),
+                    ..Self::default()
+                }
             }
         }
     }
@@ -291,8 +341,11 @@ impl Default for Settings {
             display_pretty_sql: true,
             progress_color: "cyan".to_string(),
             prompt: "{user}@{warehouse}/{catalog}/{database}> ".to_string(),
+            continuation_prompt: "> ".to_string(),
+            save_history: true,
             no_auto_complete: false,
             output_format: OutputFormat::Table,
+            ai_output: AiOutput::Markdown,
             quote_style: OutputQuoteStyle::Necessary,
             sql_delimiter: ';',
             expand: ExpandMode::Auto,
@@ -334,5 +387,35 @@ impl Default for ServerConfig {
             bind_port: 0,
             auto_open_browser: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod agent_config_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn bad_agent_section_keeps_connection_and_settings() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write!(file, "[connection]\nhost='database.example'\n[settings]\nmax_display_rows=12\n[agent]\ntimeout_secs='bad'").unwrap();
+        let config = Config::load_from_file(file.path().to_str().unwrap());
+        assert_eq!(config.connection.host, "database.example");
+        assert_eq!(config.settings.max_display_rows, Some(12));
+        assert!(config.agent.settings().is_err());
+    }
+
+    #[test]
+    fn unreadable_and_syntactically_invalid_files_disable_ai() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "[agent\nsecret='do-not-print-this'").unwrap();
+        let config = Config::load_from_file(file.path().to_str().unwrap());
+        assert!(config.agent.settings().is_err());
+        let missing = tempfile::tempdir()
+            .unwrap()
+            .path()
+            .join("missing-config.toml");
+        let config = Config::load_from_file(missing.to_str().unwrap());
+        assert!(config.agent.settings().is_err());
     }
 }

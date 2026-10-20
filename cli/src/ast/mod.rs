@@ -21,6 +21,9 @@ use databend_common_ast::parser::{parse_sql, token::TokenKind, tokenize_sql, Dia
 use sqlformat::{FormatOptions, QueryParams};
 
 pub fn format_query(query: &str) -> String {
+    if query.len() > 8192 {
+        return query.to_owned();
+    }
     let kind = QueryKind::from(query);
     if matches!(kind, QueryKind::Get(_, _) | QueryKind::Put(_, _)) {
         return query.to_owned();
@@ -47,6 +50,9 @@ pub fn format_query(query: &str) -> String {
 }
 
 pub fn highlight_query(line: &str) -> String {
+    if line.len() > 8192 {
+        return line.to_owned();
+    }
     let tokens = tokenize_sql(line);
     let mut line = line.to_owned();
 
