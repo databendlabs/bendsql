@@ -20,7 +20,7 @@ use async_trait::async_trait;
 use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 
-use super::backend::ChatBackend;
+use super::backend::{AnswerStream, ChatBackend};
 use super::memory::{bounded_text, Memory, MAX_TEXT_BYTES};
 
 pub(super) const SYSTEM_PROMPT: &str = "You are the SQL assistant inside BendSQL, a Databend CLI. \
@@ -36,6 +36,10 @@ for the user to execute. Never invent query results, schema, query IDs or execut
 Distinguish observations from hypotheses. Suggested SQL is not executed automatically. \
 Earlier conversation may refer to older records; the currently supplied records are authoritative.";
 const MAX_RESPONSE_BYTES: usize = 128 * 1024;
+// Each streamed token carries its own JSON envelope, so the wire budget is far
+// larger than the 8 KiB answer budget; reading stops once the answer is full.
+const MAX_STREAM_BYTES: usize = 4 * 1024 * 1024;
+const MAX_EVENT_BYTES: usize = 128 * 1024;
 const MAX_CHAT_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Debug, Serialize)]
@@ -191,19 +195,44 @@ impl LlmClient {
 #[async_trait]
 impl ChatBackend for LlmClient {
     async fn complete(&self, messages: &[Message]) -> Result<String> {
+        let response = self.send(messages, false).await?;
+        parse_answer(&read_body(response).await?)
+    }
+
+    async fn stream(&self, messages: &[Message], output: &AnswerStream) -> Result<String> {
+        let response = self.send(messages, true).await?;
+        let event_stream = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                // Media types are case-insensitive.
+                let value = value.trim_start().as_bytes();
+                value.len() >= 17 && value[..17].eq_ignore_ascii_case(b"text/event-stream")
+            });
+        if !event_stream {
+            // Some compatible gateways ignore `stream` and return one JSON body.
+            return parse_answer(&read_body(response).await?);
+        }
+        read_event_stream(response, output).await
+    }
+}
+
+impl LlmClient {
+    async fn send(&self, messages: &[Message], stream: bool) -> Result<reqwest::Response> {
         let mut request = self
             .client
             .post(self.endpoint.clone())
             .json(&serde_json::json!({
                 "model": self.model,
                 "messages": messages,
-                "stream": false,
+                "stream": stream,
                 "max_tokens": self.max_tokens,
             }));
         if let Some(key) = &self.api_key {
             request = request.bearer_auth(key);
         }
-        let mut response = request.send().await
+        let response = request.send().await
             .map_err(|_| anyhow!("Model request failed or timed out; check the model service configuration. SQL remains available."))?;
         if !response.status().is_success() {
             // Do not echo response bodies or request URLs, which may contain secrets.
@@ -212,19 +241,159 @@ impl ChatBackend for LlmClient {
                 response.status().as_u16()
             );
         }
-        let mut body = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| anyhow!("Failed to read model response"))?
-        {
-            if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
-                bail!("Model response exceeds the 128 KiB limit");
-            }
-            body.extend_from_slice(&chunk);
-        }
-        parse_answer(&body)
+        Ok(response)
     }
+}
+
+async fn read_body(mut response: reqwest::Response) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| anyhow!("Failed to read model response"))?
+    {
+        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            bail!("Model response exceeds the 128 KiB limit");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+async fn read_event_stream(
+    mut response: reqwest::Response,
+    output: &AnswerStream,
+) -> Result<String> {
+    let mut decoder = SseDecoder::default();
+    let mut answer = StreamedAnswer::default();
+    let mut wire = 0;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| anyhow!("Failed to read model response stream"))?
+    {
+        wire += chunk.len();
+        if wire > MAX_STREAM_BYTES {
+            bail!("Model response stream exceeds the 4 MiB limit");
+        }
+        for data in decoder.feed(&chunk)? {
+            if answer.event(&data, output)? {
+                // Dropping the response closes the connection, so the service
+                // stops generating once the answer budget is exhausted.
+                return answer.finish();
+            }
+        }
+    }
+    answer.finish()
+}
+
+/// Server-sent events framing: `data:` lines accumulate until a blank line.
+/// Bytes are buffered per line, so multibyte UTF-8 may be split across chunks.
+#[derive(Default)]
+struct SseDecoder {
+    line: Vec<u8>,
+    data: Option<String>,
+}
+
+impl SseDecoder {
+    fn feed(&mut self, chunk: &[u8]) -> Result<Vec<String>> {
+        let mut events = Vec::new();
+        for &byte in chunk {
+            if byte != b'\n' {
+                if self.line.len() >= MAX_EVENT_BYTES {
+                    bail!("Model stream event exceeds the 128 KiB limit");
+                }
+                self.line.push(byte);
+                continue;
+            }
+            let mut line = std::mem::take(&mut self.line);
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let line = String::from_utf8(line)
+                .map_err(|_| anyhow!("Model service returned an invalid streaming response"))?;
+            if line.is_empty() {
+                events.extend(self.data.take());
+            } else if let Some(value) = line.strip_prefix("data:") {
+                let value = value.strip_prefix(' ').unwrap_or(value);
+                let data = self.data.get_or_insert_with(String::new);
+                if !data.is_empty() {
+                    data.push('\n');
+                }
+                if data.len() + value.len() > MAX_EVENT_BYTES {
+                    bail!("Model stream event exceeds the 128 KiB limit");
+                }
+                data.push_str(value);
+            }
+            // Comments (`:`), `event:`, `id:` and `retry:` carry no answer text.
+        }
+        Ok(events)
+    }
+}
+
+#[derive(Default)]
+struct StreamedAnswer {
+    text: String,
+    finished: bool,
+}
+
+impl StreamedAnswer {
+    /// Returns true once no further events are needed.
+    fn event(&mut self, data: &str, output: &AnswerStream) -> Result<bool> {
+        if data == "[DONE]" {
+            self.finished = true;
+            return Ok(true);
+        }
+        let chunk: StreamChunk = serde_json::from_str(data)
+            .map_err(|_| anyhow!("Model service returned an invalid streaming response"))?;
+        if chunk.error.is_some() {
+            // Do not echo provider diagnostics, which may contain secrets.
+            bail!("Model service reported an error while streaming. SQL remains available.");
+        }
+        // Usage-only chunks have no choices; only the first choice is shown.
+        let first = chunk
+            .choices
+            .into_iter()
+            .flatten()
+            .find(|c| c.index.unwrap_or(0) == 0);
+        if let Some(choice) = first {
+            if let Some(content) = choice.delta.and_then(|d| d.content) {
+                output.text(&content);
+                self.text.push_str(&content);
+            }
+            self.finished |= choice.finish_reason.is_some();
+        }
+        Ok(self.text.len() > MAX_TEXT_BYTES)
+    }
+
+    fn finish(self) -> Result<String> {
+        if self.text.len() <= MAX_TEXT_BYTES && !self.finished {
+            bail!("Model response stream ended before completion; partial answer discarded");
+        }
+        if self.text.trim().is_empty() {
+            bail!("Model service returned no text answer");
+        }
+        normalize_answer(&self.text)
+    }
+}
+
+// Compatible services differ in which fields they omit or send as null.
+#[derive(Deserialize)]
+struct StreamChunk {
+    choices: Option<Vec<StreamChoice>>,
+    error: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct StreamChoice {
+    index: Option<u32>,
+    delta: Option<StreamDelta>,
+    finish_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct StreamDelta {
+    content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -346,10 +515,17 @@ mod tests {
         status: &str,
         body: &str,
     ) -> (String, tokio::task::JoinHandle<serde_json::Value>) {
+        let response = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        mock_http(vec![response.into_bytes()]).await
+    }
+
+    /// Writes each chunk separately so clients observe incremental bodies.
+    async fn mock_http(
+        chunks: Vec<Vec<u8>>,
+    ) -> (String, tokio::task::JoinHandle<serde_json::Value>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
-        let response = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
         let task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut request = Vec::new();
@@ -377,10 +553,140 @@ mod tests {
                 request.extend_from_slice(&chunk[..n]);
             }
             let json = serde_json::from_slice(&request[header_end..header_end + length]).unwrap();
-            socket.write_all(response.as_bytes()).await.unwrap();
+            for chunk in chunks {
+                // The client may close early once its answer budget is full.
+                if socket.write_all(&chunk).await.is_err() {
+                    break;
+                }
+                let _ = socket.flush().await;
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
             json
         });
         (base, task)
+    }
+
+    fn sse_response(events: &[&str]) -> Vec<Vec<u8>> {
+        let mut chunks = vec![b"HTTP/1.1 200 OK\r\nContent-Type: Text/Event-Stream; charset=utf-8\r\nConnection: close\r\n\r\n".to_vec()];
+        chunks.extend(events.iter().map(|e| e.as_bytes().to_vec()));
+        chunks
+    }
+
+    fn delta(text: &str) -> String {
+        format!(
+            "data: {}\n\n",
+            serde_json::json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":null}]})
+        )
+    }
+
+    fn drain(deltas: &mut tokio::sync::mpsc::UnboundedReceiver<String>) -> Vec<String> {
+        std::iter::from_fn(|| deltas.try_recv().ok()).collect()
+    }
+
+    #[test]
+    fn sse_decoder_handles_split_lines_crlf_multiline_data_and_comments() {
+        let mut decoder = SseDecoder::default();
+        let stream = "data: {\"a\":\r\ndata: \"中\"}\r\n\r\n: keep-alive\n\nevent: x\nid: 1\ndata:[DONE]\n\n".as_bytes();
+        let mut events = Vec::new();
+        // Feed one byte at a time, including in the middle of a UTF-8 sequence.
+        for byte in stream {
+            events.extend(decoder.feed(std::slice::from_ref(byte)).unwrap());
+        }
+        assert_eq!(events, ["{\"a\":\n\"中\"}", "[DONE]"]);
+        let mut decoder = SseDecoder::default();
+        assert!(decoder.feed(&vec![b'x'; MAX_EVENT_BYTES + 1]).is_err());
+        assert!(SseDecoder::default().feed(b"data: \xff\n").is_err());
+    }
+
+    #[tokio::test]
+    async fn streams_deltas_and_returns_the_authoritative_answer() {
+        let first = delta("## Head");
+        let second = delta("ing\n\nbody \u{1b}[31m");
+        let (base, server) = mock_http(sse_response(&[
+            ": comment\n\n",
+            r#"data: {"choices":[{"index":0,"delta":{"role":"assistant"}}]}"#,
+            "\n\n",
+            &first,
+            &second,
+            r#"data: {"choices":[{"index":1,"delta":{"content":"other choice"}}]}"#,
+            "\n\n",
+            r#"data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+            "\n\n",
+            r#"data: {"choices":[],"usage":{"total_tokens":3}}"#,
+            "\n\ndata: [DONE]\n\n",
+        ]))
+        .await;
+        let client = LlmClient::new(&base, "m".into(), None).unwrap();
+        let (output, mut deltas) = AnswerStream::channel();
+        let messages = Conversation::default().messages("q", &Memory::default());
+        let answer = client.stream(&messages, &output).await.unwrap();
+        assert_eq!(answer, "## Heading\n\nbody [31m");
+        assert_eq!(drain(&mut deltas), ["## Head", "ing\n\nbody \u{1b}[31m"]);
+        assert_eq!(server.await.unwrap()["stream"], true);
+    }
+
+    #[tokio::test]
+    async fn incomplete_or_failed_streams_are_errors_without_diagnostics() {
+        let messages = Conversation::default().messages("q", &Memory::default());
+        let part = delta("partial");
+        for (events, expected) in [
+            (vec![part.as_str()], "ended before completion"),
+            (
+                vec![
+                    part.as_str(),
+                    "data: {\"error\":{\"message\":\"private-secret\"}}\n\n",
+                ],
+                "reported an error",
+            ),
+            (
+                vec!["data: private-secret\n\n"],
+                "invalid streaming response",
+            ),
+            (vec!["data: [DONE]\n\n"], "no text answer"),
+        ] {
+            let (base, server) = mock_http(sse_response(&events)).await;
+            let client = LlmClient::new(&base, "m".into(), None).unwrap();
+            let (output, _deltas) = AnswerStream::channel();
+            let error = client.stream(&messages, &output).await.unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+            assert!(!error.to_string().contains("private-secret"));
+            server.await.unwrap();
+        }
+        // A finish_reason completes the turn even if [DONE] is omitted.
+        let done = r#"data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#;
+        let (base, server) = mock_http(sse_response(&[done, "\n\n"])).await;
+        let client = LlmClient::new(&base, "m".into(), None).unwrap();
+        let (output, _deltas) = AnswerStream::channel();
+        assert_eq!(client.stream(&messages, &output).await.unwrap(), "ok");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stream_falls_back_to_json_bodies_and_stops_at_the_answer_budget() {
+        let messages = Conversation::default().messages("q", &Memory::default());
+        let (base, server) =
+            mock_service("200 OK", r#"{"choices":[{"message":{"content":"json"}}]}"#).await;
+        let client = LlmClient::new(&base, "m".into(), None).unwrap();
+        let (output, mut deltas) = AnswerStream::channel();
+        assert_eq!(client.stream(&messages, &output).await.unwrap(), "json");
+        assert!(drain(&mut deltas).is_empty());
+        assert_eq!(server.await.unwrap()["stream"], true);
+
+        let (base, server) = mock_service("429 Too Many Requests", "private-secret").await;
+        let client = LlmClient::new(&base, "m".into(), None).unwrap();
+        let error = client.stream(&messages, &output).await.unwrap_err();
+        assert!(error.to_string().contains("429") && !error.to_string().contains("private"));
+        server.await.unwrap();
+
+        // No [DONE]: the client stops reading once the 8 KiB budget is full.
+        let big = delta(&"中".repeat(1000));
+        let events = vec![big.as_str(); 64];
+        let (base, server) = mock_http(sse_response(&events)).await;
+        let client = LlmClient::new(&base, "m".into(), None).unwrap();
+        let answer = client.stream(&messages, &output).await.unwrap();
+        assert!(answer.ends_with("[Answer truncated at 8 KiB]"));
+        assert!(drain(&mut deltas).len() < 64);
+        server.await.unwrap();
     }
 
     #[tokio::test]

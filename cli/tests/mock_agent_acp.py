@@ -136,6 +136,10 @@ def main():
             if question == "long-answer":
                 for _ in range(20):
                     answer("中" * 1000)
+            elif question == "stream-acp":
+                answer("ACP streamed first")
+                time.sleep(0.5)
+                answer(" and second")
             else:
                 answer("\x1b[31mMock ACP ")
                 answer("answer grounded in query evidence.")
