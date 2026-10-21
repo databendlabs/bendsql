@@ -8,6 +8,9 @@ ignore = [
     "RUSTSEC-2025-0057",
     "RUSTSEC-2026-0176",
     "RUSTSEC-2026-0177",
+    # webpki-roots 0.26.11 (required by tonic 0.13) only re-exports webpki-roots
+    # 1.x, which `[bans]` below keeps at the patched >= 1.0.10.
+    "RUSTSEC-2026-0381",
 ]
 
 [licenses]
@@ -37,6 +40,8 @@ license-files = [
 multiple-versions = "allow"
 wildcards = "warn"
 highlight = "all"
+# RUSTSEC-2026-0381 is ignored for the 0.26 shim; the roots it re-exports must be patched.
+deny = [{ crate = "webpki-roots@~1.0, <1.0.10", reason = "RUSTSEC-2026-0381" }]
 
 [sources]
 unknown-git = "deny"
