@@ -21,8 +21,16 @@ use serde::Serialize;
 
 use crate::error::{Error, Result};
 
+#[async_trait::async_trait]
 pub trait Auth: Sync + Send {
+    async fn prepare(&self) -> Result<()> {
+        Ok(())
+    }
+
     fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder>;
+    fn needs_prepare(&self) -> bool {
+        false
+    }
     fn can_reload(&self) -> bool {
         false
     }

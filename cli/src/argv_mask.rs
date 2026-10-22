@@ -34,7 +34,7 @@ use clap::Command;
 use percent_encoding::percent_decode;
 
 /// Connection parameters (DSN query or `--set key=value`) that carry secrets.
-const SENSITIVE_KEYS: &[&str] = &["access_token", "session_token"];
+const SENSITIVE_KEYS: &[&str] = &["access_token", "session_token", "cloud_api_token"];
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -56,7 +56,7 @@ struct OptSpec {
 
 fn sensitive_kind(id: &str) -> Option<Kind> {
     match id {
-        "password" => Some(Kind::Secret),
+        "password" | "cloud_api_token" => Some(Kind::Secret),
         "dsn" => Some(Kind::Dsn),
         "set" => Some(Kind::KeyValue),
         _ => None,
@@ -490,6 +490,30 @@ mod tests {
                 "role=r"
             ]
         );
+    }
+
+    #[test]
+    fn masks_cloud_api_token_everywhere() {
+        for argv in [
+            vec!["bendsql", "--cloud-api-token", "dbc_secret"],
+            vec!["bendsql", "--cloud-api-token=dbc_secret"],
+            vec![
+                "bendsql",
+                "--dsn=databend://u:p@h/?cloud_api_token=dbc_secret",
+            ],
+            vec![
+                "bendsql",
+                "--dsn=databend://h/?%63loud_api_token=dbc_secret",
+            ],
+            vec!["bendsql", "--set", "cloud_api_token=dbc_secret"],
+        ] {
+            let result = masked(&argv);
+            assert!(!result.join(" ").contains("dbc_secret"));
+            assert_eq!(
+                result.iter().map(String::len).sum::<usize>(),
+                argv.iter().map(|s| s.len()).sum::<usize>()
+            );
+        }
     }
 
     #[test]

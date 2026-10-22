@@ -60,7 +60,7 @@ fn log_message<'a>(target: &str, message: &'a str, ai_active: bool) -> std::borr
         }
     }
     static ASSIGNMENT: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r#"(?ix)\b(password|secret_access_key|access_key_id|aws_secret_key|api_key|api_token|client_secret|refresh_token|access_token|session_token|token|secret|authorization)\b(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:(?:Bearer|Basic)\s+)?[^\s,\]}&]+)"#).unwrap()
+        Regex::new(r#"(?ix)\b(password|secret_access_key|access_key_id|aws_secret_key|api_key|api_token|cloud_api_token|client_secret|refresh_token|access_token|session_token|token|secret|authorization)\b(["']?\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|(?:(?:Bearer|Basic)\s+)?[^\s,\]}&]+)"#).unwrap()
     });
     let mut output = ASSIGNMENT
         .replace_all(message, |cap: &regex::Captures<'_>| {
@@ -234,6 +234,18 @@ mod tests {
                     format!("{prefix}[SQL payload omitted]")
                 );
             }
+        }
+    }
+
+    #[test]
+    fn ai_redaction_covers_cloud_api_token() {
+        for message in [
+            "databend://u:p@host/?cloud_api_token=dbc_secret&warehouse=wh",
+            "cloud_api_token='dbc_secret'",
+            "CLOUD_API_TOKEN=dbc_secret",
+        ] {
+            let protected = log_message("databend_client::client", message, true);
+            assert!(!protected.contains("dbc_secret"));
         }
     }
 

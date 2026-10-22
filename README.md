@@ -81,6 +81,12 @@ Check for latest version on [GitHub Release](https://github.com/databendlabs/ben
 
 ## Usage
 
+For Databend Cloud personal API tokens, use `cloud_api_token` in the DSN or
+`--cloud-api-token` / `BENDSQL_CLOUD_API_TOKEN`. Username/password are ignored in
+this mode; queries still use the original Gateway. See [Cloud API token authentication](docs/cloud-api-token.md)
+for supported endpoints, precedence and renewal behavior. The Cloud token-exchange
+service must be deployed before this authentication method is usable.
+
 ```
 ❯ bendsql --help
 Databend Native Command Line Tool

@@ -102,6 +102,13 @@ impl Client {
 
     pub async fn get_conn(&self) -> Result<Connection> {
         let u = Url::parse(&self.dsn)?;
+        if matches!(u.scheme(), "databend+flight" | "databend+grpc")
+            && u.query_pairs().any(|(key, _)| key == "cloud_api_token")
+        {
+            return Err(Error::BadArgument(
+                "cloud_api_token authentication is not supported with FlightSQL".into(),
+            ));
+        }
         match u.scheme() {
             "databend" | "databend+http" | "databend+https" => {
                 let conn = RestAPIConnection::try_create(&self.dsn, self.name.clone()).await?;
@@ -659,6 +666,22 @@ pub trait RowORM: TryFrom<Row> + Clone {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cloud_api_token_rejects_flight_before_connecting() {
+        for scheme in ["databend+flight", "databend+grpc"] {
+            let client = Client::new(format!(
+                "{scheme}://localhost/default?cloud_api_token=secret"
+            ));
+            let err = client
+                .get_conn()
+                .await
+                .err()
+                .expect("Cloud token must reject FlightSQL");
+            assert!(err.to_string().contains("not supported with FlightSQL"));
+            assert!(!err.to_string().contains("secret"));
+        }
+    }
 
     #[test]
     fn test_statement_is_dml() {

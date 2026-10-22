@@ -15,6 +15,7 @@
 use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth};
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
+use crate::cloud_api_token::CloudApiTokenAuth;
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
 use crate::global_cookie_store::GlobalCookieStore;
 use crate::login::{
@@ -75,6 +76,9 @@ const HEADER_SESSION_ID: &str = "X-DATABEND-SESSION-ID";
 const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 const CONTENT_TYPE_ARROW_OR_JSON: &str = "application/vnd.apache.arrow.stream";
 const DEFAULT_USERNAME: &str = "root";
+
+#[cfg(test)]
+mod cloud_api_token_tests;
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -235,6 +239,7 @@ impl APIClient {
     pub async fn new(dsn: &str, name: Option<String>) -> Result<Arc<Self>> {
         let mut client = Self::from_dsn(dsn).await?;
         client.build_client(name).await?;
+        client.auth.prepare().await?;
         if !client.disable_login {
             client.login().await?;
         }
@@ -265,8 +270,15 @@ impl APIClient {
             client.host = host.to_string();
         }
 
+        let mut cloud_tokens = u.query_pairs().filter(|(key, _)| key == "cloud_api_token");
+        let cloud_token = cloud_tokens.next().map(|(_, value)| value.into_owned());
+        if cloud_tokens.next().is_some() {
+            return Err(Error::BadArgument(
+                "cloud_api_token must be specified only once".into(),
+            ));
+        }
         let username = u.username().to_string();
-        if !username.is_empty() {
+        if cloud_token.is_none() && !username.is_empty() {
             let password = u.password().unwrap_or_default();
             let password = percent_decode_str(password).decode_utf8()?;
             client.auth = Arc::new(BasicAuth::new(&username, password));
@@ -281,6 +293,7 @@ impl APIClient {
 
         let mut private_key_file: Option<String> = None;
         let mut private_key_passphrase_file: Option<String> = None;
+        let mut has_access_token = false;
 
         let mut scheme = "https";
         for (k, v) in u.query_pairs() {
@@ -336,10 +349,13 @@ impl APIClient {
                 "tls_ca_file" => {
                     client.tls_ca_file = Some(v.to_string());
                 }
+                "cloud_api_token" => {}
                 "access_token" => {
+                    has_access_token = true;
                     client.auth = Arc::new(AccessTokenAuth::new(v));
                 }
                 "access_token_file" => {
+                    has_access_token = true;
                     client.auth = Arc::new(AccessTokenFileAuth::new(v));
                 }
                 "private_key_file" => {
@@ -390,6 +406,13 @@ impl APIClient {
                 }
             }
         }
+        if cloud_token.is_some()
+            && (has_access_token
+                || private_key_file.is_some()
+                || private_key_passphrase_file.is_some())
+        {
+            return Err(Error::BadArgument("cloud_api_token cannot be combined with access_token, access_token_file or key-pair credentials".into()));
+        }
         // If private_key_file is specified, use KeyPairAuth.
         if let Some(key_file) = private_key_file {
             if username.is_empty() {
@@ -414,6 +437,22 @@ impl APIClient {
         client.scheme = scheme.to_string();
         client.endpoint = Url::parse(&format!("{}://{}:{}", scheme, client.host, client.port))?;
         client.session_state = Mutex::new(session_state);
+        if let Some(token) = cloud_token {
+            if u.scheme() == "databend+http" {
+                return Err(Error::BadArgument("cloud_api_token requires HTTPS".into()));
+            }
+            let auth = CloudApiTokenAuth::for_gateway(client.endpoint.clone(), token)?;
+            if client
+                .tenant
+                .as_deref()
+                .is_some_and(|tenant| tenant != auth.tenant_id())
+            {
+                return Err(Error::BadArgument(
+                    "Cloud tenant must match the Gateway host".into(),
+                ));
+            }
+            client.auth = auth;
+        }
 
         Ok(client)
     }
@@ -451,6 +490,9 @@ impl APIClient {
                 let cert = reqwest::Certificate::from_pem(&cert_pem)?;
                 cli_builder = cli_builder.add_root_certificate(cert);
             }
+        }
+        if self.auth.needs_prepare() {
+            cli_builder = cli_builder.redirect(reqwest::redirect::Policy::none());
         }
         self.cli = cli_builder.build()?;
         Ok(())
@@ -1253,6 +1295,18 @@ impl APIClient {
         let retry_delay = Duration::from_secs(self.retry_delay_secs);
 
         loop {
+            // Refresh credentials before sending, never by replaying a rejected
+            // SQL statement. Explicit session-refresh credentials stay intact.
+            if self.auth.needs_prepare()
+                && self.session_token_info.is_none()
+                && !matches!(request_kind, RequestKind::SessionRefresh)
+            {
+                self.auth.prepare().await?;
+                request = self
+                    .auth
+                    .wrap(RequestBuilder::from_parts(self.cli.clone(), request))?
+                    .build()?;
+            }
             let req = request.try_clone().expect("request not cloneable");
             let response = match self.cli.execute(req).await {
                 Ok(response) => response,
@@ -1399,6 +1453,32 @@ impl APIClient {
         }
     }
 
+    async fn logout_with_auth(
+        auth: Option<Arc<dyn Auth>>,
+        http_client: HttpClient,
+        mut request: Request,
+        session_id: &str,
+    ) {
+        if let Some(auth) = auth.filter(|auth| auth.needs_prepare()) {
+            if let Err(err) = auth.prepare().await {
+                warn!("[session {session_id}] cannot refresh logout credentials: {err}");
+                return;
+            }
+            let builder = RequestBuilder::from_parts(http_client.clone(), request);
+            request = match auth
+                .wrap(builder)
+                .and_then(|builder| builder.build().map_err(Error::from))
+            {
+                Ok(request) => request,
+                Err(err) => {
+                    warn!("[session {session_id}] cannot prepare logout: {err}");
+                    return;
+                }
+            };
+        }
+        Self::logout(http_client, request, session_id).await;
+    }
+
     pub async fn logout(http_client: HttpClient, request: Request, session_id: &str) {
         if let Err(err) = http_client.execute(request).await {
             error!("[session {session_id}] logout request failed: {err}");
@@ -1421,7 +1501,8 @@ impl APIClient {
                 let req = self
                     .build_log_out_request()
                     .expect("failed to build logout request");
-                Self::logout(cli, req, &self.session_id).await;
+                let auth = self.session_token_info.is_none().then(|| self.auth.clone());
+                Self::logout_with_auth(auth, cli, req, &self.session_id).await;
             }
         }
     }
@@ -1440,8 +1521,9 @@ impl APIClient {
                     .build_log_out_request()
                     .expect("failed to build logout request");
                 let session_id = self.session_id.clone();
+                let auth = self.session_token_info.is_none().then(|| self.auth.clone());
                 GLOBAL_RUNTIME.spawn(async move {
-                    Self::logout(cli, req, session_id.as_str()).await;
+                    Self::logout_with_auth(auth, cli, req, session_id.as_str()).await;
                 });
             }
         }

@@ -18,7 +18,10 @@ use anyhow::{anyhow, Result};
 use databend_client::SensitiveString;
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[cfg(test)]
+mod cloud_api_token_tests;
+
+#[derive(Clone, PartialEq, Default)]
 pub struct ConnectionArgs {
     pub host: String,
     pub port: Option<u16>,
@@ -29,8 +32,56 @@ pub struct ConnectionArgs {
     pub args: BTreeMap<String, String>,
 }
 
+impl std::fmt::Debug for ConnectionArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let args: BTreeMap<_, _> = self
+            .args
+            .iter()
+            .map(|(key, value)| {
+                let value = if matches!(
+                    key.as_str(),
+                    "cloud_api_token" | "access_token" | "session_token"
+                ) {
+                    "**REDACTED**"
+                } else {
+                    value.as_str()
+                };
+                (key.as_str(), value)
+            })
+            .collect();
+        f.debug_struct("ConnectionArgs")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("password", &self.password)
+            .field("database", &self.database)
+            .field("flight", &self.flight)
+            .field("args", &args)
+            .finish()
+    }
+}
+
 impl ConnectionArgs {
+    pub fn apply_cloud_api_token(
+        &mut self,
+        command_line: Option<SensitiveString>,
+        environment: Option<SensitiveString>,
+    ) {
+        if let Some(token) = command_line {
+            self.args.insert("cloud_api_token".into(), token.into());
+        } else if !self.args.contains_key("cloud_api_token") {
+            if let Some(token) = environment {
+                self.args.insert("cloud_api_token".into(), token.into());
+            }
+        }
+    }
+
     pub fn get_dsn(self) -> Result<String> {
+        if self.flight && self.args.contains_key("cloud_api_token") {
+            return Err(anyhow!(
+                "cloud_api_token authentication is not supported with FlightSQL"
+            ));
+        }
         if self.flight && self.args.contains_key("private_key_file") {
             return Err(anyhow!(
                 "key-pair authentication is not supported with FlightSQL"
@@ -40,9 +91,11 @@ impl ConnectionArgs {
         let mut dsn = url::Url::parse("databend://")?;
         dsn.set_host(Some(&self.host))?;
         _ = dsn.set_port(self.port);
-        _ = dsn.set_username(&self.user);
-        let password = utf8_percent_encode(self.password.inner(), NON_ALPHANUMERIC).to_string();
-        _ = dsn.set_password(Some(&password));
+        if !self.args.contains_key("cloud_api_token") {
+            _ = dsn.set_username(&self.user);
+            let password = utf8_percent_encode(self.password.inner(), NON_ALPHANUMERIC).to_string();
+            _ = dsn.set_password(Some(&password));
+        }
         if let Some(database) = self.database {
             dsn.set_path(&database);
         }
@@ -64,15 +117,27 @@ impl ConnectionArgs {
         let mut args = BTreeMap::new();
         if let Some(query) = u.query() {
             for (k, v) in url::form_urlencoded::parse(query.as_bytes()) {
+                if k == "cloud_api_token" && args.contains_key("cloud_api_token") {
+                    return Err(anyhow!("cloud_api_token must be specified only once"));
+                }
                 args.insert(k.to_string(), v.to_string());
             }
+        }
+        if args.contains_key("cloud_api_token") && u.scheme().ends_with("+grpc") {
+            return Err(anyhow!(
+                "cloud_api_token authentication is not supported with FlightSQL"
+            ));
         }
         let flight = u.scheme().ends_with("+flight");
         let host = u.host_str().ok_or(anyhow!("missing host"))?.to_string();
         let port = u.port();
         let user = u.username().to_string();
         let password = u.password().unwrap_or_default();
-        let password = percent_decode_str(password).decode_utf8()?.to_string();
+        let password = if args.contains_key("cloud_api_token") {
+            String::new()
+        } else {
+            percent_decode_str(password).decode_utf8()?.to_string()
+        };
         let password = SensitiveString::from(password);
         let database = u.path().strip_prefix('/').map(|s| s.to_string());
         Ok(Self {
