@@ -15,6 +15,7 @@
 use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth};
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
+use crate::cloud_api::{CloudApiAuth, HEADER_CLOUD_WAREHOUSE};
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
 use crate::global_cookie_store::GlobalCookieStore;
 use crate::login::{
@@ -76,6 +77,9 @@ const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 const CONTENT_TYPE_ARROW_OR_JSON: &str = "application/vnd.apache.arrow.stream";
 const DEFAULT_USERNAME: &str = "root";
 
+#[cfg(test)]
+mod cloud_api_tests;
+
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
     version.to_string()
@@ -111,6 +115,7 @@ pub struct APIClient {
     endpoint: Url,
 
     auth: Arc<dyn Auth>,
+    is_cloud_webapi: bool,
 
     /// Tenant ID used only in Databend Cloud management mode.
     /// This is NOT for specifying tenant in normal usage.
@@ -224,12 +229,17 @@ impl APIClient {
         }
     }
 
-    fn status_body_to_error(status: StatusCode, body: &[u8]) -> Error {
-        match serde_json::from_slice::<ResponseWithErrorCode>(body) {
+    fn status_body_to_error(&self, status: StatusCode, body: &[u8]) -> Error {
+        let error = match serde_json::from_slice::<ResponseWithErrorCode>(body) {
             Ok(resp) if status == StatusCode::UNAUTHORIZED => Error::AuthFailure(resp.error),
             Ok(resp) => Error::Logic(status, resp.error),
             Err(_) => Error::response_error(status, body),
-        }
+        };
+        self.auth.sanitize_error(error)
+    }
+
+    fn decode_response<'a, T: Deserialize<'a>>(&self, body: &'a [u8]) -> Result<T> {
+        json_from_slice(body).map_err(|error| self.auth.sanitize_error(error))
     }
 
     pub async fn new(dsn: &str, name: Option<String>) -> Result<Arc<Self>> {
@@ -265,8 +275,44 @@ impl APIClient {
             client.host = host.to_string();
         }
 
+        let mut cloud_token = None;
+        let mut org_slug = None;
+        let mut conflicting_auth = false;
+        for (key, value) in u.query_pairs() {
+            let slot = match key.as_ref() {
+                "cloud_api_token" => &mut cloud_token,
+                "org_slug" => &mut org_slug,
+                "access_token"
+                | "access_token_file"
+                | "private_key_file"
+                | "private_key_passphrase_file" => {
+                    conflicting_auth = true;
+                    continue;
+                }
+                _ => continue,
+            };
+            if slot.replace(value.into_owned()).is_some() {
+                return Err(Error::BadArgument(
+                    "cloud_api_token and org_slug must each be specified only once".into(),
+                ));
+            }
+        }
+        if cloud_token.is_some() && conflicting_auth {
+            return Err(Error::BadArgument(
+                "cloud_api_token cannot be combined with Access Token or Key Pair credentials"
+                    .into(),
+            ));
+        }
+        if cloud_token.is_none() && org_slug.is_some() {
+            return Err(Error::BadArgument(
+                "org_slug requires cloud_api_token".into(),
+            ));
+        }
+        if cloud_token.is_some() && u.host_str().is_none() {
+            client.host = "api.databend.com".into();
+        }
         let username = u.username().to_string();
-        if !username.is_empty() {
+        if cloud_token.is_none() && !username.is_empty() {
             let password = u.password().unwrap_or_default();
             let password = percent_decode_str(password).decode_utf8()?;
             client.auth = Arc::new(BasicAuth::new(&username, password));
@@ -336,6 +382,7 @@ impl APIClient {
                 "tls_ca_file" => {
                     client.tls_ca_file = Some(v.to_string());
                 }
+                "cloud_api_token" | "org_slug" => {}
                 "access_token" => {
                     client.auth = Arc::new(AccessTokenAuth::new(v));
                 }
@@ -414,6 +461,30 @@ impl APIClient {
         client.scheme = scheme.to_string();
         client.endpoint = Url::parse(&format!("{}://{}:{}", scheme, client.host, client.port))?;
         client.session_state = Mutex::new(session_state);
+        if let Some(token) = cloud_token {
+            if u.scheme() == "databend+http" {
+                return Err(Error::BadArgument("cloud_api_token requires HTTPS".into()));
+            }
+            let org = org_slug
+                .ok_or_else(|| Error::BadArgument("cloud_api_token requires org_slug".into()))?;
+            client.auth = Arc::new(CloudApiAuth::new(client.endpoint.clone(), token, org)?);
+            client.is_cloud_webapi = true;
+            if client.tenant.is_some() {
+                return Err(Error::BadArgument(
+                    "Cloud WebAPI selects its tenant using org_slug, not tenant".into(),
+                ));
+            }
+            if client.query_result_format != "json"
+                || client.wait_time_secs.is_some()
+                || client.max_rows_in_buffer.is_some()
+                || client.max_rows_per_page.is_some()
+            {
+                return Err(Error::BadArgument(
+                    "Cloud WebAPI does not support Arrow or pagination tuning".into(),
+                ));
+            }
+            client.set_presign_mode(PresignMode::Off);
+        }
 
         Ok(client)
     }
@@ -442,7 +513,6 @@ impl APIClient {
         let mut cli_builder = HttpClient::builder()
             .user_agent(ua)
             .connect_timeout(self.connect_timeout)
-            .cookie_provider(Arc::new(cookie_provider))
             .pool_idle_timeout(Duration::from_secs(1));
         #[cfg(any(feature = "rustls", feature = "native-tls"))]
         if self.scheme == "https" {
@@ -452,11 +522,20 @@ impl APIClient {
                 cli_builder = cli_builder.add_root_certificate(cert);
             }
         }
+        if self.is_cloud_webapi {
+            cli_builder = cli_builder.redirect(reqwest::redirect::Policy::none());
+        } else {
+            cli_builder = cli_builder.cookie_provider(Arc::new(cookie_provider));
+        }
         self.cli = cli_builder.build()?;
         Ok(())
     }
 
     async fn check_presign(self: &Arc<Self>) -> Result<()> {
+        if self.is_cloud_webapi {
+            self.set_presign_mode(PresignMode::Off);
+            return Ok(());
+        }
         let mode = match self.get_presign_mode() {
             PresignMode::Auto => {
                 if self.host.ends_with(".databend.com")
@@ -611,6 +690,9 @@ impl APIClient {
     }
 
     fn wrap_auth_or_session_token(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
+        if self.is_cloud_webapi {
+            return self.auth.wrap(builder);
+        }
         if let Some(info) = &self.session_token_info {
             let info = info.lock();
             Ok(builder.bearer_auth(info.0.session_token.clone()))
@@ -626,6 +708,11 @@ impl APIClient {
         force_json_body: bool,
         params: Option<serde_json::Value>,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
+        if self.is_cloud_webapi && (stage_attachment_config.is_some() || params.is_some()) {
+            return Err(Error::BadArgument(
+                "Cloud WebAPI does not support stage attachments or bound parameters".into(),
+            ));
+        }
         if !self.in_active_transaction() {
             self.route_hint.next();
         }
@@ -639,6 +726,9 @@ impl APIClient {
             .with_session(Some(session_state))
             .with_stage_attachment(stage_attachment_config)
             .with_params(params);
+        if self.is_cloud_webapi {
+            req = req.with_string_fields();
+        }
 
         // headers
         let query_id = self.gen_query_id();
@@ -682,7 +772,7 @@ impl APIClient {
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
         let status = response.status;
         if status != StatusCode::OK {
-            let error = Self::status_body_to_error(status, &response.body);
+            let error = self.status_body_to_error(status, &response.body);
             if !is_first {
                 if let Error::Logic(code, ec) = &error {
                     if *code == StatusCode::NOT_FOUND {
@@ -722,10 +812,10 @@ impl APIClient {
             }
             body = json_body
         };
-        let resp: QueryResponse = json_from_slice(&body)?;
+        let resp: QueryResponse = self.decode_response(&body)?;
         self.handle_session(&resp.session).await;
         if let Some(err) = &resp.error {
-            return Err(Error::QueryFailed(err.clone()));
+            return Err(self.auth.sanitize_error(Error::QueryFailed(err.clone())));
         }
         if is_first {
             self.handle_warnings(&resp);
@@ -760,7 +850,13 @@ impl APIClient {
         let request = builder.build()?;
 
         let response = self
-            .query_request_helper(request, false, true, true, RequestKind::QueryPage)
+            .query_request_helper(
+                request,
+                self.is_cloud_webapi,
+                true,
+                true,
+                RequestKind::QueryPage,
+            )
             .await?;
         self.handle_page(response, false).await
     }
@@ -790,14 +886,36 @@ impl APIClient {
 
         info!("{method} query: {uri}");
 
-        let mut builder = self.cli.post(endpoint.clone());
+        let mut builder = if self.is_cloud_webapi && !is_kill {
+            self.cli.get(endpoint.clone())
+        } else {
+            self.cli.post(endpoint.clone())
+        };
         if let Some(node_id) = node_id {
             builder = builder.header(HEADER_STICKY_NODE, node_id)
         }
         builder = self.wrap_auth_or_session_token(builder)?;
+        if self.is_cloud_webapi {
+            let request = builder
+                .headers(headers)
+                .timeout(self.page_request_timeout)
+                .build()?;
+            let response = self
+                .query_request_helper(request, true, false, false, request_kind.clone())
+                .await?;
+            if response.status != StatusCode::OK {
+                return Err(self
+                    .status_body_to_error(response.status, &response.body)
+                    .with_context(request_kind)
+                    .with_query_id(query_id));
+            }
+            return Ok(());
+        }
         let resp = builder.headers(headers.clone()).send().await?;
         if resp.status() != 200 {
-            return Err(Error::response_error(resp.status(), &resp.bytes().await?)
+            return Err(self
+                .auth
+                .sanitize_error(Error::response_error(resp.status(), &resp.bytes().await?))
                 .with_context(request_kind)
                 .with_query_id(query_id));
         }
@@ -863,7 +981,11 @@ impl APIClient {
             headers.insert(HEADER_TENANT, tenant.parse()?);
         }
         let warehouse = self.warehouse.lock().clone();
-        if let Some(warehouse) = warehouse {
+        if self.is_cloud_webapi {
+            if let Some(warehouse) = warehouse {
+                headers.insert(HEADER_CLOUD_WAREHOUSE, warehouse.parse()?);
+            }
+        } else if let Some(warehouse) = warehouse {
             headers.insert(HEADER_WAREHOUSE, warehouse.parse()?);
         }
         let route_hint = self.route_hint.current();
@@ -935,6 +1057,11 @@ impl APIClient {
         data: Reader,
         size: u64,
     ) -> Result<()> {
+        if self.is_cloud_webapi {
+            return Err(Error::BadArgument(
+                "stage upload is not supported through Cloud WebAPI".into(),
+            ));
+        }
         match self.get_presign_mode() {
             PresignMode::Off => self.upload_to_stage_with_stream(stage, data, size).await,
             PresignMode::On => {
@@ -1012,6 +1139,11 @@ impl APIClient {
         data: Reader,
         file_name: &str,
     ) -> Result<LoadResponse> {
+        if self.is_cloud_webapi {
+            return Err(Error::BadArgument(
+                "streaming load is not supported through Cloud WebAPI".into(),
+            ));
+        }
         let body = Body::wrap_stream(ReaderStream::new(data));
         let part = Part::stream(body).file_name(file_name.to_string());
         let endpoint = self.endpoint.join("v1/streaming_load")?;
@@ -1067,7 +1199,8 @@ impl APIClient {
             return Ok(());
         }
         if response.status != StatusCode::OK {
-            return Err(Self::status_body_to_error(response.status, &response.body)
+            return Err(self
+                .status_body_to_error(response.status, &response.body)
                 .with_context(RequestKind::Login));
         }
         if let Some(v) = response.headers.get(HEADER_SESSION_ID) {
@@ -1076,9 +1209,11 @@ impl APIClient {
             }
         }
 
-        let response = json_from_slice(&response.body)?;
+        let response = self.decode_response(&response.body)?;
         match response {
-            LoginResponseResult::Err { error } => return Err(Error::AuthFailure(error)),
+            LoginResponseResult::Err { error } => {
+                return Err(self.auth.sanitize_error(Error::AuthFailure(error)))
+            }
             LoginResponseResult::Ok(info) => {
                 let server_version = info
                     .version
@@ -1087,7 +1222,7 @@ impl APIClient {
                 self.capability = Capability::from_server_version(&server_version);
                 self.server_version = Some(server_version.clone());
                 let session_id = self.session_id.as_str();
-                if let Some(tokens) = info.tokens {
+                if let Some(tokens) = info.tokens.filter(|_| !self.is_cloud_webapi) {
                     info!(
                         "[session {session_id}] login success with session token version = {server_version}",
                     );
@@ -1101,6 +1236,9 @@ impl APIClient {
     }
 
     pub(crate) async fn try_heartbeat(&self) -> Result<()> {
+        if self.is_cloud_webapi {
+            return Ok(());
+        }
         let endpoint = self.endpoint.join("/v1/session/heartbeat")?;
         let queries = self.queries_need_heartbeat.lock().clone();
         let mut node_to_queries = HashMap::<String, Vec<String>>::new();
@@ -1133,10 +1271,11 @@ impl APIClient {
             .query_request_helper(request, true, false, true, RequestKind::Heartbeat)
             .await?;
         if response.status != StatusCode::OK {
-            return Err(Self::status_body_to_error(response.status, &response.body)
+            return Err(self
+                .status_body_to_error(response.status, &response.body)
                 .with_context(RequestKind::Heartbeat));
         }
-        let json: Value = json_from_slice(&response.body)?;
+        let json: Value = self.decode_response(&response.body)?;
         let session_id = self.session_id.as_str();
         info!("[session {session_id}] heartbeat request={body}, response={json}");
         if let Some(queries_to_remove) = json.get("queries_to_remove") {
@@ -1180,6 +1319,9 @@ impl APIClient {
     }
 
     pub(crate) fn need_logout(&self) -> bool {
+        if self.is_cloud_webapi {
+            return false;
+        }
         self.session_token_info.is_some()
             || self.session_state.lock().need_keep_alive.unwrap_or(false)
     }
@@ -1206,10 +1348,11 @@ impl APIClient {
             .query_request_helper(request, true, false, false, RequestKind::SessionRefresh)
             .await?;
         if response.status != StatusCode::OK {
-            return Err(Self::status_body_to_error(response.status, &response.body)
+            return Err(self
+                .status_body_to_error(response.status, &response.body)
                 .with_context(RequestKind::SessionRefresh));
         }
-        let response = json_from_slice(&response.body)?;
+        let response = self.decode_response(&response.body)?;
         match response {
             RefreshResponse::Err { error } => Err(Error::AuthFailure(error)),
             RefreshResponse::Ok(info) => {
@@ -1249,6 +1392,10 @@ impl APIClient {
     ) -> Result<HttpResponseData> {
         let mut refreshed = false;
         let mut retries = 0;
+        // Only query submission can have ambiguous SQL side effects. Connect
+        // errors precede sending bytes; login/page/final can be safely repeated.
+        let allow_replay =
+            !self.is_cloud_webapi || !matches!(request_kind, RequestKind::QueryStart);
         let max_retries = self.retry_count;
         let retry_delay = Duration::from_secs(self.retry_delay_secs);
 
@@ -1257,7 +1404,9 @@ impl APIClient {
             let response = match self.cli.execute(req).await {
                 Ok(response) => response,
                 Err(err) => {
-                    if let Some(reason) = Self::retry_reason_for_reqwest(&err) {
+                    if let Some(reason) = Self::retry_reason_for_reqwest(&err)
+                        .filter(|_| allow_replay || err.is_connect())
+                    {
                         if retries >= max_retries.saturating_sub(1) {
                             return Err(Self::with_request_context(
                                 err,
@@ -1293,7 +1442,10 @@ impl APIClient {
             let body = match response.bytes().await {
                 Ok(body) => body,
                 Err(err) => {
-                    if let Some(reason) = Self::retry_reason_for_reqwest(&err) {
+                    if let Some(reason) = Self::retry_reason_for_reqwest(&err)
+                        .or_else(|| self.is_cloud_webapi.then_some("response body error"))
+                        .filter(|_| allow_replay)
+                    {
                         if retries >= max_retries.saturating_sub(1) {
                             return Err(Self::with_request_context(
                                 err,
@@ -1324,7 +1476,7 @@ impl APIClient {
                 }
             };
 
-            if retry_if_503 && status == StatusCode::SERVICE_UNAVAILABLE {
+            if retry_if_503 && allow_replay && status == StatusCode::SERVICE_UNAVAILABLE {
                 if retries >= max_retries.saturating_sub(1) {
                     return Ok(HttpResponseData {
                         status,
@@ -1484,6 +1636,7 @@ impl Default for APIClient {
             tenant: None,
             warehouse: Mutex::new(None),
             auth: Arc::new(BasicAuth::new(DEFAULT_USERNAME, "")) as Arc<dyn Auth>,
+            is_cloud_webapi: false,
             session_state: Mutex::new(SessionState::default()),
             wait_time_secs: None,
             max_rows_in_buffer: None,

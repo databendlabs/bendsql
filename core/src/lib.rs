@@ -13,6 +13,7 @@
 // limitations under the License.
 
 mod client;
+mod cloud_api;
 
 mod auth;
 mod error;
