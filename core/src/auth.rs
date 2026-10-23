@@ -23,6 +23,9 @@ use crate::error::{Error, Result};
 
 pub trait Auth: Sync + Send {
     fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder>;
+    fn sanitize_error(&self, error: Error) -> Error {
+        error
+    }
     fn can_reload(&self) -> bool {
         false
     }

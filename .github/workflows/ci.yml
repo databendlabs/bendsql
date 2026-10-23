@@ -89,8 +89,12 @@ jobs:
           python-version: '3.12'
       - name: Test CLI unit behavior and embedded Databend skill
         run: cargo test -p bendsql --bin bendsql --all-features
+      - name: Test Cloud token CLI safety (no credentials or Docker)
+        run: cargo test -p bendsql --test cloud_api_token --all-features
       - name: Build CLI for provider integration
         run: cargo build -p bendsql --bin bendsql
+      - name: Test Cloud WebAPI HTTPS and authentication isolation (no credentials or Docker)
+        run: python3 cli/tests/cloud_webapi_https.py target/debug/bendsql
       - name: Test mock OpenAI provider (no credentials, model calls or Docker)
         run: python3 cli/tests/agent_repl.py target/debug/bendsql --provider-only
       - name: Test SQL compatibility and AI sharing boundaries (no provider credentials)
