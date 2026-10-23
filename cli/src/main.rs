@@ -98,6 +98,15 @@ struct Args {
     )]
     private_key_file: Option<String>,
 
+    #[clap(
+        long,
+        help = "Personal Cloud API token (or BENDSQL_CLOUD_API_TOKEN); ignores username/password"
+    )]
+    cloud_api_token: Option<SensitiveString>,
+
+    #[clap(long, help = "Cloud organization slug (or BENDSQL_ORG)")]
+    org: Option<String>,
+
     #[clap(long, help = "Passphrase file for encrypted PKCS#8 private key")]
     private_key_passphrase_file: Option<String>,
 
@@ -296,10 +305,23 @@ pub async fn main() -> Result<()> {
                 password,
                 database: config.connection.database.clone(),
                 flight: args.flight,
+                dsn_scheme: None,
                 args: config.connection.args.clone(),
             }
         }
     };
+
+    let implicit_cloud_tls = args.dsn.is_none()
+        && args.tls.is_none()
+        && config.connection.tls.is_none()
+        && !config.connection.args.contains_key("sslmode")
+        && !args.set.iter().any(|(key, _)| key == "sslmode");
+    let implicit_cloud_host =
+        args.dsn.is_none() && args.host.is_none() && !config.connection.explicit_host;
+    let implicit_cloud_port =
+        args.dsn.is_none() && args.port.is_none() && !config.connection.explicit_port;
+    let explicit_userinfo =
+        args.user.is_some() || args.password.is_some() || config.connection.explicit_user;
 
     // Override connection args with command line options
     {
@@ -364,6 +386,38 @@ pub async fn main() -> Result<()> {
         }
     }
 
+    let environment_cloud_token = if args.cloud_api_token.is_none()
+        && conn_args.accepts_environment_cloud_token(args.dsn.is_some(), explicit_userinfo)
+    {
+        match std::env::var("BENDSQL_CLOUD_API_TOKEN") {
+            Ok(token) => Some(token.into()),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(anyhow!("BENDSQL_CLOUD_API_TOKEN must be UTF-8"))
+            }
+        }
+    } else {
+        None
+    };
+    conn_args.apply_cloud_api_token(args.cloud_api_token, environment_cloud_token);
+    let uses_cloud_api_token = conn_args.args.contains_key("cloud_api_token");
+    let environment_org =
+        if uses_cloud_api_token && args.org.is_none() && !conn_args.args.contains_key("org_slug") {
+            match std::env::var("BENDSQL_ORG") {
+                Ok(org) => Some(org).filter(|org| !org.is_empty()),
+                Err(std::env::VarError::NotPresent) => None,
+                Err(std::env::VarError::NotUnicode(_)) => {
+                    return Err(anyhow!("BENDSQL_ORG must be UTF-8"))
+                }
+            }
+        } else {
+            None
+        };
+    conn_args.apply_org(args.org, environment_org);
+    conn_args.cloud_defaults(implicit_cloud_host, implicit_cloud_port, implicit_cloud_tls);
+    // Validate after all credential sources are merged, before network access or
+    // publishing the DSN to the unauthenticated web/Python runner.
+    conn_args.validate_cloud_options(args.ui)?;
     let user = conn_args.user.clone();
     let dsn = conn_args.get_dsn()?;
     let mut settings = Settings::default();
@@ -432,6 +486,9 @@ pub async fn main() -> Result<()> {
         Ok(session) => session,
         Err(err) => {
             // Exit client if user login failed.
+            if uses_cloud_api_token {
+                return Err(err);
+            }
             if let Some(error) = err.downcast_ref::<databend_driver::Error>() {
                 match error {
                     databend_driver::Error::Api(databend_client::Error::AuthFailure(_)) => {

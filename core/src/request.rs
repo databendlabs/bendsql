@@ -23,6 +23,8 @@ pub struct QueryRequest<'a> {
     session: Option<SessionState>,
     sql: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    string_fields: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pagination: Option<PaginationConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stage_attachment: Option<StageAttachmentConfig<'a>>,
@@ -56,11 +58,17 @@ impl<'r, 't: 'r> QueryRequest<'r> {
         QueryRequest {
             session: None,
             sql,
+            string_fields: None,
             pagination: None,
             stage_attachment: None,
             arrow_result_version_max: None,
             params: None,
         }
+    }
+
+    pub fn with_string_fields(mut self) -> Self {
+        self.string_fields = Some(true);
+        self
     }
 
     pub fn with_session(mut self, session: Option<SessionState>) -> Self {

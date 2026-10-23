@@ -272,8 +272,7 @@ impl Settings {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(default)]
+#[derive(Clone, Debug)]
 pub struct ConnectionConfig {
     pub host: String,
     pub port: Option<u16>,
@@ -281,6 +280,40 @@ pub struct ConnectionConfig {
     pub database: Option<String>,
     pub tls: Option<bool>,
     pub args: BTreeMap<String, String>,
+    // Preserve source presence even when a configured value equals the default.
+    pub explicit_host: bool,
+    pub explicit_port: bool,
+    pub explicit_user: bool,
+}
+
+impl<'de> Deserialize<'de> for ConnectionConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        #[derive(Default, Deserialize)]
+        #[serde(default)]
+        struct Input {
+            host: Option<String>,
+            port: Option<u16>,
+            user: Option<String>,
+            database: Option<String>,
+            tls: Option<bool>,
+            args: BTreeMap<String, String>,
+        }
+        let input = Input::deserialize(deserializer)?;
+        let defaults = Self::default();
+        Ok(Self {
+            explicit_host: input.host.is_some(),
+            explicit_port: input.port.is_some(),
+            explicit_user: input.user.is_some(),
+            host: input.host.unwrap_or(defaults.host),
+            port: input.port.or(defaults.port),
+            user: input.user.unwrap_or(defaults.user),
+            database: input.database,
+            tls: input.tls,
+            args: input.args,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -376,6 +409,9 @@ impl Default for ConnectionConfig {
             database: None,
             tls: None,
             args: BTreeMap::new(),
+            explicit_host: false,
+            explicit_port: false,
+            explicit_user: false,
         }
     }
 }
