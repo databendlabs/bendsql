@@ -988,6 +988,11 @@ command = {json.dumps(mock)}
             screen = visible_terminal(output)
             assert screen.count("ACP streamed first and second") == 1, screen
             wait_stopped(acp_records(path, "prompt")[-1])
+            for question in ["tool-call", "permission", "read-file", "write-file", "terminal", "extension"]:
+                terminal.send(f"!ask {question}")
+                wait_stopped(acp_records(path, "prompt")[-1])
+                output = b"".join(terminal.transcript)
+                assert b"private-acp-secret" not in output, "Invalidated ACP turns must stop streaming"
             terminal.finish()
 
 

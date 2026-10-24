@@ -130,6 +130,13 @@ def main():
                     "options": [{"optionId": "allow", "name": "Approve", "kind": "allow_always"}],
                 }})
                 receive_reply("server-request")
+            if question in ["tool-call", "permission", "read-file", "write-file", "terminal", "extension"]:
+                answer("private-acp-secret after capability denial")
+                # Leave enough time for a live frame if the client incorrectly
+                # continues publishing text after the turn is invalidated.
+                time.sleep(0.2)
+                result(prompt_id)
+                continue
             if question == "no-answer":
                 result(prompt_id)
                 continue

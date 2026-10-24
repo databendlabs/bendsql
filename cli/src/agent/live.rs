@@ -38,13 +38,13 @@ const FRAME_END: &str = "\x1b[?2026l";
 const RESET: &str = "\x1b[0m";
 
 /// Spinner plus optional live region for one AI request.
-pub(crate) struct AnswerView {
-    live: Option<LiveRegion<io::Stdout>>,
+pub(crate) struct AnswerView<W: Write = io::Stdout> {
+    live: Option<LiveRegion<W>>,
     spinner: Option<AiProgress>,
     _echo: Option<EchoOff>,
 }
 
-impl AnswerView {
+impl AnswerView<io::Stdout> {
     /// Live output needs a capable Unix terminal of a usable size; otherwise
     /// the spinner stays until the final answer, as without streaming.
     pub(crate) fn new(mode: AiOutput, stream: bool) -> Self {
@@ -61,7 +61,9 @@ impl AnswerView {
             spinner: Some(AiProgress::new()),
         }
     }
+}
 
+impl<W: Write> AnswerView<W> {
     pub(crate) fn is_live(&self) -> bool {
         self.live.is_some()
     }
@@ -74,32 +76,47 @@ impl AnswerView {
 
     /// Draw pending text. Call periodically, not per delta, to bound redraws.
     pub(crate) fn tick(&mut self) {
+        self.tick_at_size(stdout_size());
+    }
+
+    fn tick_at_size(&mut self, size: Option<(usize, usize)>) {
         let Some(live) = &mut self.live else {
             return;
         };
-        if stdout_size() != Some(live.size) {
-            // Some terminals reflow drawn rows on resize, so the row count is
-            // no longer reliable. Erase what we can and finish with the spinner.
-            let _ = live.clear();
-            self.live = None;
-            self.spinner.get_or_insert_with(AiProgress::new);
-            return;
+        if size != Some(live.size) {
+            if let Some(size) = size.filter(|&(columns, rows)| {
+                live.rows == 0 && columns >= MIN_COLUMNS && rows >= MIN_ROWS
+            }) {
+                // Nothing has been drawn yet, so no rows could have reflowed.
+                live.size = size;
+            } else {
+                // Some terminals reflow drawn rows on resize, so the row count
+                // is no longer reliable. Finish with the spinner instead.
+                self.stop_live();
+                return;
+            }
         }
         if live.has_frame() {
             // Join the spinner ticker and erase its line before the first frame.
             self.spinner = None;
             if live.draw().is_err() {
-                let _ = live.clear();
-                self.live = None;
+                self.stop_live();
             }
         }
+    }
+
+    fn stop_live(&mut self) {
+        if let Some(mut live) = self.live.take() {
+            let _ = live.clear();
+        }
+        self.spinner.get_or_insert_with(AiProgress::new);
     }
 
     /// Erase every transient line; call before printing the answer or error.
     pub(crate) fn finish(self) {}
 }
 
-impl Drop for AnswerView {
+impl<W: Write> Drop for AnswerView<W> {
     fn drop(&mut self) {
         self.spinner = None;
         if let Some(live) = &mut self.live {
@@ -161,7 +178,7 @@ struct LiveRegion<W: Write> {
     out: W,
     mode: AiOutput,
     color: bool,
-    /// Terminal (columns, rows) when streaming started.
+    /// Terminal (columns, rows) used for drawing.
     size: (usize, usize),
     text: String,
     dirty: bool,
@@ -257,11 +274,82 @@ fn frame_rows(rendered: &str, width: usize, max_rows: usize, color: bool) -> Vec
     std::iter::once(note).chain(tail).collect()
 }
 
+/// Conservative cell width for terminals that render ambiguous characters wide.
+fn cell_width(c: char) -> usize {
+    // unicode-width deliberately keeps ambiguous Letters/Modifier_Symbols narrow
+    // even in width_cjk(). Restore their Unicode 17 East_Asian_Width=A widths:
+    // https://www.unicode.org/Public/17.0.0/ucd/EastAsianWidth.txt
+    match c {
+        '\u{00A8}'
+        | '\u{00AA}'
+        | '\u{00B4}'
+        | '\u{00B8}'
+        | '\u{00BA}'
+        | '\u{00C6}'
+        | '\u{00D0}'
+        | '\u{00D8}'
+        | '\u{00DE}'..='\u{00E1}'
+        | '\u{00E6}'
+        | '\u{00E8}'..='\u{00EA}'
+        | '\u{00EC}'..='\u{00ED}'
+        | '\u{00F0}'
+        | '\u{00F2}'..='\u{00F3}'
+        | '\u{00F8}'..='\u{00FA}'
+        | '\u{00FC}'
+        | '\u{00FE}'
+        | '\u{0101}'
+        | '\u{0111}'
+        | '\u{0113}'
+        | '\u{011B}'
+        | '\u{0126}'..='\u{0127}'
+        | '\u{012B}'
+        | '\u{0131}'..='\u{0133}'
+        | '\u{0138}'
+        | '\u{013F}'..='\u{0142}'
+        | '\u{0144}'
+        | '\u{0148}'..='\u{014B}'
+        | '\u{014D}'
+        | '\u{0152}'..='\u{0153}'
+        | '\u{0166}'..='\u{0167}'
+        | '\u{016B}'
+        | '\u{01CE}'
+        | '\u{01D0}'
+        | '\u{01D2}'
+        | '\u{01D4}'
+        | '\u{01D6}'
+        | '\u{01D8}'
+        | '\u{01DA}'
+        | '\u{01DC}'
+        | '\u{0251}'
+        | '\u{0261}'
+        | '\u{02C4}'
+        | '\u{02C7}'
+        | '\u{02C9}'..='\u{02CB}'
+        | '\u{02CD}'
+        | '\u{02D0}'
+        | '\u{02D8}'..='\u{02DB}'
+        | '\u{02DD}'
+        | '\u{02DF}'
+        | '\u{0391}'..='\u{03A1}'
+        | '\u{03A3}'..='\u{03A9}'
+        | '\u{03B1}'..='\u{03C1}'
+        | '\u{03C3}'..='\u{03C9}'
+        | '\u{0401}'
+        | '\u{0410}'..='\u{044F}'
+        | '\u{0451}'
+        | '\u{207F}'
+        | '\u{2113}'
+        | '\u{2126}'
+        | '\u{212B}' => 2,
+        _ => c.width_cjk().unwrap_or(0),
+    }
+}
+
 fn clip(text: &str, width: usize) -> String {
     let mut used = 0;
     text.chars()
         .take_while(|c| {
-            used += c.width().unwrap_or(0);
+            used += cell_width(*c);
             used <= width
         })
         .collect()
@@ -302,11 +390,12 @@ fn wrap(rendered: &str, width: usize) -> Vec<String> {
             };
             // VS16 (U+FE0F) asks for emoji presentation, which many terminals
             // draw two columns wide even when the base is narrow (`⚠️`, `✔️`).
-            // Over-counting only wraps early; under-counting would let the
-            // terminal wrap a row itself and desync the region.
+            // Count East Asian Ambiguous characters as wide too, including the
+            // renderer's bullets, quote bars and hidden-lines marker. Over-counting
+            // only wraps early; under-counting could desync the region on CJK terminals.
             let emoji = chars.peek().is_some_and(|&(_, next)| next == '\u{FE0F}');
             for _ in 0..cells {
-                let mut char_width = text.chars().next().and_then(|c| c.width()).unwrap_or(0);
+                let mut char_width = if c == '\t' { 1 } else { cell_width(c) };
                 if emoji && char_width == 1 {
                     char_width = 2;
                 }
@@ -344,7 +433,7 @@ mod tests {
             } else if c == '\x1b' {
                 escape = true;
             } else {
-                width += c.width().unwrap_or(0);
+                width += cell_width(c);
             }
         }
         width
@@ -413,7 +502,11 @@ mod tests {
                         }
                     }
                     c => {
-                        let width = c.width().unwrap_or(0);
+                        let width = if matches!(c, 'α' | 'Я') {
+                            2
+                        } else {
+                            c.width_cjk().unwrap_or(0)
+                        };
                         assert!(self.column + width < self.size.0, "row reached last column");
                         // Frames always write after erasing, left to right.
                         self.lines[self.row].push(c);
@@ -449,11 +542,103 @@ mod tests {
     }
 
     #[test]
+    fn ambiguous_width_characters_wrap_and_clip_conservatively() {
+        for c in ['│', '•', '─', '…', 'α', 'Я', '→', '①', '×', 'á', 'ˇ', 'Å'] {
+            assert_eq!(c.width(), Some(1));
+            assert_eq!(cell_width(c), 2, "{c}");
+            let text = c.to_string().repeat(6);
+            assert_eq!(wrap(&text, 5), vec![c.to_string().repeat(2); 3]);
+            assert_eq!(clip(&text, 5), c.to_string().repeat(2));
+        }
+        let size = (24, 6);
+        let mut screen = Screen::new(size, &["agent> q"]);
+        screen.apply(b"\r\n");
+        let mut region = LiveRegion::new(Vec::new(), AiOutput::Markdown, false, size);
+        // Exercise renderer-generated quote/bullet/rule glyphs and tail markers,
+        // as well as user text, on a terminal with wide ambiguous characters.
+        for delta in [
+            "> αЯ→①×\n\n",
+            "- bullet\n\n---\n\n",
+            &"│•─…αЯ→①×".repeat(12),
+        ] {
+            region.push(delta);
+            region.draw().unwrap();
+            screen.apply(&std::mem::take(&mut region.out));
+        }
+        assert!(screen.text().contains("earlier lines"));
+        region.clear().unwrap();
+        screen.apply(&region.out);
+        assert_eq!(screen.text(), "agent> q");
+    }
+
+    #[test]
+    fn resize_before_first_frame_keeps_live_mode_but_not_after_drawing() {
+        let mut view = AnswerView {
+            live: Some(LiveRegion::new(
+                Vec::new(),
+                AiOutput::Plain,
+                false,
+                (80, 24),
+            )),
+            spinner: None,
+            _echo: None,
+        };
+        view.tick_at_size(Some((60, 20)));
+        assert_eq!(view.live.as_ref().unwrap().size, (60, 20));
+        view.push("pending text");
+        view.tick_at_size(Some((40, 10)));
+        assert!(view.live.as_ref().unwrap().rows > 0);
+        assert!(view.spinner.is_none());
+        view.tick_at_size(Some((60, 20)));
+        assert!(!view.is_live());
+        assert!(view.spinner.is_some());
+
+        for size in [None, Some((19, 24)), Some((80, 4))] {
+            view.live = Some(LiveRegion::new(
+                Vec::new(),
+                AiOutput::Plain,
+                false,
+                (80, 24),
+            ));
+            view.tick_at_size(size);
+            assert!(!view.is_live());
+            assert!(view.spinner.is_some());
+        }
+    }
+
+    #[test]
+    fn draw_failure_restores_the_spinner() {
+        struct BrokenWriter;
+        impl Write for BrokenWriter {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::other("failed draw"))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut view = AnswerView {
+            live: Some(LiveRegion::new(
+                BrokenWriter,
+                AiOutput::Plain,
+                false,
+                (80, 24),
+            )),
+            spinner: None,
+            _echo: None,
+        };
+        view.push("pending text");
+        view.tick_at_size(Some((80, 24)));
+        assert!(!view.is_live());
+        assert!(view.spinner.is_some());
+    }
+
+    #[test]
     fn long_frames_show_only_the_tail_within_the_terminal() {
         let rendered: String = (0..30).map(|n| format!("line {n}\n")).collect();
         let rows = frame_rows(&rendered, 19, 9, false);
         assert_eq!(rows.len(), 9);
-        assert!(rows[0].starts_with("… 22 earlier lines"));
+        assert_eq!(rows[0], "… 22 earlier lines");
         assert!(display_width(&rows[0]) <= 19);
         assert_eq!(rows[8], "line 29");
         assert!(frame_rows("short\n", 19, 9, true).len() == 1);

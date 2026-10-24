@@ -241,7 +241,7 @@ impl Answer {
                     text.text,
                     super::memory::MAX_TEXT_BYTES.saturating_sub(self.text.len()),
                 );
-                if !self.truncated {
+                if !self.truncated && !self.denied {
                     if let Some(output) = &self.output {
                         output.text(&text);
                     }
@@ -575,10 +575,12 @@ mod tests {
                 SessionUpdate::ToolCall(ToolCall::new("tool", "private-secret")),
             ))
             .unwrap();
+        answer.update(chunk("text after tool use")).unwrap();
+        assert_eq!(answer.text, "Mock answer");
         assert!(answer.finish(StopReason::EndTurn).is_err());
         assert!(
             deltas.try_recv().is_err(),
-            "tool payloads are never streamed"
+            "neither tool payloads nor text after invalidation are streamed"
         );
     }
 

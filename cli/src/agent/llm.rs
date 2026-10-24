@@ -236,8 +236,13 @@ impl LlmClient {
             .map_err(|_| anyhow!("Model request failed or timed out; check the model service configuration. SQL remains available."))?;
         if !response.status().is_success() {
             // Do not echo response bodies or request URLs, which may contain secrets.
+            let hint = if stream && matches!(response.status().as_u16(), 400 | 415 | 422) {
+                " If this gateway does not support streaming, use !set ai_stream false and try again."
+            } else {
+                ""
+            };
             bail!(
-                "Model service returned HTTP {}. SQL remains available.",
+                "Model service returned HTTP {}.{hint} SQL remains available.",
                 response.status().as_u16()
             );
         }
@@ -284,6 +289,11 @@ async fn read_event_stream(
             }
         }
     }
+    for data in decoder.finish()? {
+        if answer.event(&data, output)? {
+            break;
+        }
+    }
     answer.finish()
 }
 
@@ -296,6 +306,12 @@ struct SseDecoder {
 }
 
 impl SseDecoder {
+    fn finish(mut self) -> Result<Vec<String>> {
+        // Be lenient with gateways that close without the final blank line (or
+        // even the last newline). Reuse framing so UTF-8 and byte limits apply.
+        self.feed(b"\n\n")
+    }
+
     fn feed(&mut self, chunk: &[u8]) -> Result<Vec<String>> {
         let mut events = Vec::new();
         for &byte in chunk {
@@ -378,6 +394,9 @@ impl StreamedAnswer {
 }
 
 // Compatible services differ in which fields they omit or send as null.
+// Accept objects without choices for usage/metadata events. Unknown provider
+// error shapes are ignored too, but cannot mark a turn complete: absent a
+// recognized completion signal, EOF still fails with partial text discarded.
 #[derive(Deserialize)]
 struct StreamChunk {
     choices: Option<Vec<StreamChoice>>,
@@ -598,6 +617,28 @@ mod tests {
         assert!(SseDecoder::default().feed(b"data: \xff\n").is_err());
     }
 
+    #[test]
+    fn sse_decoder_flushes_pending_data_at_eof_with_the_same_limits() {
+        for ending in ["", "\n", "\r\n", "\n\n"] {
+            let mut decoder = SseDecoder::default();
+            let mut events = decoder
+                .feed(format!("data: 中{ending}").as_bytes())
+                .unwrap();
+            events.extend(decoder.finish().unwrap());
+            assert_eq!(events, ["中"]);
+        }
+        assert!(SseDecoder::default().finish().unwrap().is_empty());
+        let mut decoder = SseDecoder::default();
+        decoder.feed(b"data: \xff").unwrap();
+        assert!(decoder.finish().is_err());
+        let mut decoder = SseDecoder::default();
+        decoder.feed(b"data: earlier\n").unwrap();
+        decoder
+            .feed(format!("data: {}", "x".repeat(MAX_EVENT_BYTES - 6)).as_bytes())
+            .unwrap();
+        assert!(decoder.finish().is_err());
+    }
+
     #[tokio::test]
     async fn streams_deltas_and_returns_the_authoritative_answer() {
         let first = delta("## Head");
@@ -642,6 +683,13 @@ mod tests {
                 vec!["data: private-secret\n\n"],
                 "invalid streaming response",
             ),
+            (
+                vec![
+                    part.as_str(),
+                    "data: {\"type\":\"error\",\"message\":\"private-secret\"}\n\n",
+                ],
+                "ended before completion",
+            ),
             (vec!["data: [DONE]\n\n"], "no text answer"),
         ] {
             let (base, server) = mock_http(sse_response(&events)).await;
@@ -654,11 +702,44 @@ mod tests {
         }
         // A finish_reason completes the turn even if [DONE] is omitted.
         let done = r#"data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#;
-        let (base, server) = mock_http(sse_response(&[done, "\n\n"])).await;
+        for ending in ["\n\n", "\n", ""] {
+            let (base, server) = mock_http(sse_response(&[done, ending])).await;
+            let client = LlmClient::new(&base, "m".into(), None).unwrap();
+            let (output, _deltas) = AnswerStream::channel();
+            assert_eq!(client.stream(&messages, &output).await.unwrap(), "ok");
+            server.await.unwrap();
+        }
+        // A pending [DONE] event may also complete a turn at EOF.
+        let (base, server) = mock_http(sse_response(&[&part, "data: [DONE]"])).await;
         let client = LlmClient::new(&base, "m".into(), None).unwrap();
         let (output, _deltas) = AnswerStream::channel();
-        assert_eq!(client.stream(&messages, &output).await.unwrap(), "ok");
+        assert_eq!(client.stream(&messages, &output).await.unwrap(), "partial");
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejected_stream_requests_suggest_disabling_streaming_without_retrying() {
+        let messages = Conversation::default().messages("q", &Memory::default());
+        let (output, _deltas) = AnswerStream::channel();
+        for status in [
+            "400 Bad Request",
+            "415 Unsupported Media Type",
+            "422 Unprocessable Content",
+        ] {
+            for stream in [true, false] {
+                let (base, server) = mock_service(status, "private-secret").await;
+                let client = LlmClient::new(&base, "m".into(), None).unwrap();
+                let result = if stream {
+                    client.stream(&messages, &output).await
+                } else {
+                    client.complete(&messages).await
+                };
+                let error = result.unwrap_err().to_string();
+                assert_eq!(error.contains("!set ai_stream false"), stream, "{error}");
+                assert!(!error.contains("private-secret"));
+                assert_eq!(server.await.unwrap()["stream"], stream);
+            }
+        }
     }
 
     #[tokio::test]
