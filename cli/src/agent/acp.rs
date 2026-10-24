@@ -21,7 +21,7 @@ use anyhow::anyhow;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 
-use super::backend::ChatBackend;
+use super::backend::{AnswerStream, ChatBackend};
 use super::cli::{child_environment, resolve_executable};
 use super::llm::Message;
 
@@ -69,6 +69,16 @@ fn validate_args(args: &[String]) -> Result<()> {
 #[async_trait]
 impl ChatBackend for AcpBackend {
     async fn complete(&self, messages: &[Message]) -> Result<String> {
+        self.prompt(messages, None).await
+    }
+
+    async fn stream(&self, messages: &[Message], output: &AnswerStream) -> Result<String> {
+        self.prompt(messages, Some(output.clone())).await
+    }
+}
+
+impl AcpBackend {
+    async fn prompt(&self, messages: &[Message], output: Option<AnswerStream>) -> Result<String> {
         #[cfg(unix)]
         {
             use tokio_util::sync::CancellationToken;
@@ -89,7 +99,7 @@ impl ChatBackend for AcpBackend {
             let mut worker = Worker {
                 cancel,
                 join: Some(tokio::spawn(async move {
-                    run(executable, args, env, input, worker_cancel).await
+                    run(executable, args, env, input, worker_cancel, output).await
                 })),
             };
             let result = worker.join.as_mut().unwrap().await;
@@ -98,7 +108,7 @@ impl ChatBackend for AcpBackend {
         }
         #[cfg(not(unix))]
         {
-            let _ = (&self.executable, &self.args, &self.env, messages);
+            let _ = (&self.executable, &self.args, &self.env, messages, output);
             bail!("ACP process backends are not supported on this platform")
         }
     }
@@ -194,6 +204,8 @@ struct Answer {
     text: String,
     truncated: bool,
     denied: bool,
+    /// Display-only deltas; `finish` still decides whether the turn counts.
+    output: Option<AnswerStream>,
 }
 
 #[cfg(unix)]
@@ -229,7 +241,10 @@ impl Answer {
                     text.text,
                     super::memory::MAX_TEXT_BYTES.saturating_sub(self.text.len()),
                 );
-                if !self.truncated {
+                if !self.truncated && !self.denied {
+                    if let Some(output) = &self.output {
+                        output.text(&text);
+                    }
                     self.text.push_str(&text);
                 }
                 self.truncated |= cut;
@@ -268,6 +283,7 @@ async fn run(
     env: BTreeMap<OsString, OsString>,
     input: String,
     cancel: tokio_util::sync::CancellationToken,
+    output: Option<AnswerStream>,
 ) -> Result<String> {
     use agent_client_protocol::schema::v1::{
         CancelNotification, ClientCapabilities, ContentBlock, Implementation, InitializeRequest,
@@ -327,7 +343,10 @@ async fn run(
             Ok(line)
         },
     );
-    let state = Arc::new(Mutex::new(Answer::default()));
+    let state = Arc::new(Mutex::new(Answer {
+        output,
+        ..Answer::default()
+    }));
     let notifications = state.clone();
     let requests = state.clone();
     let runner_state = state.clone();
@@ -520,6 +539,49 @@ mod tests {
             budget.accept(&frame, MAX_FRAME_BYTES).unwrap();
         }
         assert!(budget.accept(&frame, MAX_FRAME_BYTES).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn answer_chunks_are_streamed_but_only_committed_on_success() {
+        use agent_client_protocol::schema::v1::{
+            ContentBlock, ContentChunk, SessionNotification, SessionUpdate, StopReason,
+            TextContent, ToolCall,
+        };
+        let (output, mut deltas) = AnswerStream::channel();
+        let mut answer = Answer {
+            session: Some("session".into()),
+            collecting: true,
+            output: Some(output),
+            ..Answer::default()
+        };
+        let chunk = |text: &str| {
+            SessionNotification::new(
+                "session".to_owned(),
+                SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
+                    TextContent::new(text.to_owned()),
+                ))),
+            )
+        };
+        answer.update(chunk("Mock ")).unwrap();
+        answer.update(chunk("answer")).unwrap();
+        assert_eq!(deltas.try_recv().unwrap(), "Mock ");
+        assert_eq!(deltas.try_recv().unwrap(), "answer");
+        assert_eq!(answer.finish(StopReason::EndTurn).unwrap(), "Mock answer");
+        // Tool use after streamed text still invalidates the whole turn.
+        answer
+            .update(SessionNotification::new(
+                "session".to_owned(),
+                SessionUpdate::ToolCall(ToolCall::new("tool", "private-secret")),
+            ))
+            .unwrap();
+        answer.update(chunk("text after tool use")).unwrap();
+        assert_eq!(answer.text, "Mock answer");
+        assert!(answer.finish(StopReason::EndTurn).is_err());
+        assert!(
+            deltas.try_recv().is_err(),
+            "neither tool payloads nor text after invalidation are streamed"
+        );
     }
 
     #[cfg(unix)]

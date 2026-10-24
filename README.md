@@ -272,6 +272,7 @@ troubleshooting guidance; it does not execute SQL or grant tools.
 [settings]
 prompt = "🐳 @{database} [{mode}]:) "
 ai_output = "markdown" # or "plain"
+ai_stream = true       # show answers while they are generated
 ```
 
 The default connection/database prompt is unchanged:
@@ -282,6 +283,12 @@ Use `save_history = false` to disable SQL disk history explicitly. Custom templa
 are used as-is; omit `{mode}` to hide the mode. AI answers use terminal Markdown, with a temporary spinner that
 clears before the answer. Switch styles with `!set ai_output plain` or
 `!set ai_output markdown`; SQL result formatting is unchanged.
+
+On an interactive terminal, answers from OpenAI-compatible and ACP backends stream
+by default. While an answer is generated only its last screenful is shown; the
+complete answer is printed when the turn finishes. A failed, interrupted or
+timed-out turn erases the partial text and is not added to the conversation.
+Use `!set ai_stream false` (or `ai_stream = false`) to wait for complete answers.
 
 Authentication recovery reconnects but does not automatically replay a statement;
 verify execution state before retrying writes. See [compatibility notes](CHANGELOG.md).

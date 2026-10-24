@@ -130,12 +130,23 @@ def main():
                     "options": [{"optionId": "allow", "name": "Approve", "kind": "allow_always"}],
                 }})
                 receive_reply("server-request")
+            if question in ["tool-call", "permission", "read-file", "write-file", "terminal", "extension"]:
+                answer("private-acp-secret after capability denial")
+                # Leave enough time for a live frame if the client incorrectly
+                # continues publishing text after the turn is invalidated.
+                time.sleep(0.2)
+                result(prompt_id)
+                continue
             if question == "no-answer":
                 result(prompt_id)
                 continue
             if question == "long-answer":
                 for _ in range(20):
                     answer("中" * 1000)
+            elif question == "stream-acp":
+                answer("ACP streamed first")
+                time.sleep(0.5)
+                answer(" and second")
             else:
                 answer("\x1b[31mMock ACP ")
                 answer("answer grounded in query evidence.")

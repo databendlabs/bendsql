@@ -21,10 +21,22 @@ use crate::config::AiOutput;
 /// Presentation only: never send ANSI-rendered text back into the conversation.
 /// No shell, URL opener, syntax highlighter or image loader is involved.
 pub(crate) fn format_answer(answer: &str, mode: AiOutput) -> String {
-    let terminal =
-        io::stdout().is_terminal() && std::env::var_os("TERM").is_none_or(|term| term != "dumb");
-    let color = std::env::var_os("NO_COLOR").is_none();
-    render(answer, mode, terminal, color)
+    render(answer, mode, rich_terminal(), color())
+}
+
+/// Whether stdout can show rendered Markdown and cursor-addressed redraws.
+pub(super) fn rich_terminal() -> bool {
+    io::stdout().is_terminal() && std::env::var_os("TERM").is_none_or(|term| term != "dumb")
+}
+
+pub(super) fn color() -> bool {
+    std::env::var_os("NO_COLOR").is_none()
+}
+
+/// A live frame uses the same renderer as the final answer, so the completed
+/// answer replaces the last frame without a change of style.
+pub(super) fn render_frame(answer: &str, mode: AiOutput, color: bool) -> String {
+    render(answer, mode, true, color)
 }
 
 fn plain(answer: &str) -> String {
