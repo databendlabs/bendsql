@@ -368,13 +368,21 @@ async fn native_completed_queries_release_tracking_too() {
     client.is_cloud_webapi = false;
     client.auth = Arc::new(BasicAuth::new("root", ""));
     let client = Arc::new(client);
-    let page = client.query_all("SELECT 1", None).await.unwrap();
-    assert_eq!(
-        page.data,
-        vec![vec![Some("1".into())], vec![Some("2".into())]]
-    );
+    let pages = client.start_query("SELECT 1", false, None).await.unwrap();
+    let (mut pages, _, _) = pages.wait_for_schema(false).await.unwrap();
+    assert!(client.queries_need_heartbeat.lock().contains_key("q1"));
+
+    let first = pages.next().await.unwrap().unwrap();
+    assert_eq!(first.data, vec![vec![Some("1".into())]]);
+    assert!(client.queries_need_heartbeat.lock().contains_key("q1"));
+
+    let terminal = pages.next().await.unwrap().unwrap();
+    assert_eq!(terminal.data, vec![vec![Some("2".into())]]);
+    // Check before polling None or dropping Pages: either path also removes
+    // tracking and could otherwise hide missing terminal-response cleanup.
     assert!(client.queries_need_heartbeat.lock().is_empty());
     client.try_heartbeat().await.unwrap();
+    assert!(pages.next().await.is_none());
     let requests = server.requests.lock();
     assert_eq!(requests.len(), 2);
     for request in requests.iter() {
