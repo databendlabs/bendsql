@@ -283,8 +283,8 @@ async fn read_event_stream(
         }
         for data in decoder.feed(&chunk)? {
             if answer.event(&data, output)? {
-                // Dropping the response closes the connection, so the service
-                // stops generating once the answer budget is exhausted.
+                // Do not wait for EOF after a completion signal or read past
+                // the answer budget. Dropping the response closes the connection.
                 return answer.finish();
             }
         }
@@ -379,7 +379,7 @@ impl StreamedAnswer {
             }
             self.finished |= choice.finish_reason.is_some();
         }
-        Ok(self.text.len() > MAX_TEXT_BYTES)
+        Ok(self.finished || self.text.len() > MAX_TEXT_BYTES)
     }
 
     fn finish(self) -> Result<String> {
@@ -542,6 +542,13 @@ mod tests {
     async fn mock_http(
         chunks: Vec<Vec<u8>>,
     ) -> (String, tokio::task::JoinHandle<serde_json::Value>) {
+        mock_http_with_hold(chunks, None).await
+    }
+
+    async fn mock_http_with_hold(
+        chunks: Vec<Vec<u8>>,
+        hold: Option<tokio::sync::oneshot::Receiver<()>>,
+    ) -> (String, tokio::task::JoinHandle<serde_json::Value>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
@@ -579,6 +586,10 @@ mod tests {
                 }
                 let _ = socket.flush().await;
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            if let Some(hold) = hold {
+                // Keep the response body open until the test releases it.
+                let _ = hold.await;
             }
             json
         });
@@ -715,6 +726,40 @@ mod tests {
         let (output, _deltas) = AnswerStream::channel();
         assert_eq!(client.stream(&messages, &output).await.unwrap(), "partial");
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_signals_finish_streams_without_waiting_for_eof() {
+        let messages = Conversation::default().messages("q", &Memory::default());
+        for completion in [
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n".to_string(),
+            format!("{}data: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"length\"}}]}}\n\n", delta("ok")),
+            format!("{}data: [DONE]\n\n", delta("ok")),
+        ] {
+            let (release, hold) = tokio::sync::oneshot::channel();
+            let (base, server) = mock_http_with_hold(
+                sse_response(&[&completion, ": keep-alive\n\n"]),
+                Some(hold),
+            )
+            .await;
+            let client = LlmClient::new(&base, "m".into(), None).unwrap();
+            let (output, mut deltas) = AnswerStream::channel();
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                client.stream(&messages, &output),
+            )
+            .await;
+            // No EOF (and no [DONE] in the finish_reason cases) is available to
+            // complete the response. Release the server even if the test fails.
+            assert!(!server.is_finished());
+            release.send(()).unwrap();
+            server.await.unwrap();
+            assert_eq!(
+                result.expect("completion must not wait for EOF").unwrap(),
+                "ok"
+            );
+            assert_eq!(drain(&mut deltas), ["ok"]);
+        }
     }
 
     #[tokio::test]
