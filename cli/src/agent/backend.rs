@@ -21,12 +21,41 @@ use super::cli::{resolve_executable, CliBackend};
 use super::config::{AgentConfig, AgentSettings, BackendConfig, CliAdapter, ENV_BACKEND};
 use super::llm::{LlmClient, Message};
 
+/// Incremental answer text for live presentation. Deltas are display-only: the
+/// value returned by [`ChatBackend::stream`] stays the authoritative answer, and
+/// only a successful turn is recorded in the conversation.
+#[derive(Clone)]
+pub struct AnswerStream(tokio::sync::mpsc::UnboundedSender<String>);
+
+impl AnswerStream {
+    pub fn channel() -> (Self, tokio::sync::mpsc::UnboundedReceiver<String>) {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        (Self(sender), receiver)
+    }
+
+    /// Producers are bounded by each backend's own wire/answer budgets.
+    pub(super) fn text(&self, delta: &str) {
+        if !delta.is_empty() {
+            let _ = self.0.send(delta.to_owned());
+        }
+    }
+}
+
 /// Backends transport messages only. Query evidence and bounded conversation
 /// remain owned by BendSQL; no backend receives a BendSQL execution tool.
 /// External CLI backends may have their own tools, governed by explicit opt-in.
 #[async_trait]
 pub trait ChatBackend: Send + Sync {
     async fn complete(&self, messages: &[Message]) -> Result<String>;
+
+    /// Like `complete`, additionally publishing answer text as it arrives.
+    /// Backends without incremental output keep the default, which sends no
+    /// deltas, so the caller shows its spinner until the final answer.
+    async fn stream(&self, messages: &[Message], output: &AnswerStream) -> Result<String> {
+        let _ = output;
+        self.complete(messages).await
+    }
+
     fn diagnostic_context(&self) -> Option<&'static str> {
         None
     }

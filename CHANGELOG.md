@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Streaming AI answers
+
+- On an interactive terminal, OpenAI-compatible and ACP answers now stream by
+  default. Only the last screenful is shown while generating; the full answer is
+  printed when the turn completes, and failed/interrupted turns erase partial text.
+  Disable with `settings.ai_stream = false` or `!set ai_stream false`.
+- OpenAI-compatible backends receive `"stream": true` in that case. Gateways that
+  ignore it and return JSON keep working; gateways that reject it need `ai_stream = false`.
+
 ### Interactive SQL and AI modes
 
 - SQL remains the default input mode. The default connection/database prompt,

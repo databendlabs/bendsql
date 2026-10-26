@@ -11,7 +11,7 @@ protocol contracts and test guidance out of the user-facing README.
 - `cli/src/helper.rs`: SQL-only completion and mode-command hints.
 - `cli/src/agent/`: routing, context, providers, skills and AI presentation.
 - `cli/skills/databend/SKILL.md`: the bundled Databend reference.
-- `cli/tests/agent_repl.py`: mock OpenAI and CLI/ACP PTY integration.
+- `cli/tests/agent_repl.py`: mock OpenAI (JSON and SSE) and CLI/ACP PTY integration.
 - `.github/workflows/ci.yml`: the `agent-provider-mock` job.
 
 The following sections document the full implementation and configuration surface.
@@ -112,6 +112,50 @@ as executable input or run. HTML/images are omitted rather than rendered/fetched
 Table pipes remain readable text; advanced table layout and token-level code syntax
 highlighting are not implemented. Spinner cleanup happens before final rendering.
 
+### Streaming answers
+
+`settings.ai_stream` (default `true`, `!set ai_stream true|false`) shows answers
+while they are generated. `cli/src/agent/live.rs` owns the presentation:
+
+- Live output requires Unix, terminal stdout, `TERM` other than `dumb`, and at least
+  20 columns and 5 rows; otherwise the request is not streamed and the spinner
+  stays until the final answer, as before.
+- Local echo is disabled while streaming, so type-ahead or `^C` cannot write into
+  the region and desync its row count. Typed input stays buffered for the next prompt.
+- Deltas are display-only (`AnswerStream`). The backend's returned answer stays
+  authoritative and is the only text recorded, only on success.
+- Every 50 ms the accumulated text (control-filtered, at most 8 KiB) is re-rendered
+  with the final renderer into a transient region of at most terminal height − 1
+  rows, wrapped by BendSQL to width − 1 columns. Only the tail is shown, with a
+  marker row for hidden lines. Ambiguous-width characters are counted as wide
+  to prevent terminal-side wrapping in CJK configurations. The region never reaches
+  scrollback, so relative cursor movement (`CSI n A`, `CSI J`) can always erase it.
+  Frames use synchronized output (`CSI ? 2026 h/l`), which other terminals ignore.
+- Success erases the region and prints the complete rendered answer. Errors,
+  Ctrl+C, timeouts and invalidated turns (for example, ACP tool use) erase it and
+  print only the error.
+- A terminal resize after live rows have been drawn can reflow them, so BendSQL
+  erases what it can, stops live drawing and restores the spinner for the rest of
+  that turn. A resize before the first frame just updates the drawing size if
+  the terminal remains large enough. Drawing failures also restore the spinner.
+- Erasing is presentation only: the user, terminal recorders or screen readers may
+  already have seen the partial text. Screen-reader users may prefer `ai_stream = false`.
+
+Streaming backends in this phase:
+
+- `openai-compatible` / `env`: sends `"stream": true` and parses SSE
+  `choices[0].delta.content`. A turn completes with `finish_reason` or `[DONE]`;
+  a stream that ends otherwise, an `error` event or invalid JSON is an error.
+  A final event without a trailing blank line is accepted at EOF.
+  Responses that are not `text/event-stream` are parsed as ordinary JSON completions,
+  for gateways that ignore `stream`. The wire budget is 4 MiB (128 KiB per event);
+  reading stops, closing the connection, once the 8 KiB answer budget is exceeded.
+  Gateways that reject streaming with HTTP 400/415/422 get a hint to use
+  `!set ai_stream false`; requests are never automatically retried.
+- ACP: `agent_message_chunk` text is published as it arrives, but no further text
+  is published after unsupported capability requests or reported tool use.
+- Codex, Claude Code and Pi keep the non-streaming path (spinner, then answer).
+
 ```toml
 [settings]
 ai_output = "markdown" # or "plain"; independent of SQL output_format
@@ -196,8 +240,10 @@ duplicates and overrides of HTTP transport/JSON content headers are rejected.
 SQL execution works without model configuration and remains available after model
 errors. `timeout_secs` defaults to 60 and supports 1–3600 seconds; `max_tokens`
 defaults to 2048 and supports 1–65536 (the service may have a lower limit).
-AI requests can be interrupted with Ctrl+C. This initial implementation returns
-text answers without streaming and never exposes a BendSQL query execution tool to a backend.
+AI requests can be interrupted with Ctrl+C. HTTP and ACP backends can stream answers
+as described in [Streaming answers](#streaming-answers); Codex, Claude Code and Pi
+show a spinner followed by the final answer instead. No BendSQL query execution
+tool is exposed to a backend.
 `openai-compatible` and the local `cli` adapters `codex`, `claude-code` and `pi`
 are implemented, together with a configurable stdio ACP v1 backend.
 

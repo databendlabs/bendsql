@@ -17,6 +17,7 @@ pub mod backend;
 mod cli;
 mod codex;
 pub mod config;
+pub(crate) mod live;
 pub mod llm;
 pub(crate) mod markdown;
 pub mod memory;
@@ -184,7 +185,13 @@ impl AgentSession {
         Ok(())
     }
 
-    pub async fn ask(&mut self, question: &str) -> Result<String> {
+    /// `output` receives display-only deltas from streaming backends; the
+    /// returned answer is authoritative and the only text recorded on success.
+    pub async fn ask(
+        &mut self,
+        question: &str,
+        output: Option<&backend::AnswerStream>,
+    ) -> Result<String> {
         if question.trim().is_empty() {
             bail!("Question must not be empty");
         }
@@ -213,7 +220,11 @@ impl AgentSession {
             .push_str(self.skills.as_ref().unwrap().prompt());
         let timeout = std::time::Duration::from_secs(self.config.settings()?.timeout_secs);
         let backend = self.backend.as_ref().unwrap();
-        let answer = tokio::time::timeout(timeout, backend.complete(&messages))
+        let request = match output {
+            Some(output) => backend.stream(&messages, output),
+            None => backend.complete(&messages),
+        };
+        let answer = tokio::time::timeout(timeout, request)
             .await
             .map_err(|_| {
                 match backend.diagnostic_context() {
@@ -239,7 +250,7 @@ agent>  AI questions with cached query context; no SQL execution or autocomplete
 SQL mode never captures query data. First AI use requires confirmation unless allow_data_sharing is configured.\n\
 !help           Show this help\n\
 !configs        Show current settings\n\
-!set            Set settings (ai_output: markdown|plain)\n\
+!set            Set settings (ai_output: markdown|plain, ai_stream: true|false)\n\
 !source <file>  Execute SQL from a file\n\
 !exit / !quit   Exit; Ctrl+C clears pending SQL or interrupts work\n\
 Questions send selected SQL, result previews, errors and conversation to the configured model backend.\n\
@@ -303,12 +314,12 @@ model = "second-model"
             fail: false,
             requests: requests.clone(),
         }));
-        session.ask("Q1?").await.unwrap();
-        session.ask("follow up").await.unwrap();
+        session.ask("Q1?", None).await.unwrap();
+        session.ask("follow up", None).await.unwrap();
         assert_eq!(requests.lock().unwrap()[1].as_array().unwrap().len(), 4);
         assert!(session.select_backend("missing").is_err());
         assert_eq!(session.selected.as_deref(), Some("first"));
-        session.ask("still here").await.unwrap();
+        session.ask("still here", None).await.unwrap();
         assert_eq!(requests.lock().unwrap()[2].as_array().unwrap().len(), 6);
         session.select_backend("second").unwrap();
         assert_eq!(session.selected.as_deref(), Some("second"));
@@ -331,13 +342,16 @@ model = "second-model"
             fail: true,
             requests: requests.clone(),
         }));
-        assert!(session.ask("question").await.is_err());
+        assert!(session.ask("question", None).await.is_err());
         assert_eq!(
             session.conversation.messages("next", &session.memory).len(),
             2
         );
-        assert!(session.ask(&"x".repeat(MAX_TEXT_BYTES + 1)).await.is_err());
-        assert!(session.ask("   ").await.is_err());
+        assert!(session
+            .ask(&"x".repeat(MAX_TEXT_BYTES + 1), None)
+            .await
+            .is_err());
+        assert!(session.ask("   ", None).await.is_err());
         assert_eq!(requests.lock().unwrap().len(), 1);
     }
 
@@ -354,7 +368,7 @@ model = "second-model"
         session.backend = Some(Box::new(PendingBackend));
         assert!(tokio::time::timeout(
             std::time::Duration::from_millis(10),
-            session.ask("question")
+            session.ask("question", None)
         )
         .await
         .is_err());
@@ -362,12 +376,57 @@ model = "second-model"
             session.conversation.messages("next", &session.memory).len(),
             2
         );
-        let error = session.ask("question").await.unwrap_err();
+        let error = session.ask("question", None).await.unwrap_err();
         assert!(error.to_string().contains("timed out"));
         assert_eq!(
             session.conversation.messages("next", &session.memory).len(),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn streamed_deltas_are_display_only_and_final_answer_is_recorded() {
+        struct StreamingBackend {
+            fail: bool,
+        }
+        #[async_trait::async_trait]
+        impl ChatBackend for StreamingBackend {
+            async fn complete(&self, _: &[llm::Message]) -> Result<String> {
+                bail!("streaming test backend must use stream()")
+            }
+            async fn stream(
+                &self,
+                _: &[llm::Message],
+                output: &backend::AnswerStream,
+            ) -> Result<String> {
+                output.text("partial ");
+                output.text("answer");
+                if self.fail {
+                    bail!("stream broke");
+                }
+                Ok("final answer".into())
+            }
+        }
+        let mut session = configured_session();
+        let (output, mut deltas) = backend::AnswerStream::channel();
+        session.backend = Some(Box::new(StreamingBackend { fail: true }));
+        assert!(session.ask("question", Some(&output)).await.is_err());
+        assert_eq!(deltas.recv().await.unwrap(), "partial ");
+        assert_eq!(deltas.recv().await.unwrap(), "answer");
+        assert_eq!(
+            session.conversation.messages("next", &session.memory).len(),
+            2,
+            "a failed stream must not enter the conversation"
+        );
+        session.backend = Some(Box::new(StreamingBackend { fail: false }));
+        assert_eq!(
+            session.ask("question", Some(&output)).await.unwrap(),
+            "final answer"
+        );
+        let messages = session.conversation.messages("next", &session.memory);
+        assert_eq!(messages[2].content, "final answer");
+        // Without a stream handle the non-streaming path is used.
+        assert!(session.ask("question", None).await.is_err());
     }
 
     #[test]
@@ -393,7 +452,7 @@ model = "second-model"
         session.mode = InteractionMode::Smart;
         assert!(!session.captures_queries());
         assert!(session
-            .ask("hello")
+            .ask("hello", None)
             .await
             .unwrap_err()
             .to_string()
@@ -403,7 +462,7 @@ model = "second-model"
         assert!(session.captures_queries());
         // Give the fake backend a fixed selected label; no external discovery.
         session.selected = Some("env".into());
-        session.ask("hello").await.unwrap();
+        session.ask("hello", None).await.unwrap();
         assert_eq!(requests.lock().unwrap().len(), 1);
         session.mode = InteractionMode::Sql;
         assert!(!session.captures_queries());

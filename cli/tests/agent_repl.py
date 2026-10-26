@@ -19,17 +19,25 @@ Run: python3 cli/tests/agent_repl.py target/debug/bendsql
 
 import argparse
 import errno
+import fcntl
 import http.server
 import json
 import os
 import pty
 import select
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import time
+
+PROVIDER_ERRORS = {
+    "provider-unauthorized", "provider-rate-limit", "provider-unavailable", "provider-invalid-json",
+    "provider-empty-choices", "provider-no-text", "provider-oversized",
+}
 
 
 class MockService(http.server.BaseHTTPRequestHandler):
@@ -40,6 +48,7 @@ class MockService(http.server.BaseHTTPRequestHandler):
     page_requests = []
     release_queries = threading.Event()
     release_models = threading.Event()
+    release_stream = threading.Event()
     delayed_query_ids = set()
 
     def log_message(self, *args):
@@ -80,6 +89,9 @@ class MockService(http.server.BaseHTTPRequestHandler):
                 answer = "\x1b[31mPrintable answer\r\n"
             elif question == "provider-long-answer":
                 answer = "中" * 8000
+            if request.get("stream") and question not in PROVIDER_ERRORS:
+                self.stream_answer(question, answer)
+                return
             response = {
                 "id": "chatcmpl-mock", "object": "chat.completion", "created": 1,
                 "model": request.get("model"),
@@ -154,6 +166,48 @@ class MockService(http.server.BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass  # Client cancellation deliberately abandons pending responses.
 
+    def stream_answer(self, question, answer):
+        # OpenAI Chat Completions SSE: role chunk, content deltas, finish, [DONE].
+        # Gated questions pause on release_stream after their first delta.
+        gated = question in ["stream-gated", "stream-broken", "stream-wait", "stream-resize"]
+        if question == "stream-gated":
+            chunks = ["Streaming first part.", " Streaming second part."]
+        elif question == "stream-broken":
+            chunks = ["Partial streamed text"]
+        elif question == "stream-wait":
+            chunks = ["Waiting stream text", " never sent"]
+        elif question == "stream-resize":
+            chunks = ["Resize stream text", " completed after resize."]
+        elif question == "stream-long":
+            chunks = ["".join(f"row {n}\n" for n in range(start, start + 5)) for start in range(0, 40, 5)]
+        else:
+            third = max(1, len(answer) // 3)
+            chunks = [answer[:third], answer[third:2 * third], answer[2 * third:]]
+
+        def event(payload):
+            self.wfile.write(b"data: " + json.dumps(payload, ensure_ascii=False).encode() + b"\n\n")
+            self.wfile.flush()
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        try:
+            event({"choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]})
+            for index, chunk in enumerate(chunks):
+                if gated and index == 1:
+                    self.release_stream.wait(10)
+                event({"choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": None}]})
+                time.sleep(0.15 if question == "stream-long" else 0.05)
+            if gated and len(chunks) == 1:
+                self.release_stream.wait(10)
+            if question == "stream-broken":
+                return  # Connection closes without finish_reason or [DONE].
+            event({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Client cancellation deliberately abandons the stream.
+
     def do_GET(self):
         if not self.path.startswith("/v1/query/"):
             self.send_error(404)
@@ -179,7 +233,7 @@ class MockService(http.server.BaseHTTPRequestHandler):
 
 
 class Terminal:
-    def __init__(self, executable, env, port, mode="smart", backend=None, autocomplete=False, startup_prompt=None):
+    def __init__(self, executable, env, port, mode="smart", backend=None, autocomplete=False, startup_prompt=None, size=None):
         args = [
             executable, "--dsn",
             f"databend://root:@127.0.0.1:{port}/default?sslmode=disable&login=disable",
@@ -194,6 +248,8 @@ class Terminal:
         self.pid, self.fd = pty.fork()
         if self.pid == 0:
             os.execve(executable, args, env)
+        if size:
+            self.resize(*size)
         self.pending = b""
         self.transcript = []
         self.finished = False
@@ -227,6 +283,18 @@ class Terminal:
             for verbose in [b"Interactive modes (", b"!mode [", b"Available backends:", b"Current backend:"]:
                 assert verbose not in output, "Startup should not print usage or backend lists"
             self.startup_checked = True
+
+    def pump(self, seconds):
+        # Collect output without waiting for specific text.
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if select.select([self.fd], [], [], 0.05)[0]:
+                chunk = os.read(self.fd, 65536)
+                self.pending += chunk
+                self.transcript.append(chunk)
+
+    def resize(self, rows, columns):
+        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
 
     def send(self, line, prompt="smart> "):
         os.write(self.fd, line.encode() + b"\r")
@@ -909,6 +977,23 @@ command = {json.dumps(mock)}
             for secret in [b"private-acp-secret", b"private-thinking", b"private-acp-auth", b"private-db-password", b"private-db-dsn", b"not-inherited"]:
                 assert secret not in output
             assert b"\x1b[31mMock ACP" not in output
+        # ACP message chunks are drawn live before the turn completes.
+        with Terminal(executable, dict(acp_env, TERM="xterm"), port, size=(24, 80)) as terminal:
+            terminal.expect("smart> ")
+            os.write(terminal.fd, b"!ask stream-acp\r")
+            terminal.expect("ACP streamed first")
+            terminal.expect("smart> ")
+            output = b"".join(terminal.transcript)
+            assert output.count(b"ACP streamed first") >= 2, "A partial frame must precede the final answer"
+            screen = visible_terminal(output)
+            assert screen.count("ACP streamed first and second") == 1, screen
+            wait_stopped(acp_records(path, "prompt")[-1])
+            for question in ["tool-call", "permission", "read-file", "write-file", "terminal", "extension"]:
+                terminal.send(f"!ask {question}")
+                wait_stopped(acp_records(path, "prompt")[-1])
+                output = b"".join(terminal.transcript)
+                assert b"private-acp-secret" not in output, "Invalidated ACP turns must stop streaming"
+            terminal.finish()
 
 
 def exercise_smart_input_boundaries(executable, env, port):
@@ -1148,6 +1233,10 @@ def visible_terminal(transcript):
                     else:
                         for position in range(min(column + 1, len(rows[row]))): rows[row][position] = " "
                 elif action == "J" and values[0] in [2, 3]: rows = [[]]; row = column = 0
+                elif action == "J" and values[0] == 0:
+                    if row < len(rows):
+                        del rows[row][column:]
+                        del rows[row + 1:]
                 index += len(match.group())
                 continue
             index += 2
@@ -1482,6 +1571,119 @@ def exercise_ai_markdown_output(executable, env, port):
         terminal.finish()
 
 
+def exercise_streaming_answers(executable, env, port):
+    write_config(env, '[agent]\nbackend="env"\ntimeout_secs=5')
+    live = dict(env, TERM="xterm")
+    MockService.release_stream.clear()
+
+    def screen():
+        return visible_terminal(b"".join(terminal.transcript))
+
+    def ask(question):
+        os.write(terminal.fd, question.encode() + b"\r")
+
+    try:
+        with Terminal(executable, live, port, mode="agent", size=(24, 80)) as terminal:
+            terminal.expect("agent> ")
+            # Partial text is drawn before the turn completes and replaces the spinner.
+            ask("stream-gated")
+            terminal.expect("Streaming first part.")
+            assert MockService.model_requests[-1]["stream"] is True
+            assert "AI thinking" not in screen()
+            assert b"Streaming second part." not in b"".join(terminal.transcript)
+            # Type-ahead is not echoed into the live region; readline gets it later.
+            os.write(terminal.fd, b"zz")
+            terminal.pump(0.3)
+            assert "zz" not in screen(), screen()
+            MockService.release_stream.set()
+            terminal.expect("agent> ")
+            MockService.release_stream.clear()
+            terminal.expect("zz")
+            os.write(terminal.fd, b"\x15")  # Ctrl+U discards the buffered type-ahead.
+            final = screen()
+            assert "AI> Streaming first part. Streaming second part." in final.splitlines(), final
+            assert final.count("Streaming first part.") == 1, final
+            assert "Streaming first part. Streaming second part." in final
+            assert "AI thinking" not in final
+            # Only the authoritative final answer enters the conversation.
+            terminal.send("stream-follow-up", "agent> ")
+            history = MockService.model_requests[-1]["messages"]
+            assert [m["content"] for m in history if m["role"] == "assistant"] == [
+                "Streaming first part. Streaming second part."]
+
+            # A broken stream and Ctrl+C both erase the partial answer entirely.
+            ask("stream-broken")
+            terminal.expect("Partial streamed text")
+            MockService.release_stream.set()
+            terminal.expect("AI error: ")
+            terminal.expect("agent> ")
+            MockService.release_stream.clear()
+            assert "Partial streamed text" not in screen(), screen()
+            ask("stream-wait")
+            terminal.expect("Waiting stream text")
+            os.write(terminal.fd, b"\x03")
+            terminal.expect("AI request interrupted.")
+            terminal.expect("agent> ")
+            MockService.release_stream.set()
+            MockService.release_stream.clear()
+            assert "Waiting stream text" not in screen(), screen()
+            terminal.send("stream-after-errors", "agent> ")
+            assert len(MockService.model_requests[-1]["messages"]) == 6, "Failed streams must not enter dialogue"
+
+            # Long answers show only a tail while streaming, then print in full.
+            ask("stream-long")
+            terminal.expect("earlier lines; the full answer is shown when complete")
+            terminal.expect("agent> ")
+            final = screen()
+            for n in range(40):
+                assert final.count(f"row {n}\n") == 1 or final.endswith(f"row {n}"), (n, final)
+            assert "earlier lines" not in final
+
+            # A resize mid-stream erases the live region and falls back to the spinner.
+            ask("stream-resize")
+            terminal.expect("Resize stream text")
+            before = len(b"".join(terminal.transcript))
+            terminal.resize(24, 60)
+            terminal.expect("AI thinking")
+            MockService.release_stream.set()
+            terminal.expect("agent> ")
+            MockService.release_stream.clear()
+            assert b"AI thinking" in b"".join(terminal.transcript)[before:]
+            final = screen()
+            assert final.count("Resize stream text") == 1, final
+            assert "completed after resize." in final and "AI thinking" not in final
+
+            # Markdown frames use the same renderer as the final answer.
+            ask("provider-markdown")
+            terminal.expect("agent> ")
+            final = screen()
+            assert final.count("Query analysis") == 1 and "## Query analysis" not in final
+            assert "SELECT 'a|b'," in final and "private-html-payload" not in final
+
+            terminal.send("!set ai_stream false", "agent> ")
+            terminal.send("stream-disabled", "agent> ")
+            assert MockService.model_requests[-1]["stream"] is False
+            assert "Mock answer grounded in cached records." in screen()
+            terminal.send("!set ai_stream maybe", "agent> ")
+            assert b"error" in b"".join(terminal.transcript).lower()
+            terminal.finish()
+        # Config can disable streaming; non-terminal sizes never stream.
+        write_config(env, '[settings]\nai_stream=false\n[agent]\nbackend="env"')
+        with Terminal(executable, live, port, mode="agent", size=(24, 80)) as terminal:
+            terminal.expect("agent> ")
+            terminal.send("config-disabled", "agent> ")
+            assert MockService.model_requests[-1]["stream"] is False
+            terminal.finish()
+        write_config(env, '[agent]\nbackend="env"')
+        with Terminal(executable, live, port, mode="agent", size=(4, 80)) as terminal:
+            terminal.expect("agent> ")
+            terminal.send("tiny-terminal", "agent> ")
+            assert MockService.model_requests[-1]["stream"] is False
+            terminal.finish()
+    finally:
+        MockService.release_stream.set()
+
+
 def exercise_sql_compatibility_and_sharing_consent(executable, env, port):
     with tempfile.TemporaryDirectory(prefix="bendsql-privacy-home-") as home:
         local = dict(env, HOME=home, TERM="xterm")
@@ -1713,6 +1915,7 @@ def main():
             if not args.privacy_only:
                 exercise_openai_provider(executable, env, port)
                 exercise_ai_markdown_output(executable, env, port)
+                exercise_streaming_answers(executable, env, port)
             # SQL-only history/logging are intentionally restored. Neither may
             # contain model requests, raw provider diagnostics or credentials.
             for root, _, files in os.walk(home):
@@ -1725,7 +1928,7 @@ def main():
             print("PASS: SQL history/load, logging, large SQL, consent/no egress, sensitive context exclusion and backend consent reset")
             return
         if args.provider_only:
-            print("PASS: mock OpenAI provider; request/auth/config, Databend skill, multi-turn evidence, errors/budgets, no SQL execution, clear and terminal Markdown/plain presentation")
+            print("PASS: mock OpenAI provider; request/auth/config, Databend skill, multi-turn evidence, errors/budgets, no SQL execution, clear, terminal Markdown/plain presentation and live streaming")
             return
         print(
             "PASS: mock OpenAI provider; three-mode PTY sessions, SQL/AI separation, partial/failed "
@@ -1740,7 +1943,8 @@ def main():
             "animated AI spinner, clean final screen on success/error/cancel/timeout, no request debug output; "
             "default SQL REPL, !mode Tab choices, lazy SQL-only completion and packaged read-only skills; "
             "complete configured prompt templates, {mode}, emoji, old variables and live prompt changes; "
-            "AI Markdown/plain presentation, unchanged raw history, no suggested SQL execution or residual spinner"
+            "AI Markdown/plain presentation, unchanged raw history, no suggested SQL execution or residual spinner; "
+            "live streamed answers, tail-limited frames, erased partials on error/cancel/resize and ai_stream settings"
         )
     finally:
         server.shutdown()

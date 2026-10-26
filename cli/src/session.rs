@@ -17,8 +17,9 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::agent::backend::AnswerStream;
+use crate::agent::live::AnswerView;
 use crate::agent::memory::{bounded_text, QueryRecord};
-use crate::agent::progress::AiProgress;
 use crate::agent::router::{comments_only, smart_input_is_safe, Input};
 use crate::agent::{AgentSession, InteractionMode};
 use crate::ast::quote_string_in_box_display;
@@ -718,14 +719,29 @@ impl Session {
         }
         history.activate_ai(rl, history_path, self.settings.save_history);
         crate::trace::protect_ai_payloads();
-        let progress = AiProgress::new();
-        let cancel = wait_for_interrupt(self.interrupted.clone());
-        let result = tokio::select! {
-            result = self.agent.as_mut().unwrap().ask(question) => Some(result),
-            _ = cancel => None,
+        let mut view = AnswerView::new(self.settings.ai_output, self.settings.ai_stream);
+        // Keep the sender alive for the whole request, even when not streaming.
+        let (stream, mut deltas) = AnswerStream::channel();
+        let output = view.is_live().then_some(&stream);
+        let result = {
+            let cancel = wait_for_interrupt(self.interrupted.clone());
+            let ask = self.agent.as_mut().unwrap().ask(question, output);
+            tokio::pin!(cancel, ask);
+            // Deltas are buffered and drawn on ticks, bounding redraw work.
+            let mut frames = tokio::time::interval(std::time::Duration::from_millis(50));
+            frames.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    result = &mut ask => break Some(result),
+                    _ = &mut cancel => break None,
+                    Some(delta) = deltas.recv() => view.push(&delta),
+                    _ = frames.tick() => view.tick(),
+                }
+            }
         };
-        // Join the ticker and erase its line before writing persistent output.
-        drop(progress);
+        // Erase the spinner and any partial answer before persistent output.
+        // The final answer is authoritative and replaces the streamed frames.
+        view.finish();
         match result {
             Some(Ok(answer)) => print!(
                 "{}",

@@ -50,6 +50,7 @@ pub struct SettingsConfig {
     pub max_col_width: Option<usize>,
     pub max_width: Option<usize>,
     pub ai_output: Option<AiOutput>,
+    pub ai_stream: Option<bool>,
     pub save_history: Option<bool>,
     pub continuation_prompt: Option<String>,
 }
@@ -100,6 +101,8 @@ pub struct Settings {
     pub output_format: OutputFormat,
     /// AI presentation only; does not affect SQL output or raw conversation.
     pub ai_output: AiOutput,
+    /// Show AI answers while they are generated, on a capable terminal.
+    pub ai_stream: bool,
     // Output Quote Style.
     pub quote_style: OutputQuoteStyle,
     /// Expand table format display, default off, could be on/off/auto.
@@ -217,6 +220,7 @@ impl Settings {
         self.max_col_width = cfg.max_col_width.unwrap_or(self.max_col_width);
         self.max_display_rows = cfg.max_display_rows.unwrap_or(self.max_display_rows);
         self.ai_output = cfg.ai_output.unwrap_or(self.ai_output);
+        self.ai_stream = cfg.ai_stream.unwrap_or(self.ai_stream);
         self.auto_open_browser = c.server.auto_open_browser;
         self.bind_address.clone_from(&c.server.bind_address);
         if self.bind_port == 0 {
@@ -235,6 +239,7 @@ impl Settings {
             "show_stats" => self.show_stats = cmd_value.parse()?,
             "show_query_id" => self.show_query_id = cmd_value.parse()?,
             "ai_output" => self.ai_output = cmd_value.try_into()?,
+            "ai_stream" => self.ai_stream = cmd_value.parse()?,
             "output_format" => {
                 self.output_format = match cmd_value.to_ascii_lowercase().as_str() {
                     "table" => OutputFormat::Table,
@@ -346,6 +351,7 @@ impl Default for Settings {
             no_auto_complete: false,
             output_format: OutputFormat::Table,
             ai_output: AiOutput::Markdown,
+            ai_stream: true,
             quote_style: OutputQuoteStyle::Necessary,
             sql_delimiter: ';',
             expand: ExpandMode::Auto,
