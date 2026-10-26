@@ -1,0 +1,67 @@
+name: Cloud WebAPI E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_test_account:
+        description: 'Confirm the token is for a dedicated, least-privilege test account (no production orgs)'
+        required: true
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      confirm_test_account:
+        required: true
+        type: boolean
+    secrets:
+      BENDSQL_CLOUD_API_TOKEN:
+        required: true
+      BENDSQL_ORG:
+        required: true
+
+permissions:
+  contents: read
+
+# Do not race multiple live suites against the same small test Warehouse.
+concurrency:
+  group: cloud-webapi-e2e-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  cloud-e2e:
+    # Reusable workflows inherit the caller's event/ref. Never run PR code with
+    # these Secrets, including same-repo PRs and pull_request_target events.
+    if: >-
+      github.repository == 'databendlabs/bendsql' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - name: Require dedicated test credentials
+        env:
+          CONFIRMED: ${{ inputs.confirm_test_account }}
+        run: |
+          if [ "$CONFIRMED" != "true" ]; then
+            echo '::error::Confirm a dedicated, least-privilege Cloud test account before running.'
+            exit 1
+          fi
+      - name: Checkout the exact trusted main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install Rust (without Cloud credentials)
+        run: rustup toolchain install stable --profile minimal
+      - name: Build CLI (without Cloud credentials or PR artifacts)
+        run: cargo build -p bendsql --bin bendsql
+      - name: Test read-only queries on default Warehouse
+        env:
+          BENDSQL_CLOUD_API_TOKEN: ${{ secrets.BENDSQL_CLOUD_API_TOKEN }}
+          BENDSQL_ORG: ${{ secrets.BENDSQL_ORG }}
+        run: python3 cli/tests/cloud_webapi_e2e.py target/debug/bendsql

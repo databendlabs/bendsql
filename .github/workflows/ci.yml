@@ -87,6 +87,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Test live Cloud harness safety (no credentials or network)
+        run: python3 -m unittest discover -s cli/tests -p 'test_cloud_webapi_e2e.py' -v
       - name: Test CLI unit behavior and embedded Databend skill
         run: cargo test -p bendsql --bin bendsql --all-features
       - name: Test Cloud token CLI safety (no credentials or Docker)
