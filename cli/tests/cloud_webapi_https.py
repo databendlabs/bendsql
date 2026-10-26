@@ -15,6 +15,10 @@
 
 """Real CLI + HTTPS mock; stdlib/OpenSSL only, no Cloud credentials or Docker.
 
+A loopback-only CONNECT proxy terminates TLS for the two official API hostnames
+using a temporary test CA. It never forwards traffic or resolves those domains.
+This exercises the production origin allowlist without a custom-origin escape.
+
 Run: python3 cli/tests/cloud_webapi_https.py /path/to/bendsql
 """
 
@@ -37,7 +41,8 @@ def certificates(directory):
     directory.joinpath("extensions.cnf").write_text(
         "[server]\nbasicConstraints=critical,CA:FALSE\n"
         "keyUsage=critical,digitalSignature,keyEncipherment\n"
-        "extendedKeyUsage=serverAuth\nsubjectAltName=IP:127.0.0.1,DNS:localhost\n"
+        "extendedKeyUsage=serverAuth\n"
+        "subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:api.databend.com,DNS:api.databend.cn\n"
     )
     commands = [
         ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key",
@@ -76,17 +81,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_CONNECT(self):
+        # A local mock, not a general-purpose forwarding proxy. Unexpected
+        # targets are rejected and no upstream network connection is made.
+        if self.path not in {"api.databend.com:443", "api.databend.cn:443"}:
+            self.send_error(403)
+            return
+        self.server.state.tunnels.append(self.path)
+        self.send_response(200, "Connection established")
+        self.end_headers()
+        self.wfile.flush()
+        try:
+            self.request = self.server.context.wrap_socket(self.connection, server_side=True)
+        except ssl.SSLError:
+            return  # Expected when the CLI has not been given the test CA.
+        self.setup()
+        self.close_connection = True
+        self.handle_one_request()
+
     def handle_request(self):
+        state = self.server.state
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
-        self.server.records.append((self.command, self.path, dict(self.headers), body))
+        state.records.append((self.command, self.path, dict(self.headers), body))
         if self.path.startswith("/v1/session/login"):
             self.respond(404, {"error": "not found"})
         elif self.command == "POST" and self.path == "/v1/query":
-            next_uri = "/v1/query/q1/page/0" if self.server.cloud else None
+            next_uri = "/v1/query/q1/page/0" if state.cloud else None
             self.respond(200, reply([["1"]], next_uri))
         elif self.path == "/v1/query/q1/page/0":
-            self.server.pages += 1
-            if self.server.pages == 1:
+            state.pages += 1
+            if state.pages == 1:
                 self.respond(503, {"error": "retry safe page"})
             else:
                 self.respond(200, reply([["2"]], "/v1/query/q1/final"))
@@ -107,18 +131,22 @@ def main():
         context.load_cert_chain(directory / "server.pem", directory / "server.key")
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         server.socket = context.wrap_socket(server.socket, server_side=True)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        origin = f"https://127.0.0.1:{server.server_port}"
+        server.state = server
+        proxy = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        proxy.context, proxy.state = context, server
+        threads = [threading.Thread(target=service.serve_forever, daemon=True)
+                   for service in (server, proxy)]
+        for thread in threads:
+            thread.start()
         ca = str(directory / "ca.pem")
         private = "databend://root:pw@127.0.0.1:" + str(server.server_port) + "/default?" + urlencode({
             "tls_ca_file": ca, "presign": "off", "retry_delay_secs": "0"})
-        cloud = "databend://127.0.0.1:" + str(server.server_port) + "/default?" + urlencode({
+        cloud = "databend://api.databend.com:443/default?" + urlencode({
             "tls_ca_file": ca, "cloud_api_token": TOKEN, "org_slug": "org-example",
             "retry_delay_secs": "0"})
 
         def run(name, args, environment=None, config=None, expected_cloud=False,
-                authorization=None, expected_error=None):
+                authorization=None, expected_error=None, query="SELECT 1", transaction_warning=False):
             with tempfile.TemporaryDirectory(prefix="bendsql-home-") as home:
                 if config:
                     target = Path(home) / ".bendsql"
@@ -126,12 +154,12 @@ def main():
                     target.joinpath("config.toml").write_text(config)
                 env = {key: value for key, value in os.environ.items()
                        if not key.startswith("BENDSQL_") and "proxy" not in key.lower()}
-                env.update(HOME=home, HTTPS_PROXY="http://127.0.0.1:0",
+                env.update(HOME=home, HTTPS_PROXY=f"http://127.0.0.1:{proxy.server_port}",
                            HTTP_PROXY="http://127.0.0.1:0", ALL_PROXY="http://127.0.0.1:0",
-                           NO_PROXY="127.0.0.1,localhost", BENDSQL_CLOUD_API_ORIGIN=origin)
+                           NO_PROXY="127.0.0.1,localhost")
                 env.update(environment or {})
-                server.records, server.pages, server.cloud = [], 0, expected_cloud
-                result = subprocess.run([binary, "--non-interactive", "--query=SELECT 1", *args],
+                server.records, server.pages, server.cloud, server.tunnels = [], 0, expected_cloud, []
+                result = subprocess.run([binary, "--non-interactive", f"--query={query}", *args],
                                         env=env, capture_output=True, text=True, timeout=15)
                 text = result.stdout + result.stderr
                 assert TOKEN not in text, name + ": token in output"
@@ -141,6 +169,7 @@ def main():
                 else:
                     assert result.returncode == 0, (name, text)
                     assert "1" in result.stdout.splitlines(), (name, text)
+                    assert ("Cloud WebAPI does not guarantee transactions" in result.stderr) == transaction_warning, name
                     for method, path, headers, body in server.records:
                         headers = {key.lower(): value for key, value in headers.items()}
                         if expected_cloud:
@@ -153,6 +182,12 @@ def main():
                         if path == "/v1/query":
                             assert json.loads(body).get("string_fields") is (True if expected_cloud else None), name
                     if expected_cloud:
+                        assert server.tunnels, name + ": CLI did not use local CONNECT proxy"
+                        assert all(target in {"api.databend.com:443", "api.databend.cn:443"}
+                                   for target in server.tunnels), name
+                        assert all(headers.get("host") in {"api.databend.com", "api.databend.com:443",
+                                                           "api.databend.cn", "api.databend.cn:443"}
+                                   for _, _, headers, _ in server.records), name
                         assert "2" in result.stdout.splitlines(), (name, text)
                         assert server.pages == 2, name + ": page 503 not retried"
                         assert any(method == "GET" and path.endswith("/final")
@@ -160,27 +195,33 @@ def main():
                 print("PASS:", name)
 
         try:
-            run("custom HTTPS origin and CA, query/page/final with retry", ["--dsn", cloud], expected_cloud=True)
-            run("default origin policy still rejects untrusted HTTPS", ["--dsn", cloud],
-                {"BENDSQL_CLOUD_API_ORIGIN": ""}, expected_error="not a Gateway or private server")
-            no_ca = "databend://127.0.0.1:" + str(server.server_port) + "/default?" + urlencode({
+            run("official origin through local HTTPS proxy, query/page/final with retry", ["--dsn", cloud], expected_cloud=True)
+            run("China official origin through local HTTPS proxy", ["--dsn", cloud.replace("api.databend.com", "api.databend.cn")], expected_cloud=True)
+            run("Cloud transaction statements warn about session limitations", ["--dsn", cloud],
+                expected_cloud=True, query="/* session */ BEGIN", transaction_warning=True)
+            tls_config = "[connection]\nhost='api.databend.com'\ntls=false\n"
+            run("config TLS disable reports HTTPS requirement", ["--cloud-api-token=" + TOKEN, "--org=org-example"],
+                config=tls_config, expected_error="requires HTTPS; sslmode=disable is not supported")
+            no_ca = "databend://api.databend.com/default?" + urlencode({
                 "cloud_api_token": TOKEN, "org_slug": "org-example", "retry_delay_secs": "0"})
-            run("custom origin does not disable certificate verification", ["--dsn", no_ca],
+            run("TLS still rejects the mock without its test CA", ["--dsn", no_ca],
                 expected_error="error sending request")
-            run("HTTP is never an allowed override", ["--dsn", cloud],
-                {"BENDSQL_CLOUD_API_ORIGIN": origin.replace("https:", "http:")},
-                expected_error="must be an HTTPS origin")
-            run("allowing another port does not authorize this one", ["--dsn", cloud],
-                {"BENDSQL_CLOUD_API_ORIGIN": "https://127.0.0.1:1"},
-                expected_error="not a Gateway or private server")
+            for endpoint in ["localhost:8443", "staging.example:8443", "api.databend.com:8443"]:
+                untrusted = cloud.replace("api.databend.com:443", endpoint)
+                run("production allowlist rejects " + endpoint, ["--dsn", untrusted],
+                    expected_error="not a Gateway or private server")
             basic = "Basic " + base64.b64encode(b"root:pw").decode()
             run("global token does not replace explicit DSN credentials", ["--dsn", private],
                 {"BENDSQL_CLOUD_API_TOKEN": TOKEN}, authorization=basic)
+            run("native transaction statements keep existing behavior", ["--dsn", private],
+                authorization=basic, query="BEGIN")
             run("global token does not replace BENDSQL_DSN", [],
                 {"BENDSQL_CLOUD_API_TOKEN": TOKEN, "BENDSQL_DSN": private}, authorization=basic)
             flags = ["--host=127.0.0.1", f"--port={server.server_port}", "--tls=true",
                      "--set", f"tls_ca_file={ca}", "--set", "presign=off"]
-            run("environment token works for a credential-free CLI connection", [*flags, "--org=org-example", "--set", "retry_delay_secs=0"],
+            cloud_flags = ["--host=api.databend.com", "--port=443", "--tls=true",
+                           "--set", f"tls_ca_file={ca}", "--set", "retry_delay_secs=0"]
+            run("environment token works for a credential-free CLI connection", [*cloud_flags, "--org=org-example"],
                 {"BENDSQL_CLOUD_API_TOKEN": TOKEN}, expected_cloud=True)
             run("global token does not replace user/password flags", [*flags, "--user=root", "--password=pw"],
                 {"BENDSQL_CLOUD_API_TOKEN": TOKEN}, authorization=basic)
@@ -195,9 +236,11 @@ def main():
                     ["--cloud-api-token=", "--org=org-example"], config=config,
                     expected_error="not a Gateway or private server")
         finally:
-            server.shutdown()
-            server.server_close()
-            thread.join(timeout=3)
+            for service in (server, proxy):
+                service.shutdown()
+                service.server_close()
+            for thread in threads:
+                thread.join(timeout=3)
 
 
 if __name__ == "__main__":

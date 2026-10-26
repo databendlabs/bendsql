@@ -57,7 +57,7 @@ class CloudE2EHarnessTests(unittest.TestCase):
 
     def test_child_environment_removes_connection_overrides_and_other_secrets(self):
         environment = dict(ENV, BENDSQL_DSN="untrusted-dsn", BENDSQL_HOST="evil.example",
-                           BENDSQL_CLOUD_API_ORIGIN="https://evil.example", RUST_LOG="trace",
+                           BENDSQL_CONFIG="/untrusted/config", RUST_LOG="trace",
                            AWS_SECRET_ACCESS_KEY="not-inherited", HOME="/existing/config",
                            PATH="/bin", HTTPS_PROXY="http://proxy.example")
         child = e2e.child_environment(environment, "/fresh/home")

@@ -13,9 +13,9 @@
 // limitations under the License.
 
 mod query_kind;
-pub use query_kind::quote_string_in_box_display;
 pub use query_kind::GenType;
 pub use query_kind::QueryKind;
+pub use query_kind::{is_transaction_control, quote_string_in_box_display};
 
 use databend_common_ast::parser::{parse_sql, token::TokenKind, tokenize_sql, Dialect};
 use sqlformat::{FormatOptions, QueryParams};

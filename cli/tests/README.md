@@ -3,8 +3,12 @@
 ## Ordinary PR checks: no Cloud credentials
 
 `cloud_api_token.rs` checks CLI credential selection and rejected combinations.
-`cloud_webapi_https.py` runs the real CLI against a local HTTPS server, including
-certificate verification, query/page/final routing, retries and private-auth
+`cloud_webapi_https.py` runs the real CLI against a local HTTPS server through a
+loopback CONNECT proxy. The CLI still uses the official API hostname/443 and
+production origin checks; the proxy never forwards traffic. Temporary test
+certificates cover the official hostnames and are trusted only by the child CLI
+via `tls_ca_file`, without modifying DNS/hosts or the system trust store. Tests
+cover certificate verification, query/page/final routing, retries and private-auth
 isolation. `test_cloud_webapi_e2e.py` tests the live harness with mocked subprocess
 results. These tests run on PRs without production credentials or Docker:
 
@@ -34,14 +38,12 @@ Once `.github/workflows/cloud.e2e.yml` is on the default branch:
 
 1. Open the repository's **Actions** tab.
 2. Select **Cloud WebAPI E2E**, then **Run workflow**.
-3. Select **main** and confirm the dedicated test-account checkbox.
-4. Start the workflow and inspect its pass/fail results.
+3. Select **main**, start the workflow and inspect its pass/fail results.
 
 Equivalent CLI command:
 
 ```bash
-gh workflow run cloud.e2e.yml --repo databendlabs/bendsql --ref main \
-  -f confirm_test_account=true
+gh workflow run cloud.e2e.yml --repo databendlabs/bendsql --ref main
 ```
 
 The entry will not appear in the default-branch UI until the workflow is merged.
@@ -55,7 +57,11 @@ schedule and when manually dispatched on upstream `main`. It uses the same two
 Secrets and `default` Warehouse, independently of the Docker/bindings jobs, and
 participates in the existing failure notification. It therefore consumes real
 Cloud compute after this configuration is merged; use a small test Warehouse.
-Its PR-triggered YAML checks skip the live job.
+Its PR-triggered YAML checks skip the live job. If either Secret is absent, a
+scheduled run emits a notice and skips checkout/build/testing instead of causing
+a recurring failure notification. A manual run without the Secrets fails clearly.
+There is no confirmation checkbox: configuring the Secrets and enabling the daily
+job is the opt-in, not a hard-coded caller confirmation.
 
 ### What is tested
 

@@ -26,8 +26,6 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/cloud.e2e.yml
-    with:
-      confirm_test_account: true
     secrets:
       BENDSQL_CLOUD_API_TOKEN: ${{ secrets.BENDSQL_CLOUD_API_TOKEN }}
       BENDSQL_ORG: ${{ secrets.BENDSQL_ORG }}

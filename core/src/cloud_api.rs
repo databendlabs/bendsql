@@ -29,49 +29,23 @@ pub(crate) struct CloudApiAuth {
     endpoint: Url,
     token: SensitiveString,
     token_header: HeaderValue,
-    org: String,
+    org_header: HeaderValue,
 }
 
 impl CloudApiAuth {
     pub(crate) fn new(endpoint: Url, token: String, org: String) -> Result<Self> {
-        let allowed_origin = match std::env::var("BENDSQL_CLOUD_API_ORIGIN") {
-            Ok(value) => Some(value),
-            Err(std::env::VarError::NotPresent) => None,
-            Err(std::env::VarError::NotUnicode(_)) => {
-                return Err(Error::BadArgument(
-                    "BENDSQL_CLOUD_API_ORIGIN must be UTF-8".into(),
-                ))
-            }
-        };
-        Self::with_allowed_origin(endpoint, token, org, allowed_origin.as_deref())
-    }
-
-    fn with_allowed_origin(
-        endpoint: Url,
-        token: String,
-        org: String,
-        allowed: Option<&str>,
-    ) -> Result<Self> {
-        let additional = allowed.filter(|value| !value.is_empty()).map(|value| {
-            let invalid = || Error::BadArgument("BENDSQL_CLOUD_API_ORIGIN must be an HTTPS origin without userinfo, path, query or fragment".into());
-            let origin = Url::parse(value).map_err(|_| invalid())?;
-            if origin.scheme() != "https" || origin.host_str().is_none()
-                || !origin.username().is_empty() || origin.password().is_some()
-                || origin.path() != "/" || origin.query().is_some() || origin.fragment().is_some()
-                || origin.port_or_known_default() == Some(0) {
-                return Err(invalid());
-            }
-            Ok(origin.origin())
-        }).transpose()?;
         let official = endpoint.port_or_known_default() == Some(443)
             && matches!(
                 endpoint.host_str(),
                 Some("api.databend.com" | "api.databend.cn")
             );
-        if endpoint.scheme() != "https"
-            || !(official || additional.as_ref() == Some(&endpoint.origin()))
-        {
-            return Err(Error::BadArgument("cloud_api_token requires https://api.databend.com or https://api.databend.cn, not a Gateway or private server; authorize a staging HTTPS origin with BENDSQL_CLOUD_API_ORIGIN".into()));
+        if endpoint.scheme() != "https" {
+            return Err(Error::BadArgument(
+                "cloud_api_token requires HTTPS; sslmode=disable is not supported".into(),
+            ));
+        }
+        if !official {
+            return Err(Error::BadArgument("cloud_api_token requires https://api.databend.com or https://api.databend.cn, not a Gateway or private server".into()));
         }
         Self::with_endpoint(endpoint, token, org)
     }
@@ -84,21 +58,20 @@ impl CloudApiAuth {
                 "cloud_api_token must not be empty".into(),
             ));
         }
-        if org.is_empty()
-            || org.trim() != org
-            || org.len() > 256
-            || HeaderValue::from_str(&org).is_err()
-        {
+        if org.is_empty() || org.trim() != org || org.len() > 256 {
             return Err(Error::BadArgument(
                 "Cloud API token authentication requires a valid org_slug".into(),
             ));
         }
+        let org_header = HeaderValue::from_str(&org).map_err(|_| {
+            Error::BadArgument("Cloud API token authentication requires a valid org_slug".into())
+        })?;
         token_header.set_sensitive(true);
         Ok(Self {
             endpoint,
             token: token.into(),
             token_header,
-            org,
+            org_header,
         })
     }
 
@@ -131,12 +104,12 @@ impl Auth for CloudApiAuth {
             .insert(HEADER_CLOUD_TOKEN, self.token_header.clone());
         request
             .headers_mut()
-            .insert(HEADER_CLOUD_ORG, HeaderValue::from_str(&self.org).unwrap());
+            .insert(HEADER_CLOUD_ORG, self.org_header.clone());
         Ok(RequestBuilder::from_parts(client, request))
     }
 
     fn username(&self) -> String {
-        "cloud_api_token".into()
+        "cloud_account".into()
     }
 
     fn sanitize_error(&self, error: Error) -> Error {

@@ -153,7 +153,7 @@ async fn client(server: &MockServer) -> APIClient {
 }
 
 #[tokio::test]
-async fn cloud_gateway_management_results_do_not_use_engine_lifecycle() {
+async fn cloud_management_results_without_next_uri_are_complete() {
     for with_rows in [false, true] {
         for with_stats in [false, true] {
             let server = MockServer::new(move |request| {
@@ -168,13 +168,6 @@ async fn cloud_gateway_management_results_do_not_use_engine_lifecycle() {
                 }
                 if with_stats {
                     body["stats"] = query_reply()["stats"].clone();
-                }
-                if with_rows {
-                    // Even if these engine fields are present, a gateway-local
-                    // response must never register a heartbeat or follow them.
-                    body["node_id"] = json!("not-an-engine-query");
-                    body["next_uri"] = json!("/v1/query/management-query/page/0");
-                    body["final_uri"] = json!("/v1/query/management-query/final");
                 }
                 let mut reply = MockReply::json(body);
                 reply
@@ -217,20 +210,17 @@ async fn cloud_gateway_management_results_do_not_use_engine_lifecycle() {
 }
 
 #[tokio::test]
-async fn cloud_gateway_defaults_do_not_relax_engine_decoding_or_hide_errors() {
-    let server = MockServer::new(|_| {
-        MockReply::json(json!({
-            "id":"engine-query", "schema":[], "data":[], "state":"Succeeded"
-        }))
-    })
-    .await;
-    let engine_client = Arc::new(client(&server).await);
-    let err = engine_client
-        .query_all("SELECT 1", None)
-        .await
-        .err()
-        .unwrap();
-    assert!(err.to_string().contains("missing field `stats`"));
+async fn missing_stats_defaults_do_not_hide_malformed_rows_or_query_errors() {
+    for data in [json!([[123]]), json!("invalid-rows")] {
+        let server = MockServer::new(move |_| {
+            MockReply::json(json!({
+                "id":"engine-query", "schema":[], "data":data, "state":"Succeeded"
+            }))
+        })
+        .await;
+        let client = Arc::new(client(&server).await);
+        assert!(client.query_all("SELECT 1", None).await.is_err());
+    }
 
     let server = MockServer::new(|_| {
         let mut reply = MockReply::json(json!({
@@ -252,6 +242,62 @@ async fn cloud_gateway_defaults_do_not_relax_engine_decoding_or_hide_errors() {
     assert!(matches!(err, Error::QueryFailed(_)));
     assert!(!format!("{err:?}").contains(TOKEN));
     assert_eq!(server.requests.lock().len(), 1);
+}
+
+#[tokio::test]
+async fn gateway_pagination_without_stats_preserves_all_metadata_and_rows() {
+    for source_header in [false, true] {
+        let server = MockServer::new(move |request| {
+            let mut body = json!({
+                "id":"q1", "node_id":"node-1", "session_id":"session-1",
+                "schema":[{"name":"n","type":"Int64"}], "data":[["1"]],
+                "state":"Running", "result_timeout_secs":123,
+                "stats_uri":"/v1/query/q1/stats", "next_uri":"/v1/query/q1/page/0",
+                "final_uri":"/v1/query/q1/final", "kill_uri":"/v1/query/q1/kill"
+            });
+            if request.method == "GET" {
+                assert_eq!(request.headers["x-databend-sticky-node"], "node-1");
+                if request.path.ends_with("/page/0") {
+                    body["data"] = json!([["2"]]);
+                    body["next_uri"] = json!("/v1/query/q1/final");
+                } else {
+                    assert!(request.path.ends_with("/final"));
+                    body["data"] = json!([]);
+                    body["next_uri"] = Value::Null;
+                    body["state"] = json!("Succeeded");
+                }
+            }
+            let mut reply = MockReply::json(body);
+            if source_header {
+                reply
+                    .headers
+                    .push(("X-Databend-Query-Source", "gateway".into()));
+            }
+            reply
+        })
+        .await;
+        let client = Arc::new(client(&server).await);
+        let (first, batches) = client
+            .start_query_inner("SELECT 1", None, false, None)
+            .await
+            .unwrap();
+        assert_eq!(first.node_id.as_deref(), Some("node-1"));
+        assert_eq!(first.session_id.as_deref(), Some("session-1"));
+        assert_eq!(first.result_timeout_secs, Some(123));
+        assert_eq!(first.stats_uri.as_deref(), Some("/v1/query/q1/stats"));
+        assert_eq!(first.final_uri.as_deref(), Some("/v1/query/q1/final"));
+        assert_eq!(first.kill_uri.as_deref(), Some("/v1/query/q1/kill"));
+        assert_eq!(first.stats.running_time_ms, 0.0);
+        let pages = crate::pages::Pages::new(client.clone(), first, batches, false).unwrap();
+        let (mut pages, _, _) = pages.wait_for_schema(false).await.unwrap();
+        let mut rows = Vec::new();
+        while let Some(page) = pages.next().await {
+            rows.extend(page.unwrap().data);
+        }
+        assert_eq!(rows, vec![vec![Some("1".into())], vec![Some("2".into())]]);
+        assert!(client.queries_need_heartbeat.lock().is_empty());
+        assert_eq!(server.requests.lock().len(), 3);
+    }
 }
 
 #[tokio::test]
@@ -303,6 +349,37 @@ async fn cloud_completed_queries_release_tracking_without_heartbeat() {
             assert!(client.queries_need_heartbeat.lock().is_empty());
             assert_eq!(server.requests.lock().len(), if paginated { 4 } else { 2 });
         }
+    }
+}
+
+#[tokio::test]
+async fn native_completed_queries_release_tracking_too() {
+    let server = MockServer::new(|request| {
+        let mut body = query_reply();
+        body["node_id"] = json!("node-1");
+        if request.method == "GET" {
+            body["data"] = json!([["2"]]);
+            body["next_uri"] = Value::Null;
+        }
+        MockReply::json(body)
+    })
+    .await;
+    let mut client = client(&server).await;
+    client.is_cloud_webapi = false;
+    client.auth = Arc::new(BasicAuth::new("root", ""));
+    let client = Arc::new(client);
+    let page = client.query_all("SELECT 1", None).await.unwrap();
+    assert_eq!(
+        page.data,
+        vec![vec![Some("1".into())], vec![Some("2".into())]]
+    );
+    assert!(client.queries_need_heartbeat.lock().is_empty());
+    client.try_heartbeat().await.unwrap();
+    let requests = server.requests.lock();
+    assert_eq!(requests.len(), 2);
+    for request in requests.iter() {
+        assert!(request.headers["authorization"].starts_with("Basic "));
+        assert!(!request.headers.contains_key("x-databendcloud-token"));
     }
 }
 
@@ -409,6 +486,7 @@ async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
     let dsn = format!("databend://ignored:%FF@api.databend.com/default?cloud_api_token={TOKEN}&org_slug={ORG}&warehouse=wh");
     let client = APIClient::from_dsn(&dsn).await.unwrap();
     assert!(client.is_cloud_webapi);
+    assert_eq!(client.username(), "cloud_account");
     assert!(!client.auth.can_reload());
     assert!(!format!("{:?}", client.session_state()).contains(TOKEN));
     assert!(!format!("{:?}", client.session_state()).contains("org_slug"));

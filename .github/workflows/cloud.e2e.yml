@@ -2,17 +2,7 @@ name: Cloud WebAPI E2E
 
 on:
   workflow_dispatch:
-    inputs:
-      confirm_test_account:
-        description: 'Confirm the token is for a dedicated, least-privilege test account (no production orgs)'
-        required: true
-        default: false
-        type: boolean
   workflow_call:
-    inputs:
-      confirm_test_account:
-        required: true
-        type: boolean
     secrets:
       BENDSQL_CLOUD_API_TOKEN:
         required: true
@@ -43,24 +33,35 @@ jobs:
       CARGO_INCREMENTAL: '0'
       CARGO_BUILD_JOBS: '2'
     steps:
-      - name: Require dedicated test credentials
+      - name: Check test Secrets availability (values are not injected)
+        id: credentials
         env:
-          CONFIRMED: ${{ inputs.confirm_test_account }}
+          HAS_TOKEN: ${{ secrets.BENDSQL_CLOUD_API_TOKEN != '' }}
+          HAS_ORG: ${{ secrets.BENDSQL_ORG != '' }}
         run: |
-          if [ "$CONFIRMED" != "true" ]; then
-            echo '::error::Confirm a dedicated, least-privilege Cloud test account before running.'
+          if [ "$HAS_TOKEN" = "true" ] && [ "$HAS_ORG" = "true" ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Skipping live Cloud E2E: repository test Secrets are not configured.'
+          else
+            echo '::error::Configure BENDSQL_CLOUD_API_TOKEN and BENDSQL_ORG for a dedicated test account.'
             exit 1
           fi
       - name: Checkout the exact trusted main commit
+        if: steps.credentials.outputs.available == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Install Rust (without Cloud credentials)
+        if: steps.credentials.outputs.available == 'true'
         run: rustup toolchain install stable --profile minimal
       - name: Build CLI (without Cloud credentials or PR artifacts)
+        if: steps.credentials.outputs.available == 'true'
         run: cargo build -p bendsql --bin bendsql
       - name: Test read-only queries on default Warehouse
+        if: steps.credentials.outputs.available == 'true'
         env:
           BENDSQL_CLOUD_API_TOKEN: ${{ secrets.BENDSQL_CLOUD_API_TOKEN }}
           BENDSQL_ORG: ${{ secrets.BENDSQL_ORG }}

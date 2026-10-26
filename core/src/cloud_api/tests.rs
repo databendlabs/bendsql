@@ -15,61 +15,49 @@
 use super::*;
 
 #[test]
-fn additional_origin_is_exact_and_https_only() {
-    let endpoint = Url::parse("https://staging.example:8443").unwrap();
-    let auth = CloudApiAuth::with_allowed_origin(
-        endpoint.clone(),
-        "fake-token".into(),
-        "org-example".into(),
-        Some("https://staging.example:8443"),
-    )
-    .unwrap();
+fn official_origins_are_exact_and_https_only() {
+    let endpoint = Url::parse("https://api.databend.com").unwrap();
+    let auth =
+        CloudApiAuth::new(endpoint.clone(), "fake-token".into(), "org-example".into()).unwrap();
     let client = reqwest::Client::new();
     assert!(auth
         .wrap(client.get(endpoint.join("v1/query").unwrap()))
         .is_ok());
     for other in [
-        "http://staging.example:8443",
+        "http://api.databend.com",
+        "https://api.databend.com:8443",
+        "https://api.databend.cn",
         "https://staging.example",
-        "https://other.example:8443",
     ] {
         assert!(auth.wrap(client.get(other)).is_err());
     }
-    assert!(CloudApiAuth::with_allowed_origin(
-        endpoint,
+    assert!(CloudApiAuth::new(
+        Url::parse("https://api.databend.cn").unwrap(),
         "fake-token".into(),
-        "org-example".into(),
-        None
+        "org-example".into()
     )
-    .is_err());
-    for allowed in [
-        "http://staging.example:8443",
-        "https://user:secret@staging.example:8443",
-        "https://staging.example/path",
-        "https://staging.example?query",
-        "https://staging.example#fragment",
-        "https://staging.example:0",
-        "invalid",
+    .is_ok());
+    for endpoint in [
+        "http://api.databend.com",
+        "https://api.databend.com:8443",
+        "https://localhost",
+        "https://staging.example",
     ] {
-        let err = CloudApiAuth::with_allowed_origin(
-            Url::parse("https://api.databend.com").unwrap(),
+        assert!(CloudApiAuth::new(
+            Url::parse(endpoint).unwrap(),
             "fake-token".into(),
-            "org-example".into(),
-            Some(allowed),
+            "org-example".into()
         )
-        .err()
-        .unwrap();
-        assert!(!format!("{err:?}").contains("secret"));
+        .is_err());
     }
 }
 
 #[test]
 fn error_redaction_covers_raw_and_json_not_arbitrary_encodings() {
-    let auth = CloudApiAuth::with_allowed_origin(
+    let auth = CloudApiAuth::new(
         Url::parse("https://api.databend.com").unwrap(),
         "fake\"token".into(),
         "org-example".into(),
-        None,
     )
     .unwrap();
     let mut message = "raw fake\"token; JSON fake\\\"token".to_string();
