@@ -153,6 +153,258 @@ async fn client(server: &MockServer) -> APIClient {
 }
 
 #[tokio::test]
+async fn cloud_gateway_management_results_do_not_use_engine_lifecycle() {
+    for with_rows in [false, true] {
+        for with_stats in [false, true] {
+            let server = MockServer::new(move |request| {
+                assert_eq!(request.method, "POST");
+                assert_eq!(request.path, "/v1/query");
+                let mut body = json!({
+                    "id": "management-query", "schema": [], "data": [], "state": "Succeeded"
+                });
+                if with_rows {
+                    body["schema"] = json!([{"name":"n", "type":"Int64"}]);
+                    body["data"] = json!([["1"]]);
+                }
+                if with_stats {
+                    body["stats"] = query_reply()["stats"].clone();
+                }
+                if with_rows {
+                    // Even if these engine fields are present, a gateway-local
+                    // response must never register a heartbeat or follow them.
+                    body["node_id"] = json!("not-an-engine-query");
+                    body["next_uri"] = json!("/v1/query/management-query/page/0");
+                    body["final_uri"] = json!("/v1/query/management-query/final");
+                }
+                let mut reply = MockReply::json(body);
+                reply
+                    .headers
+                    .push(("X-Databend-Query-Source", "gateway".into()));
+                reply
+            })
+            .await;
+            let client = Arc::new(client(&server).await);
+            let page = client
+                .query_all("management statement", None)
+                .await
+                .unwrap();
+            assert_eq!(page.data.len(), usize::from(with_rows));
+            assert_eq!(page.raw_schema.len(), usize::from(with_rows));
+            assert_eq!(
+                page.stats.progresses.result_progress.rows,
+                usize::from(with_stats)
+            );
+            if with_rows {
+                assert_eq!(page.data[0][0].as_deref(), Some("1"));
+            }
+
+            let pages = client
+                .start_query("management statement", true, None)
+                .await
+                .unwrap();
+            let (mut pages, schema, _) = pages.wait_for_schema(true).await.unwrap();
+            assert_eq!(schema.fields().len(), usize::from(with_rows));
+            while let Some(page) = pages.next().await {
+                page.unwrap();
+            }
+            drop(pages);
+            client.try_heartbeat().await.unwrap();
+            assert!(client.queries_need_heartbeat.lock().is_empty());
+            assert!(client.last_node_id().is_none());
+            assert_eq!(server.requests.lock().len(), 2);
+        }
+    }
+}
+
+#[tokio::test]
+async fn cloud_gateway_defaults_do_not_relax_engine_decoding_or_hide_errors() {
+    let server = MockServer::new(|_| {
+        MockReply::json(json!({
+            "id":"engine-query", "schema":[], "data":[], "state":"Succeeded"
+        }))
+    })
+    .await;
+    let engine_client = Arc::new(client(&server).await);
+    let err = engine_client
+        .query_all("SELECT 1", None)
+        .await
+        .err()
+        .unwrap();
+    assert!(err.to_string().contains("missing field `stats`"));
+
+    let server = MockServer::new(|_| {
+        let mut reply = MockReply::json(json!({
+            "id":"management-query", "schema":[], "data":[], "state":"Failed",
+            "error":{"code":5100, "message":TOKEN}
+        }));
+        reply
+            .headers
+            .push(("X-Databend-Query-Source", "gateway".into()));
+        reply
+    })
+    .await;
+    let client = Arc::new(client(&server).await);
+    let err = client
+        .query_all("management statement", None)
+        .await
+        .err()
+        .unwrap();
+    assert!(matches!(err, Error::QueryFailed(_)));
+    assert!(!format!("{err:?}").contains(TOKEN));
+    assert_eq!(server.requests.lock().len(), 1);
+}
+
+#[tokio::test]
+async fn cloud_completed_queries_release_tracking_without_heartbeat() {
+    for paginated in [false, true] {
+        for need_progress in [false, true] {
+            let queries = Arc::new(AtomicUsize::new(0));
+            let seen = queries.clone();
+            let server = MockServer::new(move |request| {
+                let mut body = query_reply();
+                let id = if request.method == "POST" {
+                    format!("q{}", seen.fetch_add(1, Ordering::SeqCst))
+                } else {
+                    assert!(request.path.contains("/page/"));
+                    assert_eq!(request.headers["x-databend-sticky-node"], "node-1");
+                    request.path.split('/').nth(3).unwrap().to_owned()
+                };
+                body["id"] = json!(id);
+                body["node_id"] = json!("node-1");
+                body["next_uri"] = if paginated && request.method == "POST" {
+                    json!(format!("/v1/query/{id}/page/0"))
+                } else {
+                    Value::Null
+                };
+                MockReply::json(body)
+            })
+            .await;
+            let client = Arc::new(client(&server).await);
+            for _ in 0..2 {
+                let pages = client
+                    .start_query("SELECT 1", need_progress, None)
+                    .await
+                    .unwrap();
+                let (mut pages, _, _) = pages.wait_for_schema(need_progress).await.unwrap();
+                assert_eq!(
+                    client.queries_need_heartbeat.lock().len(),
+                    usize::from(paginated)
+                );
+                pages.next().await.unwrap().unwrap();
+                if paginated {
+                    pages.next().await.unwrap().unwrap();
+                }
+                // Cleanup happens on the terminal response, not only on Drop
+                // or on a subsequent poll returning None.
+                assert!(client.queries_need_heartbeat.lock().is_empty());
+                assert!(pages.next().await.is_none());
+            }
+            client.try_heartbeat().await.unwrap();
+            assert!(client.queries_need_heartbeat.lock().is_empty());
+            assert_eq!(server.requests.lock().len(), if paginated { 4 } else { 2 });
+        }
+    }
+}
+
+#[tokio::test]
+async fn cloud_page_errors_release_query_tracking() {
+    for failure in ["http", "decode", "query"] {
+        let server = MockServer::new(move |request| {
+            if request.method == "POST" {
+                let mut body = query_reply();
+                body["node_id"] = json!("node-1");
+                return MockReply::json(body);
+            }
+            match failure {
+                "http" => MockReply::error(404),
+                "decode" => MockReply::json(json!({"invalid":"response"})),
+                "query" => {
+                    let mut body = query_reply();
+                    body["error"] = json!({"code":5100, "message":"query failed"});
+                    MockReply::json(body)
+                }
+                _ => unreachable!(),
+            }
+        })
+        .await;
+        let client = Arc::new(client(&server).await);
+        let pages = client.start_query("SELECT 1", false, None).await.unwrap();
+        let (mut pages, _, _) = pages.wait_for_schema(false).await.unwrap();
+        assert_eq!(client.queries_need_heartbeat.lock().len(), 1);
+        pages.next().await.unwrap().unwrap();
+        assert!(pages.next().await.unwrap().is_err());
+        assert!(client.queries_need_heartbeat.lock().is_empty());
+        assert!(pages.next().await.is_none());
+        drop(pages);
+        client.try_heartbeat().await.unwrap();
+        assert_eq!(server.requests.lock().len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn cloud_early_drop_still_finalizes_on_the_tracked_node() {
+    let finalized = Arc::new(tokio::sync::Notify::new());
+    let notification = finalized.clone();
+    let server = MockServer::new(move |request| {
+        if request.path.ends_with("/final") {
+            assert_eq!(request.method, "GET");
+            assert_eq!(request.headers["x-databend-sticky-node"], "node-1");
+            notification.notify_one();
+        } else {
+            assert_eq!(request.path, "/v1/query");
+        }
+        let mut body = query_reply();
+        body["node_id"] = json!("node-1");
+        MockReply::json(body)
+    })
+    .await;
+    let client = Arc::new(client(&server).await);
+    let pages = client.start_query("SELECT 1", false, None).await.unwrap();
+    let (pages, _, _) = pages.wait_for_schema(false).await.unwrap();
+    assert_eq!(client.queries_need_heartbeat.lock().len(), 1);
+    drop(pages);
+    assert!(client.queries_need_heartbeat.lock().is_empty());
+    tokio::time::timeout(Duration::from_secs(5), finalized.notified())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn cloud_drop_during_final_request_releases_tracking_without_duplicate_cleanup() {
+    let started = Arc::new(tokio::sync::Notify::new());
+    let notification = started.clone();
+    let server = MockServer::new(move |request| {
+        let mut body = query_reply();
+        body["node_id"] = json!("node-1");
+        body["next_uri"] = json!("/v1/query/q1/final");
+        let mut reply = MockReply::json(body);
+        if request.method == "GET" {
+            assert_eq!(request.path, "/v1/query/q1/final");
+            notification.notify_one();
+            reply.headers.push(("X-Mock-Delay", "200".into()));
+        }
+        reply
+    })
+    .await;
+    let client = Arc::new(client(&server).await);
+    let pages = client.start_query("SELECT 1", false, None).await.unwrap();
+    let (mut pages, _, _) = pages.wait_for_schema(false).await.unwrap();
+    pages.next().await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            _ = pages.next() => panic!("expected the final request to remain in flight"),
+            _ = started.notified() => {},
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(client.queries_need_heartbeat.lock().len(), 1);
+    drop(pages);
+    assert!(client.queries_need_heartbeat.lock().is_empty());
+    assert_eq!(server.requests.lock().len(), 2);
+}
+
+#[tokio::test]
 async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
     let dsn = format!("databend://ignored:%FF@api.databend.com/default?cloud_api_token={TOKEN}&org_slug={ORG}&warehouse=wh");
     let client = APIClient::from_dsn(&dsn).await.unwrap();

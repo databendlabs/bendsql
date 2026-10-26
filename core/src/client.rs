@@ -23,7 +23,7 @@ use crate::login::{
     SessionTokenInfo,
 };
 use crate::presign::{presign_upload_to_stage, PresignMode, PresignedResponse, Reader};
-use crate::response::LoadResponse;
+use crate::response::{GatewayQueryResponse, LoadResponse};
 use crate::stage::StageLocation;
 use crate::{
     error::{suggests_sslmode_disable, Error, RequestKind, Result},
@@ -782,6 +782,11 @@ impl APIClient {
             }
             return Err(error);
         }
+        let is_gateway = self.is_cloud_webapi
+            && response
+                .headers
+                .get("X-Databend-Query-Source")
+                .is_some_and(|source| source == "gateway");
         let is_arrow_data = Self::is_arrow_data(&response.headers);
         if is_first {
             if let Some(route_hint) = response.headers.get(HEADER_ROUTE_HINT) {
@@ -812,7 +817,11 @@ impl APIClient {
             }
             body = json_body
         };
-        let resp: QueryResponse = self.decode_response(&body)?;
+        let resp: QueryResponse = if is_gateway {
+            self.decode_response::<GatewayQueryResponse>(&body)?.into()
+        } else {
+            self.decode_response(&body)?
+        };
         self.handle_session(&resp.session).await;
         if let Some(err) = &resp.error {
             return Err(self.auth.sanitize_error(Error::QueryFailed(err.clone())));
@@ -1597,6 +1606,10 @@ impl APIClient {
                 });
             }
         }
+    }
+
+    pub(crate) fn unregister_query_for_heartbeat(&self, query_id: &str) {
+        self.queries_need_heartbeat.lock().remove(query_id);
     }
 
     pub(crate) fn register_query_for_heartbeat(&self, query_id: &str, state: QueryState) {

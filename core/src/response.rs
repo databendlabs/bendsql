@@ -91,6 +91,45 @@ pub struct QueryResponse {
     pub kill_uri: Option<String>,
 }
 
+// Gateway-local management results are complete, independent of query-node
+// pagination and cleanup, and may omit engine statistics entirely.
+#[derive(Deserialize)]
+pub(crate) struct GatewayQueryResponse {
+    id: String,
+    schema: Vec<SchemaField>,
+    data: Vec<Vec<Option<String>>>,
+    state: String,
+    session: Option<SessionState>,
+    settings: Option<QueryResultFormatSettings>,
+    error: Option<ErrorCode>,
+    warnings: Option<Vec<String>>,
+    #[serde(default)]
+    stats: QueryStats,
+}
+
+impl From<GatewayQueryResponse> for QueryResponse {
+    fn from(response: GatewayQueryResponse) -> Self {
+        Self {
+            id: response.id,
+            node_id: None,
+            session_id: None,
+            session: response.session,
+            schema: response.schema,
+            data: response.data,
+            state: response.state,
+            settings: response.settings,
+            error: response.error,
+            warnings: response.warnings,
+            stats: response.stats,
+            result_timeout_secs: None,
+            stats_uri: None,
+            final_uri: None,
+            next_uri: None,
+            kill_uri: None,
+        }
+    }
+}
+
 #[derive(Deserialize, Debug)]
 pub struct LoadResponse {
     pub id: String,
