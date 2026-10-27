@@ -11,12 +11,30 @@
 
 ### Streaming AI answers
 
-- On an interactive terminal, OpenAI-compatible and ACP answers now stream by
-  default. Only the last screenful is shown while generating; the full answer is
-  printed when the turn completes, and failed/interrupted turns erase partial text.
+- On an interactive terminal, OpenAI-compatible, ACP and local Codex answers now
+  stream by default. Only the last screenful is shown while generating; the full
+  answer is printed when the turn completes, and failed/interrupted turns erase
+  partial text.
   Disable with `settings.ai_stream = false` or `!set ai_stream false`.
+- Local Codex streams assistant answer text, not commentary, thinking or tool
+  output. Completed assistant-message text from a successful turn remains the
+  authoritative answer saved in conversation history. Claude Code and Pi continue
+  to show a spinner followed by the final answer.
 - OpenAI-compatible backends receive `"stream": true` in that case. Gateways that
   ignore it and return JSON keep working; gateways that reject it need `ai_stream = false`.
+
+### evot backend
+
+- New zero-config built-in backend `local-evot` (alias `evot`), discovered after
+  Pi. BendSQL starts `evot acp --tools readonly --permission ask --ephemeral` per
+  question through its ACP client: evot asks before every tool call and BendSQL
+  always refuses, so no tool runs, and evot keeps no session on disk. Answers
+  stream live; a turn where the model tried a tool is discarded. `evot --help`
+  must advertise `acp`, `--tools`, `--permission`, `--ephemeral` and `--model`;
+  older evot releases receive no context.
+- Like other built-ins it accepts `command`, `model` (passed as `--model`),
+  `env_allowlist` and `allow_external_agent` overrides. `EVOT_LLM_*` variables
+  are forwarded so environment-based evot provider settings keep working.
 
 ### Interactive SQL and AI modes
 

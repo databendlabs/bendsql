@@ -132,7 +132,7 @@ struct Args {
     #[clap(
         long,
         conflicts_with_all = ["non_interactive", "query", "check", "data", "time"],
-        help = "Select a built-in CLI (claude/codex/pi), a configured backend, or env for BENDSQL_AGENT_* settings"
+        help = "Select a built-in CLI (claude/codex/pi/evot), a configured backend, or env for BENDSQL_AGENT_* settings"
     )]
     backend: Option<String>,
 

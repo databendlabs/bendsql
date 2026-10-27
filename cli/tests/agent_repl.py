@@ -710,6 +710,110 @@ allow_external_agent = true
             assert b"\x1b[31mMock CLI" not in output
 
 
+def exercise_codex_streaming(executable, env, port):
+    with tempfile.TemporaryDirectory(prefix="bendsql-codex-stream-") as directory:
+        mock = os.path.join(directory, "codex")
+        source = os.path.join(os.path.dirname(__file__), "mock_agent_cli.py")
+        with open(source) as file:
+            contents = file.read()
+        with open(mock, "w") as file:
+            file.write(f"#!{sys.executable}\n{contents}")
+        os.chmod(mock, 0o700)
+        path = os.path.join(directory, "requests.jsonl")
+        live = dict(env, TERM="xterm", CLI_TEST_RECORD=path)
+        # Exercise automatic discovery of the built-in, not a separate adapter.
+        write_config(live, f'''
+[agent]
+timeout_secs = 2
+[agent.backends.local-codex]
+command = {json.dumps(mock)}
+env_allowlist = ["CLI_TEST_RECORD"]
+''')
+        api_count = len(MockService.model_requests)
+        with Terminal(executable, live, port, size=(24, 80)) as terminal:
+            terminal.expect("smart> ")
+            terminal.send("!backend")
+            assert b"Current backend: local-codex" in b"".join(terminal.transcript)
+            sql_count = len(MockService.sql_requests)
+            for question, partial, final in [
+                ("stream-codex", "Codex first part.", "Codex first part. Codex second part."),
+                ("stream-authoritative", "Codex provisional text", "Codex authoritative answer."),
+            ]:
+                os.write(terminal.fd, f"!ask {question}\r".encode())
+                terminal.expect(partial)
+                output = b"".join(terminal.transcript)
+                assert "AI thinking" not in visible_terminal(output)
+                assert final.encode() not in output, "Partial text must precede turn completion"
+                with open(path + ".release", "w"):
+                    pass
+                terminal.expect("smart> ")
+                os.unlink(path + ".release")
+                screen = visible_terminal(b"".join(terminal.transcript))
+                assert screen.count(final) == 1, screen
+                if question == "stream-authoritative":
+                    assert partial not in screen, screen
+                wait_stopped(cli_records(path)[-1])
+                terminal.send("!ask Check authoritative history")
+                history = cli_records(path)[-1]["messages"]
+                assert [m["content"] for m in history if m["role"] == "assistant"][-1] == final
+                assert all("Codex provisional" not in m["content"] for m in history)
+
+            # Legacy phase=null still streams. Missing starts/deltas fall back
+            # to final completed items, without duplicate content or errors.
+            for question in ["stream-legacy", "stream-unannounced", "stream-no-deltas"]:
+                before = len(b"".join(terminal.transcript))
+                terminal.send(f"!ask {question}")
+                output = b"".join(terminal.transcript)[before:]
+                if question == "stream-legacy":
+                    assert output.count(b"Codex first part.") >= 2
+                else:
+                    assert output.count(b"Codex first part.") == 1
+                assert b"AI error:" not in output
+
+            terminal.send("!context clear")
+            for question in ["stream-failed", "stream-disconnect", "stream-no-answer", "stream-tool-item",
+                             "stream-tool-request", "stream-wrong-thread", "stream-wrong-turn"]:
+                before = len(b"".join(terminal.transcript))
+                terminal.send(f"!ask {question}")
+                output = b"".join(terminal.transcript)[before:]
+                assert b"AI error:" in output
+                assert "Codex discarded partial" not in visible_terminal(b"".join(terminal.transcript))
+                assert len(cli_records(path)[-1]["messages"]) == 2, "Failed turns must not enter dialogue"
+                wait_stopped(cli_records(path)[-1])
+            terminal.send("!ask Verify no failed turns in history")
+            assert len(cli_records(path)[-1]["messages"]) == 2
+
+            for question in ["stream-cancel", "stream-timeout"]:
+                terminal.send("!context clear")
+                os.write(terminal.fd, f"!ask {question}\r".encode())
+                terminal.expect("Codex cancellable partial")
+                record = cli_records(path)[-1]
+                if question == "stream-cancel":
+                    os.write(terminal.fd, b"\x03")
+                    terminal.expect("AI request interrupted.")
+                else:
+                    terminal.expect("timed out")
+                terminal.expect("smart> ")
+                wait_stopped(record)
+                assert cli_records(path + ".interrupt")[-1]["pid"] == record["pid"]
+                assert "Codex cancellable partial" not in visible_terminal(b"".join(terminal.transcript))
+                terminal.send("!ask Verify abandoned turn is not in history")
+                assert len(cli_records(path)[-1]["messages"]) == 2
+
+            terminal.send("!set ai_stream false")
+            before = len(b"".join(terminal.transcript))
+            terminal.send("!ask stream-disabled")
+            output = b"".join(terminal.transcript)[before:]
+            assert output.count(b"Codex first part.") == 1, "Disabled streams print only the final answer"
+            assert b"\x1b[?2026h" not in output
+            assert len(MockService.model_requests) == api_count, "Never fall back to HTTP"
+            assert len(MockService.sql_requests) == sql_count, "AI must never execute SQL"
+            terminal.finish()
+            output = b"".join(terminal.transcript)
+            for secret in [b"private-codex-", b"private-cli-secret"]:
+                assert secret not in output
+
+
 def exercise_builtin_clis(executable, env, port):
     # Built-ins need no backend tables, but sharing requires explicit consent.
     write_config(env, "")
@@ -854,6 +958,99 @@ def wait_acp_prompt(path, count):
             raise AssertionError("Mock ACP adapter did not receive its question")
         time.sleep(0.02)
     return acp_records(path, "prompt")[-1]
+
+
+def exercise_evot_builtin(executable, env, port):
+    """local-evot needs no configuration and runs `evot acp --tools readonly --permission ask --ephemeral`."""
+    with tempfile.TemporaryDirectory(prefix="bendsql-mock-evot-") as directory:
+        source = os.path.join(os.path.dirname(__file__), "mock_agent_acp.py")
+        with open(source) as file:
+            contents = file.read()
+        mock = os.path.join(directory, "evot")
+        with open(mock, "w") as file:
+            file.write(f"#!{sys.executable}\n{contents}")
+        os.chmod(mock, 0o700)
+        path = os.path.join(directory, "requests.jsonl")
+        evot_env = dict(env, PATH=directory + os.pathsep + env.get("PATH", os.defpath),
+                        EVOT_LLM_TEST_RECORD=path, EVOT_LLM_MOCK_API_KEY="private-evot-key",
+                        EVOT_SERVER_URL="not-forwarded", ACP_TEST_BAD_VERSION="1",
+                        OPENAI_API_KEY="not-inherited", BENDSQL_PASSWORD="private-db-password")
+        for name in list(evot_env):
+            if name.startswith("BENDSQL_AGENT_"):
+                del evot_env[name]
+        write_config(evot_env, "")
+        api_count = len(MockService.model_requests)
+        for name in ["local-evot", "evot"]:
+            started = len(cli_records(path))
+            with Terminal(executable, evot_env, port, backend=name) as terminal:
+                terminal.expect("smart> ")
+                terminal.send("!backend")
+                output = b"".join(terminal.transcript)
+                assert b"Current backend: local-evot" in output or f"Current backend: {name}".encode() in output
+                assert b"local-evot" in output
+                assert len(cli_records(path)) == started, "evot must not start before a question"
+                terminal.send("SELECT 1;")
+                sql_count = len(MockService.sql_requests)
+                terminal.send("!ask Explain Q1")
+                assert b"Mock ACP answer grounded in query evidence." in b"".join(terminal.transcript)
+                init = acp_records(path, "initialize")[-1]
+                assert init["argv"] == ["acp", "--tools", "readonly", "--permission", "ask", "--ephemeral"]
+                assert init["env"]["EVOT_LLM_MOCK_API_KEY"] == "private-evot-key"
+                for key in ["EVOT_SERVER_URL", "ACP_TEST_BAD_VERSION", "OPENAI_API_KEY", "BENDSQL_PASSWORD"]:
+                    assert key not in init["env"]
+                prompt = acp_records(path, "prompt")[-1]
+                assert json.loads(prompt["messages"][-1]["content"])["query_records"][0]["id"] == "Q1"
+                wait_stopped(prompt)
+                terminal.send("!ask Follow-up")
+                assert len(acp_records(path, "prompt")[-1]["messages"]) == 4
+                # Reported tool use still invalidates the answer.
+                before = len(b"".join(terminal.transcript))
+                terminal.send("!ask tool-call")
+                assert b"AI error:" in b"".join(terminal.transcript)[before:]
+                # A permission request (evot asks before every tool call) is
+                # refused, so the tool never runs, and the turn is discarded.
+                before = len(b"".join(terminal.transcript))
+                terminal.send("!ask permission")
+                assert b"AI error:" in b"".join(terminal.transcript)[before:]
+                reply = acp_records(path, "client_reply")[-1]["reply"]
+                assert reply["result"] == {"outcome": {"outcome": "cancelled"}}, reply
+                terminal.send("!ask After tool use")
+                assert len(acp_records(path, "prompt")[-1]["messages"]) == 6, "Tainted turns stay out of history"
+                assert len(MockService.sql_requests) == sql_count
+                terminal.finish()
+                for secret in [b"private-acp-secret", b"private-thinking", b"private-evot-key"]:
+                    assert secret not in b"".join(terminal.transcript)
+        # One empty-stdin help probe per backend instance.
+        helps = acp_records(path, "help")
+        assert len(helps) == 2 and all(help["stdin"] == "" for help in helps)
+        # A model override is passed to `evot acp --model`.
+        write_config(evot_env, '[agent.backends.local-evot]\nmodel="mock:custom-model"')
+        with Terminal(executable, evot_env, port, backend="evot") as terminal:
+            terminal.expect("smart> ")
+            terminal.send("!ask Built-in model override")
+            assert acp_records(path, "initialize")[-1]["argv"][-2:] == ["--model", "mock:custom-model"]
+            terminal.finish()
+        # An evot without `--permission` (would run read-only tools unasked)
+        # gets no context and no fallback.
+        write_config(evot_env, "")
+        old_env = dict(evot_env, EVOT_LLM_TEST_OLD="1")
+        with Terminal(executable, old_env, port, backend="local-evot") as terminal:
+            terminal.expect("smart> ")
+            count = len(acp_records(path, "initialize"))
+            terminal.send("!ask Context must not be delivered")
+            assert len(acp_records(path, "initialize")) == count
+            assert b"Context was not sent" in b"".join(terminal.transcript)
+            terminal.send("SELECT 1;")
+            terminal.finish()
+        # A disabled canonical profile cannot be bypassed through its alias.
+        write_config(evot_env, '[agent.backends.local-evot]\nallow_external_agent=false')
+        with Terminal(executable, evot_env, port, backend="evot") as terminal:
+            terminal.expect("smart> ")
+            count = len(cli_records(path))
+            terminal.send("!ask Disabled built-in")
+            assert len(cli_records(path)) == count
+            terminal.finish()
+        assert len(MockService.model_requests) == api_count
 
 
 def exercise_acp_backend(executable, env, port):
@@ -1903,8 +2100,10 @@ def main():
                 exercise_missing_model(executable, env, port)
                 exercise_configured_backends(executable, env, port)
                 exercise_cli_backends(executable, env, port)
+                exercise_codex_streaming(executable, env, port)
                 exercise_builtin_clis(executable, env, port)
                 exercise_acp_backend(executable, env, port)
+                exercise_evot_builtin(executable, env, port)
                 exercise_smart_input_boundaries(executable, env, port)
                 exercise_sql_cancellation(executable, env, port)
                 exercise_default_backend_discovery(executable, env, port)

@@ -67,7 +67,7 @@ pub fn detect_local(config: &AgentConfig) -> Result<String> {
         bail!("Local coding CLI backends currently require Unix; select a configured HTTP backend. SQL remains available.");
     }
     detect_local_with(settings, |command| resolve_executable(command).is_ok())
-        .ok_or_else(|| anyhow!("No local coding CLI found. Install/login codex, Claude Code (claude), or pi, or select a configured backend with --backend or !backend. SQL remains available."))
+        .ok_or_else(|| anyhow!("No local coding CLI found. Install/login codex, Claude Code (claude), pi, or evot, or select a configured backend with --backend or !backend. SQL remains available."))
 }
 
 fn detect_local_with(
@@ -78,6 +78,7 @@ fn detect_local_with(
         ("local-codex", CliAdapter::Codex, "codex"),
         ("local-claude", CliAdapter::ClaudeCode, "claude"),
         ("local-pi", CliAdapter::Pi, "pi"),
+        ("local-evot", CliAdapter::Evot, "evot"),
     ] {
         let backend = settings.backend(name)?;
         if let BackendConfig::Cli {
@@ -135,6 +136,18 @@ pub fn build(config: &AgentConfig, name: &str) -> Result<Box<dyn ChatBackend>> {
                 map,
             )?))
         }
+        BackendConfig::Cli {
+            adapter: CliAdapter::Evot,
+            command,
+            model,
+            env_allowlist,
+            allow_external_agent,
+        } => Ok(Box::new(AcpBackend::evot(
+            command.as_deref(),
+            model.as_deref(),
+            env_allowlist,
+            *allow_external_agent,
+        )?)),
         BackendConfig::Cli {
             adapter,
             command,
@@ -206,7 +219,8 @@ mod tests {
         for (present, expected) in [
             (vec!["codex", "claude", "pi"], Some("local-codex")),
             (vec!["claude", "pi"], Some("local-claude")),
-            (vec!["pi"], Some("local-pi")),
+            (vec!["pi", "evot"], Some("local-pi")),
+            (vec!["evot"], Some("local-evot")),
             (vec!["amp"], None),
             (vec![], None),
         ] {

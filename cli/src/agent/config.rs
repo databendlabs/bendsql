@@ -20,7 +20,7 @@ use anyhow::{bail, Result};
 use serde::{de::IntoDeserializer, Deserialize, Deserializer};
 
 pub const ENV_BACKEND: &str = "env";
-pub const BUILTIN_BACKENDS: [&str; 3] = ["local-claude", "local-codex", "local-pi"];
+pub const BUILTIN_BACKENDS: [&str; 4] = ["local-claude", "local-codex", "local-evot", "local-pi"];
 
 fn default_timeout() -> u64 {
     60
@@ -73,6 +73,8 @@ pub enum CliAdapter {
     Codex,
     ClaudeCode,
     Pi,
+    /// evot speaks ACP (`evot acp`) rather than a CLI-specific wire format.
+    Evot,
 }
 
 #[derive(Clone, Deserialize)]
@@ -117,6 +119,7 @@ fn canonical_builtin(name: &str) -> Option<&'static str> {
         "local-claude" | "claude" | "claude-code" => Some("local-claude"),
         "local-codex" | "codex" => Some("local-codex"),
         "local-pi" | "pi" => Some("local-pi"),
+        "local-evot" | "evot" => Some("local-evot"),
         _ => None,
     }
 }
@@ -126,6 +129,7 @@ fn builtin_backend(name: &str) -> Option<BackendConfig> {
         "local-claude" => CliAdapter::ClaudeCode,
         "local-codex" => CliAdapter::Codex,
         "local-pi" => CliAdapter::Pi,
+        "local-evot" => CliAdapter::Evot,
         _ => unreachable!("canonical names are fixed"),
     };
     Some(BackendConfig::Cli {
@@ -215,6 +219,7 @@ impl<'de> Deserialize<'de> for AgentConfig {
                         CliAdapter::Codex => "codex".into(),
                         CliAdapter::ClaudeCode => "claude-code".into(),
                         CliAdapter::Pi => "pi".into(),
+                        CliAdapter::Evot => "evot".into(),
                     });
                     table
                         .entry("allow_external_agent")
@@ -310,6 +315,8 @@ mod tests {
             ("claude-code", CliAdapter::ClaudeCode),
             ("local-pi", CliAdapter::Pi),
             ("pi", CliAdapter::Pi),
+            ("local-evot", CliAdapter::Evot),
+            ("evot", CliAdapter::Evot),
         ] {
             let backend = settings.backend(name).unwrap();
             match backend.as_ref() {
@@ -524,7 +531,7 @@ allow_external_agent = true
 
     #[test]
     fn parses_cli_adapters_and_rejects_unsafe_or_unsupported_options() {
-        for adapter in ["codex", "claude-code", "pi"] {
+        for adapter in ["codex", "claude-code", "pi", "evot"] {
             let text = format!("[agent.backends.cli]\ntype='cli'\nadapter='{adapter}'\nallow_external_agent=true\nenv_allowlist=['CUSTOM_AUTH']");
             let config: Config = toml::from_str(&text).unwrap();
             assert!(config.agent.settings().is_ok());

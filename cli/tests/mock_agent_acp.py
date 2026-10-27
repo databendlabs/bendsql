@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mock ACP v1 adapter for agent_repl.py; no model calls or client-side tools."""
+"""Mock ACP v1 adapter for agent_repl.py; no model calls or client-side tools.
+
+Installed as `evot`, it also answers `--help` like `evot` with ACP support
+(or an older release with EVOT_LLM_TEST_OLD) for the local-evot built-in.
+"""
 
 import json
 import os
@@ -24,8 +28,13 @@ import time
 SESSION = "mock-session"
 
 
+def record_path():
+    # local-evot forwards only evot's EVOT_LLM_* namespace, not ACP_TEST_*.
+    return os.environ.get("ACP_TEST_RECORD") or os.environ["EVOT_LLM_TEST_RECORD"]
+
+
 def record(phase, **fields):
-    with open(os.environ["ACP_TEST_RECORD"], "a") as file:
+    with open(record_path(), "a") as file:
         file.write(json.dumps({"phase": phase, "pid": os.getpid(), "cwd": os.getcwd(), **fields}) + "\n")
 
 
@@ -60,7 +69,28 @@ def receive_reply(expected_id):
             record("cancel", params=message["params"])
 
 
+EVOT_HELP = """evot v0.0.0-mock
+
+Commands:
+  acp                    Serve the Agent Client Protocol (ACP) on stdio
+
+Options:
+  --model <name>         Override the model
+  --tools <policy>       acp only: full | readonly | none (default: full)
+  --permission <policy>  acp only: ask | allow — ask the client before each tool call (default: ask)
+  --ephemeral            acp only: keep sessions in memory, write nothing to disk
+"""
+
+
 def main():
+    if sys.argv[1:] == ["--help"]:
+        record("help", argv=sys.argv[1:], stdin=sys.stdin.read())
+        help_text = EVOT_HELP
+        if os.environ.get("EVOT_LLM_TEST_OLD"):
+            # The first ACP release: `acp`, `--tools`, `--ephemeral`, no `--permission`.
+            help_text = help_text.replace("--permission", "")
+        print(help_text)
+        return
     sys.stderr.write("adapter diagnostics " * 500)
     sys.stderr.flush()
     prompt_id = None

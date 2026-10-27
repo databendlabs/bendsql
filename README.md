@@ -214,7 +214,7 @@ invoke AI.
 
 ### Choose an AI backend
 
-By default, BendSQL uses the first installed CLI: **Codex → Claude Code → Pi**.
+By default, BendSQL uses the first installed CLI: **Codex → Claude Code → Pi → evot**.
 Install and authenticate it separately. Select another backend with `!backend`
 or at startup:
 
@@ -226,6 +226,13 @@ Codex 0.145.0 or newer is required (verified end to end with 0.154.0). BendSQL
 checks `codex --version` before sending any context; an older Codex reports an
 upgrade hint and SQL stays available. Claude Code and Pi are checked for the
 required flags through `--help`.
+
+evot (`--backend evot`, or `local-evot`) runs as
+`evot acp --tools readonly --permission ask --ephemeral`: evot asks BendSQL before
+every tool call and BendSQL always refuses, so no tool runs, and sessions stay in
+memory. If the model tries a tool, that answer is discarded. It needs an evot
+release with `acp --permission`; BendSQL checks `evot --help` before sending context. Answers stream as they are generated.
+evot reads its usual `~/.evotai/evot.env`; `EVOT_LLM_*` variables are also forwarded.
 
 Local CLIs start with a minimal environment rather than BendSQL's full
 environment, and database variables are never forwarded. Proxy and CA settings
@@ -284,10 +291,11 @@ are used as-is; omit `{mode}` to hide the mode. AI answers use terminal Markdown
 clears before the answer. Switch styles with `!set ai_output plain` or
 `!set ai_output markdown`; SQL result formatting is unchanged.
 
-On an interactive terminal, answers from OpenAI-compatible and ACP backends stream
-by default. While an answer is generated only its last screenful is shown; the
-complete answer is printed when the turn finishes. A failed, interrupted or
-timed-out turn erases the partial text and is not added to the conversation.
+On an interactive terminal, answers from OpenAI-compatible, ACP and local Codex
+backends (including evot) stream by default. Claude Code and Pi wait for the final answer. While an
+answer is generated only its last screenful is shown; the complete answer is printed
+when the turn finishes. A failed, interrupted or timed-out turn erases the partial
+text and is not added to the conversation.
 Use `!set ai_stream false` (or `ai_stream = false`) to wait for complete answers.
 
 Authentication recovery reconnects but does not automatically replay a statement;

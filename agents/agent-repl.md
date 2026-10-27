@@ -29,9 +29,9 @@ The session starts directly at its mode prompt; usage is available through `!hel
 and backend details through `!backend`, rather than printed at startup.
 
 Without an explicit backend, BendSQL checks installed executables in order:
-**`codex` → `claude` (Claude Code) → `pi`**. `--backend` takes precedence over
+**`codex` → `claude` (Claude Code) → `pi` → `evot`**. `--backend` takes precedence over
 `agent.backend` in the config file; either explicit selection bypasses discovery.
-No model process starts until a question is submitted. Missing all three CLIs
+No model process starts until a question is submitted. Missing all four CLIs
 produces an actionable error without blocking SQL. Amp is not supported. Merely
 defining HTTP profiles or setting legacy model
 environment variables does not select them.
@@ -154,7 +154,15 @@ Streaming backends in this phase:
   `!set ai_stream false`; requests are never automatically retried.
 - ACP: `agent_message_chunk` text is published as it arrives, but no further text
   is published after unsupported capability requests or reported tool use.
-- Codex, Claude Code and Pi keep the non-streaming path (spinner, then answer).
+- Local Codex: `item/agentMessage/delta` text streams only for the active thread/turn
+  and a started assistant message with `phase = final_answer` (or null/missing for
+  legacy models). Commentary, reasoning, unrelated/unannounced message deltas and
+  deltas after tool/capability denial are not displayed. Live text has an 8 KiB
+  per-turn budget; completed assistant-message text remains authoritative and is
+  recorded only after successful turn completion. Missing starts/deltas retain
+  final-answer-only compatibility. `ai_stream = false` uses that path explicitly.
+- Local evot: uses the ACP client above, so it streams the same way.
+- Claude Code and Pi keep the non-streaming path (spinner, then answer).
 
 ```toml
 [settings]
@@ -240,9 +248,9 @@ duplicates and overrides of HTTP transport/JSON content headers are rejected.
 SQL execution works without model configuration and remains available after model
 errors. `timeout_secs` defaults to 60 and supports 1–3600 seconds; `max_tokens`
 defaults to 2048 and supports 1–65536 (the service may have a lower limit).
-AI requests can be interrupted with Ctrl+C. HTTP and ACP backends can stream answers
-as described in [Streaming answers](#streaming-answers); Codex, Claude Code and Pi
-show a spinner followed by the final answer instead. No BendSQL query execution
+AI requests can be interrupted with Ctrl+C. HTTP, ACP and local Codex backends can
+stream answers as described in [Streaming answers](#streaming-answers); Claude Code
+and Pi show a spinner followed by the final answer instead. No BendSQL query execution
 tool is exposed to a backend.
 `openai-compatible` and the local `cli` adapters `codex`, `claude-code` and `pi`
 are implemented, together with a configurable stdio ACP v1 backend.
@@ -256,7 +264,7 @@ submitting a question runs the selected trusted program under those policies.** 
 allowlist is an OS security sandbox. Codex can still use tools in its read-only sandbox; BendSQL
 does not provide a SQL execution tool or execute SQL generated in an answer.
 
-Codex, Claude Code and Pi are built in: **no backend configuration tables are needed**.
+Codex, Claude Code, Pi and evot are built in: **no backend configuration tables are needed**.
 Install and authenticate the CLI, then use default discovery or select one:
 
 ```bash
@@ -264,7 +272,8 @@ bendsql  # SQL mode; !mode agent then a question uses codex, then claude, then p
 bendsql --backend local-claude
 bendsql --backend local-codex
 bendsql --backend local-pi
-# Short aliases are also accepted: claude, claude-code, codex, pi
+bendsql --backend local-evot
+# Short aliases are also accepted: claude, claude-code, codex, pi, evot
 bendsql --mode agent --backend pi
 ```
 
@@ -330,12 +339,29 @@ The adapters use distinct structured-output protocols:
   apps, web search, multi-agent spawning, memories and project instruction discovery.
   Read-only sandbox / approval policy `never` and ephemeral acknowledgement are
   verified before query context is sent. Approval/client-tool requests are rejected;
-  reported tool use invalidates the answer. Only completed assistant-message text
-  from a successful turn is returned; thinking and partial deltas are not committed.
+  reported tool use invalidates the answer and stops further live text. Assistant
+  answer deltas can be displayed while generating; commentary and thinking are not
+  displayed. Only completed assistant-message text from a successful turn is returned
+  and committed, never the accumulated partial deltas.
   Cancellation attempts `turn/interrupt` before bounded process-group cleanup.
   A new OS session isolates the headless server from the REPL's controlling terminal.
   These controls are not an OS security guarantee: Codex may still have native tools
   not fully disabled by feature flags.
+- **evot:** `evot acp --tools readonly --permission ask --ephemeral` (plus
+  `--model` when configured), driven by the generic ACP client below with all of
+  its limits, capability denial and cancellation. The model is offered evot's
+  read-only tools (read/grep/glob/search), but `--permission ask` makes evot send
+  `session/request_permission` before executing any call, and BendSQL always
+  answers `cancelled`, so no tool runs and the turn is discarded. `--tools none`
+  would be stricter, but the evot-pro gateway only serves requests shaped like the
+  evot agent and rejects tool-free ones (HTTP 403 `client_not_allowed`); the
+  read-only profile is a genuine evot agent session, not a disguise. `--ephemeral`
+  keeps evot sessions in memory. evot still loads its
+  native `~/.evotai/evot.env` via HOME and writes its own diagnostic log under
+  `~/.evotai/logs`. The child receives the common runtime/network variables plus
+  every `EVOT_LLM_*` variable (provider names are user-defined, so this namespace
+  is forwarded by prefix); other `EVOT_*` variables are not. Tool calls an
+  adapter still reports taint the turn exactly as for any ACP adapter.
 - **Pi:** one-shot JSON mode with `--no-session`, `--no-tools`, disabled extensions,
   MCP, skills, templates, themes and context-file discovery. `--no-approve` ignores
   project-local resources. `--offline` / `PI_OFFLINE` disable automatic catalog and
@@ -351,6 +377,16 @@ is rebuilt. This is protocol compatibility checking, not a security attestation 
 the executable. Native credential helpers and other installed CLI code are still
 trusted external programs.
 
+evot gets the same kind of check: `evot --help` alone, with empty stdin, must
+advertise `acp`, `--tools`, `--permission`, `--ephemeral` and `--model`. The
+first ACP build lacked `--permission`; it would run read-only tools unasked, so it
+is refused. evot uses date-based
+versions and the ACP command is newer than current releases, so BendSQL checks
+the advertised options rather than a minimum version. The adapter is tested with
+a mock `evot` (`exercise_evot_builtin` in `cli/tests/agent_repl.py`). It was also
+run against an unreleased evot build (`evot acp`, `feat/acp-server`) talking to a
+mock OpenAI service, not a real model.
+
 Codex `0.145.0` is the minimum supported version: it is the first release that
 accepts every `policy_args` override (0.144.x rejects `agents.enabled=false` with
 `expected struct AgentRoleToml`), confirmed by `initialize` + `thread/start` against
@@ -359,6 +395,8 @@ sending context; older or unparsable versions get an upgrade hint and the result
 not cached on failure. Raise `MIN_CODEX_VERSION` when adding a newer override.
 Codex `0.154.0` was verified with its generated app-server schema and opt-in live
 `hi` checks (no database records), including returning to the interactive prompt.
+Local Codex answer streaming is covered by the generated schema and mock tests;
+its separate live streaming smoke test is opt-in.
 Claude Code `2.1.203` was checked through its help and mock print/JSON protocol. Older releases may lack required
 flags. Unsupported versions, failed authentication or invalid structured output
 produce an error, never a downgrade to weaker permissions or another backend.
@@ -372,6 +410,9 @@ executable; it was not installed for live verification. Real model
 execution is not part of the mock test suite. A deliberately ignored live Codex
 smoke test can be run with `cargo test -p bendsql --bin bendsql real_codex_hi -- --ignored --nocapture`;
 it sends only `hi`, requires an authenticated installed CLI and may incur model cost.
+To verify live deltas too, run
+`cargo test -p bendsql --bin bendsql real_codex_stream_hi -- --ignored --nocapture`
+with the same requirements.
 
 The child environment is cleared and rebuilt from basic runtime variables
 (`PATH`, `HOME`, user/locale/temp variables) and CLI-specific auth variables:
@@ -466,13 +507,15 @@ custom-header settings, system skill text and cached query evidence, multi-turn
 history, reset, response control filtering and answer-size limits. HTTP 401/429/503,
 malformed/empty completions and oversized responses must not leak raw diagnostics,
 enter dialogue history, trigger fallback/retries or execute suggested SQL. The full
-suite additionally verifies timeouts/cancellation, spinner cleanup, input modes and
-native/ACP process cleanup. Live Codex tests remain opt-in and ignored by default.
+suite additionally verifies local Codex live frames, authoritative final answers,
+phase/item/turn filtering, failed-turn cleanup, streaming opt-out, timeouts/cancellation,
+spinner cleanup, input modes and native/ACP process cleanup. Live Codex tests remain
+opt-in and ignored by default.
 
 ### ACP adapters
 
 BendSQL can act as a text-only ACP Client for an **already installed, trusted
-stdio adapter**. Configure it explicitly; the three native CLI built-ins above
+stdio adapter**. Configure it explicitly; the native CLI built-ins above
 remain zero-config and unchanged.
 
 ```toml
