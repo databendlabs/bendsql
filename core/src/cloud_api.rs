@@ -14,7 +14,7 @@
 
 use crate::auth::{Auth, SensitiveString};
 use crate::error::{Error, Result};
-use reqwest::header::{HeaderValue, AUTHORIZATION};
+use reqwest::header::{HeaderValue, AUTHORIZATION, COOKIE};
 use reqwest::RequestBuilder;
 use url::Url;
 
@@ -99,6 +99,8 @@ impl Auth for CloudApiAuth {
             ));
         }
         request.headers_mut().remove(AUTHORIZATION);
+        // Let only the scoped CookieStore attach SQL session cookies at send.
+        request.headers_mut().remove(COOKIE);
         request
             .headers_mut()
             .insert(HEADER_CLOUD_TOKEN, self.token_header.clone());

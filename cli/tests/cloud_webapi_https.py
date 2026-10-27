@@ -32,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import uuid
 from urllib.parse import urlencode
 
 TOKEN = "fake-cloud-https-secret"
@@ -78,6 +79,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Set-Cookie", "console-cookie=not-for-cloud; Path=/")
+        self.send_header("Set-Cookie", "access_token=console-secret; Path=/")
+        if self.server.state.emit_session_cookies:
+            self.send_header("Set-Cookie", "session_id=mock-sql-session; Path=/; Secure; HttpOnly")
+            self.send_header("Set-Cookie", "last_refresh_time=123; Path=/; Secure")
         self.end_headers()
         self.wfile.write(body)
 
@@ -146,7 +151,7 @@ def main():
             "retry_delay_secs": "0"})
 
         def run(name, args, environment=None, config=None, expected_cloud=False,
-                authorization=None, expected_error=None, query="SELECT 1"):
+                authorization=None, expected_error=None, query="SELECT 1", emit_session_cookies=True):
             with tempfile.TemporaryDirectory(prefix="bendsql-home-") as home:
                 if config:
                     target = Path(home) / ".bendsql"
@@ -159,6 +164,7 @@ def main():
                            NO_PROXY="127.0.0.1,localhost")
                 env.update(environment or {})
                 server.records, server.pages, server.cloud, server.tunnels = [], 0, expected_cloud, []
+                server.emit_session_cookies = emit_session_cookies
                 result = subprocess.run([binary, "--non-interactive", f"--query={query}", *args],
                                         env=env, capture_output=True, text=True, timeout=15)
                 text = result.stdout + result.stderr
@@ -170,12 +176,25 @@ def main():
                     assert result.returncode == 0, (name, text)
                     assert "1" in result.stdout.splitlines(), (name, text)
                     assert "Cloud WebAPI does not guarantee transactions" not in result.stderr, name
-                    for method, path, headers, body in server.records:
+                    for index, (method, path, headers, body) in enumerate(server.records):
                         headers = {key.lower(): value for key, value in headers.items()}
                         if expected_cloud:
                             assert headers.get("x-databendcloud-token") == TOKEN, name
                             assert headers.get("x-databendcloud-org") == "org-example", name
-                            assert "authorization" not in headers and "cookie" not in headers, name
+                            assert "authorization" not in headers, name
+                            cookies = dict(part.strip().split("=", 1) for part in headers.get("cookie", "").split(";") if "=" in part)
+                            assert cookies.get("cookie_enabled") == "true", name
+                            assert set(cookies) == {"cookie_enabled", "session_id", "last_refresh_time"}, name
+                            if index > 0 and emit_session_cookies:
+                                assert cookies.get("session_id") == "mock-sql-session", name
+                                assert cookies.get("last_refresh_time") == "123", name
+                            else:
+                                uuid.UUID(cookies["session_id"])
+                                assert cookies["last_refresh_time"].isdigit(), name
+                                if index == 0:
+                                    initial_session_id = cookies["session_id"]
+                                else:
+                                    assert cookies["session_id"] == initial_session_id, name
                         else:
                             assert "x-databendcloud-token" not in headers, name
                             assert headers.get("authorization") == authorization, name
@@ -196,6 +215,8 @@ def main():
 
         try:
             run("official origin through local HTTPS proxy, query/page/final with retry", ["--dsn", cloud], expected_cloud=True)
+            run("SQL session remains stable when proxy omits Set-Cookie", ["--dsn", cloud],
+                expected_cloud=True, emit_session_cookies=False)
             run("China official origin through local HTTPS proxy", ["--dsn", cloud.replace("api.databend.com", "api.databend.cn")], expected_cloud=True)
             run("Cloud transaction statements are not incorrectly warned on", ["--dsn", cloud],
                 expected_cloud=True, query="/* session */ BEGIN")

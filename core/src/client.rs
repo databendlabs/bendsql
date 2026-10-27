@@ -16,6 +16,7 @@ use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPair
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
 use crate::cloud_api::{CloudApiAuth, HEADER_CLOUD_WAREHOUSE};
+use crate::cloud_cookie_store::CloudCookieStore;
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
 use crate::global_cookie_store::GlobalCookieStore;
 use crate::login::{
@@ -506,10 +507,6 @@ impl APIClient {
             Some(n) => n,
             None => format!("databend-client-rust/{}", VERSION.as_str()),
         };
-        let cookie_provider = GlobalCookieStore::new();
-        let cookie = HeaderValue::from_str("cookie_enabled=true").unwrap();
-        let mut initial_cookies = [&cookie].into_iter();
-        cookie_provider.set_cookies(&mut initial_cookies, &Url::parse("https://a.com").unwrap());
         let mut cli_builder = HttpClient::builder()
             .user_agent(ua)
             .connect_timeout(self.connect_timeout)
@@ -523,8 +520,15 @@ impl APIClient {
             }
         }
         if self.is_cloud_webapi {
-            cli_builder = cli_builder.redirect(reqwest::redirect::Policy::none());
+            cli_builder = cli_builder
+                .redirect(reqwest::redirect::Policy::none())
+                .cookie_provider(Arc::new(CloudCookieStore::new(self.endpoint.clone())));
         } else {
+            let cookie_provider = GlobalCookieStore::new();
+            let cookie = HeaderValue::from_static("cookie_enabled=true");
+            let mut initial_cookies = [&cookie].into_iter();
+            cookie_provider
+                .set_cookies(&mut initial_cookies, &Url::parse("https://a.com").unwrap());
             cli_builder = cli_builder.cookie_provider(Arc::new(cookie_provider));
         }
         self.cli = cli_builder.build()?;

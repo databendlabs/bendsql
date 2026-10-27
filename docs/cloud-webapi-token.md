@@ -63,7 +63,12 @@ are rejected rather than forwarding credentials.
 ## Compatibility and limitations
 
 - Cloud requests use `X-DatabendCloud-Token`, `X-DatabendCloud-Org` and optional
-  `X-DatabendCloud-Warehouse`. No Basic/Bearer credentials or cookies are sent.
+  `X-DatabendCloud-Warehouse`. No Basic/Bearer credentials or browser login
+  cookies are sent. Each connection has its own exact-origin SQL Cookie store:
+  `cookie_enabled=true`, `session_id` and `last_refresh_time` only. Cookie expiry
+  and deletion are honored; other domains, ports, protocols and connections do
+  not share this state. API Token authentication remains required on every
+  request; SQL cookies never replace it.
 - Login 404 is compatible with servers without `/v1/session/login`;
   `login=disable` skips that probe. Other login/auth failures are returned.
 - SQL uses `POST /v1/query`, GET polling/page/final, and POST kill. Results use
@@ -75,10 +80,9 @@ are rejected rather than forwarding credentials.
 - Transactions use the returned session state and sticky-node routing.
   `BEGIN`, `COMMIT` and `ROLLBACK` operate across requests on one connection;
   transaction-control statements are not blocked or warned on.
-- Temporary tables are currently unavailable because this mode disables cookies.
-  The server rejects their creation with code 1006:
-  `can not use temp table in http handler if cookie is not enabled`.
-  Use a native Gateway connection for temporary-table workloads.
+- SQL session cookies are enabled for temporary-table workloads on one connection.
+  Do not expect temporary tables to be visible from another connection, even
+  when the account, organization and Warehouse are identical.
 - SQL session heartbeat/refresh/logout are not implemented in Cloud mode. The
   transaction check does not establish long-idle session or failover guarantees.
 - FlightSQL, bound parameters, stage attachments, Arrow, pagination tuning,

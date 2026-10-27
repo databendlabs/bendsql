@@ -53,6 +53,32 @@ fn official_origins_are_exact_and_https_only() {
 }
 
 #[test]
+fn explicit_browser_cookies_and_bearer_credentials_are_removed() {
+    let auth = CloudApiAuth::new(
+        Url::parse("https://api.databend.com").unwrap(),
+        "fake-token".into(),
+        "org-example".into(),
+    )
+    .unwrap();
+    let request = auth
+        .wrap(
+            reqwest::Client::new()
+                .get("https://api.databend.com/v1/query")
+                .header(
+                    COOKIE,
+                    "access_token=console-secret; session_id=not-from-scoped-store",
+                )
+                .bearer_auth("console-secret"),
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    assert!(!request.headers().contains_key(COOKIE));
+    assert!(!request.headers().contains_key(AUTHORIZATION));
+    assert_eq!(request.headers()[HEADER_CLOUD_TOKEN], "fake-token");
+}
+
+#[test]
 fn error_redaction_covers_raw_and_json_not_arbitrary_encodings() {
     let auth = CloudApiAuth::new(
         Url::parse("https://api.databend.com").unwrap(),

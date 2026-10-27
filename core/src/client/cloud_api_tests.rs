@@ -28,6 +28,13 @@ struct MockRequest {
     body: Vec<u8>,
 }
 
+fn sql_session_cookie(request: &MockRequest) -> &str {
+    request.headers["cookie"]
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix("session_id="))
+        .unwrap()
+}
+
 struct MockReply {
     status: u16,
     body: String,
@@ -353,14 +360,15 @@ async fn cloud_completed_queries_release_tracking_without_heartbeat() {
 }
 
 #[tokio::test]
-async fn cloud_transactions_preserve_session_and_sticky_routing_without_cookies() {
+async fn cloud_transactions_preserve_session_and_sticky_routing_with_scoped_cookies() {
     let server = MockServer::new(|request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let sql = body["sql"].as_str().unwrap();
         let mut reply = query_reply();
         reply["next_uri"] = Value::Null;
         reply["node_id"] = json!("transaction-node");
-        assert!(!request.headers.contains_key("cookie"));
+        assert!(request.headers["cookie"].contains("cookie_enabled=true"));
+        assert!(uuid::Uuid::parse_str(sql_session_cookie(request)).is_ok());
         assert!(body.get("string_fields").is_none());
         if sql == "BEGIN" {
             reply["session"] =
@@ -391,7 +399,11 @@ async fn cloud_transactions_preserve_session_and_sticky_routing_without_cookies(
         client.query_all(end, None).await.unwrap();
         assert!(!client.in_active_transaction());
     }
-    assert_eq!(server.requests.lock().len(), 6);
+    let requests = server.requests.lock();
+    assert_eq!(requests.len(), 6);
+    assert!(requests
+        .iter()
+        .all(|request| sql_session_cookie(request) == sql_session_cookie(&requests[0])));
 }
 
 #[tokio::test]
@@ -620,6 +632,12 @@ async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
                 .headers
                 .push(("Set-Cookie", "console-cookie=not-for-api; Path=/".into()));
             reply
+                .headers
+                .push(("Set-Cookie", "session_id=sql-session; Path=/".into()));
+            reply
+                .headers
+                .push(("Set-Cookie", "last_refresh_time=123; Path=/".into()));
+            reply
         } else {
             MockReply::json(query_reply())
         }
@@ -644,12 +662,16 @@ async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
     client.close().await;
     let requests = server.requests.lock();
     assert_eq!(requests.len(), 5);
-    for request in requests.iter() {
+    for (index, request) in requests.iter().enumerate() {
         assert_eq!(request.headers["x-databendcloud-token"], TOKEN);
         assert_eq!(request.headers["x-databendcloud-org"], ORG);
         assert_eq!(request.headers["x-databendcloud-warehouse"], "wh");
         assert!(!request.headers.contains_key("authorization"));
-        assert!(!request.headers.contains_key("cookie"));
+        let cookies = &request.headers["cookie"];
+        assert!(cookies.contains("cookie_enabled=true"));
+        assert!(!cookies.contains("console-cookie"));
+        assert_eq!(cookies.contains("session_id=sql-session"), index > 0);
+        assert_eq!(cookies.contains("last_refresh_time=123"), index > 0);
         assert!(!request.headers.contains_key("x-databend-warehouse"));
     }
     assert_eq!(requests[1].method, "POST");
@@ -726,6 +748,40 @@ async fn cloud_unsupported_payloads_fail_before_network_requests() {
         .await
         .is_err());
     assert!(server.requests.lock().is_empty());
+}
+
+#[tokio::test]
+async fn cloud_sql_cookie_state_is_not_shared_by_clients_with_the_same_origin() {
+    let server = MockServer::new(|_| {
+        let mut reply = MockReply::json(query_reply());
+        reply
+            .headers
+            .push(("Set-Cookie", "session_id=first-client; Path=/".into()));
+        reply
+    })
+    .await;
+    let first = client(&server).await;
+    let second = client(&server).await;
+    first
+        .start_query_inner("SELECT 1", None, false, None)
+        .await
+        .unwrap();
+    first
+        .query_page("q1", "/v1/query/q1/page/0", &None)
+        .await
+        .unwrap();
+    second
+        .start_query_inner("SELECT 1", None, false, None)
+        .await
+        .unwrap();
+    let requests = server.requests.lock();
+    assert!(uuid::Uuid::parse_str(sql_session_cookie(&requests[0])).is_ok());
+    assert_eq!(sql_session_cookie(&requests[1]), "first-client");
+    assert!(uuid::Uuid::parse_str(sql_session_cookie(&requests[2])).is_ok());
+    assert_ne!(
+        sql_session_cookie(&requests[0]),
+        sql_session_cookie(&requests[2])
+    );
 }
 
 #[tokio::test]

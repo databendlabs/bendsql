@@ -110,22 +110,35 @@ class CloudE2EHarnessTests(unittest.TestCase):
         self.assertNotIn(TOKEN, str(raised.exception))
         self.assertNotIn(ORG, str(raised.exception))
 
-    def test_suite_uses_read_only_sql_and_does_not_print_identity(self):
+    def test_suite_limits_writes_to_an_isolated_temporary_table_and_hides_identity(self):
         runner = Mock()
         runner.query.side_effect = [[["42", "cloud-e2e"]], [["private-user@example", "public"]],
                                     [[str(index)] for index in range(5000)],
-                                    [["transaction-ok"]], [["transaction-ok"]], []]
+                                    [["transaction-ok"]], [["transaction-ok"]], [["1"], ["cloud-e2e-temp", "1", "7"]], []]
         output = io.StringIO()
         with redirect_stdout(output):
             e2e.run_suite(runner)
         self.assertNotIn("private-user@example", output.getvalue())
         for call in runner.query.call_args_list:
             sql = call.args[1]
-            self.assertTrue(sql.startswith("SELECT ") or sql in {
-                "BEGIN; SELECT 'transaction-ok'; ROLLBACK",
-                "BEGIN; SELECT 'transaction-ok'; COMMIT",
-            })
-        self.assertEqual(runner.query.call_count, 6)
+            if sql.startswith("CREATE TEMPORARY TABLE "):
+                self.assertRegex(sql, r"^CREATE TEMPORARY TABLE (_bendsql_e2e_[0-9a-f]{32}) \(v INT\); INSERT INTO \1 VALUES \(7\); SELECT 'cloud-e2e-temp', count\(\*\), sum\(v\) FROM \1; DROP TABLE \1;$")
+            else:
+                self.assertTrue(sql.startswith("SELECT ") or sql in {
+                    "BEGIN; SELECT 'transaction-ok'; ROLLBACK",
+                    "BEGIN; SELECT 'transaction-ok'; COMMIT",
+                })
+        self.assertEqual(runner.query.call_count, 7)
+
+    def test_temporary_table_probe_rejects_missing_or_wrong_results(self):
+        for rows in ([], [["1"]], [["cloud-e2e-temp", "1", "99"]]):
+            runner = Mock()
+            runner.query.side_effect = [[["42", "cloud-e2e"]], [["user", "role"]],
+                                        [[str(index)] for index in range(5000)],
+                                        [["transaction-ok"]], [["transaction-ok"]], rows]
+            with redirect_stdout(io.StringIO()), self.assertRaisesRegex(e2e.E2EFailure, "temporary-table"):
+                e2e.run_suite(runner)
+            self.assertEqual(runner.query.call_count, 6)
 
     def test_incomplete_result_fails_without_printing_rows(self):
         runner = Mock()

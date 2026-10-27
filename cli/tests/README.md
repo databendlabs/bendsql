@@ -8,9 +8,10 @@ loopback CONNECT proxy. The CLI still uses the official API hostname/443 and
 production origin checks; the proxy never forwards traffic. Temporary test
 certificates cover the official hostnames and are trusted only by the child CLI
 via `tls_ca_file`, without modifying DNS/hosts or the system trust store. Tests
-cover certificate verification, query/page/final routing, retries and private-auth
-isolation. `test_cloud_webapi_e2e.py` tests the live harness with mocked subprocess
-results. These tests run on PRs without production credentials or Docker:
+cover certificate verification, query/page/final routing, retries, SQL Cookie
+allowlisting/connection isolation, and private-auth isolation. An omitted SQL
+Set-Cookie response also verifies the client-generated session stays stable.
+`test_cloud_webapi_e2e.py` tests the live harness with mocked subprocess results. These tests run on PRs without production credentials or Docker:
 
 ```bash
 cargo test -p bendsql --test cloud_api_token --all-features
@@ -65,7 +66,7 @@ job is the opt-in, not a hard-coded caller confirmation.
 
 ### What is tested
 
-Only bounded, read-only SQL is submitted:
+The suite uses bounded queries and one randomly named temporary table:
 
 - Scalar/string result decoding.
 - Nonempty `current_user()` / `current_role()` results (identity values withheld).
@@ -74,11 +75,16 @@ Only bounded, read-only SQL is submitted:
 - `BEGIN`/read-only query/`ROLLBACK` and `BEGIN`/read-only query/`COMMIT` on one
   connection, without transaction warnings. The optional login probe is disabled
   because this suite targets the query API, not a future WebAPI login endpoint.
+- Create, insert, read and drop one temporary table across requests, proving
+  SQL session Cookie continuity without creating persistent objects.
 - Propagation of an intentional unknown-column SQL error.
 
-Each CLI invocation has a 90-second deadline. No tables, grants or resources are
-created or modified. WebAPI can still record query history/results and resume the
-Warehouse as it does for normal queries.
+Each CLI invocation has a 90-second deadline. No persistent tables, grants or
+Cloud resources are created or modified. The temporary-table probe needs SQL
+permission to create a temporary table in the test database. It drops the table
+on success; if the process fails, the table is isolated to that session and is
+subject to the server's normal temporary-state expiry. WebAPI can still record
+query history/results and resume the Warehouse as for normal queries.
 
 ### Credential boundary
 

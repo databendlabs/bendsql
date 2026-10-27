@@ -14,6 +14,7 @@
 
 mod client;
 mod cloud_api;
+mod cloud_cookie_store;
 
 mod auth;
 mod error;

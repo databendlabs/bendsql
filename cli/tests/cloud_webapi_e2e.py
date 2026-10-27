@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Opt-in, read-only live Cloud smoke tests. See cli/tests/README.md.
+"""Opt-in live Cloud smoke tests; no persistent tables are created. See cli/tests/README.md.
 
 Never print captured CLI output: it can contain account identity or server echoes.
 """
@@ -26,6 +26,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import uuid
 
 
 class E2EFailure(Exception):
@@ -117,6 +118,18 @@ def run_suite(runner):
         if rows != [["transaction-ok"]]:
             raise E2EFailure("transaction: incomplete result; output withheld")
     print("PASS: read-only transaction commit and rollback on one connection")
+
+    table = "_bendsql_e2e_" + uuid.uuid4().hex
+    rows = runner.query("temporary-table",
+                        f"CREATE TEMPORARY TABLE {table} (v INT); "
+                        f"INSERT INTO {table} VALUES (7); "
+                        f"SELECT 'cloud-e2e-temp', count(*), sum(v) FROM {table}; DROP TABLE {table};")
+    # Some server versions expose DDL/INSERT row counts as single-cell rows.
+    if [row for row in rows if len(row) > 1] != [["cloud-e2e-temp", "1", "7"]] or any(
+        len(row) == 1 and row not in (["0"], ["1"]) for row in rows
+    ):
+        raise E2EFailure("temporary-table: session state was not preserved; output withheld")
+    print("PASS: isolated temporary table across requests (created, read, dropped)")
 
     runner.query("SQL-error", "SELECT cloud_e2e_missing_column", expected_error="cloud_e2e_missing_column")
     print("PASS: server SQL error propagation")

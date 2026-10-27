@@ -60,7 +60,7 @@ jobs:
       - name: Build CLI (without Cloud credentials or PR artifacts)
         if: steps.credentials.outputs.available == 'true'
         run: cargo build -p bendsql --bin bendsql
-      - name: Test read-only queries on default Warehouse
+      - name: Test queries and isolated temporary state on default Warehouse
         if: steps.credentials.outputs.available == 'true'
         env:
           BENDSQL_CLOUD_API_TOKEN: ${{ secrets.BENDSQL_CLOUD_API_TOKEN }}
