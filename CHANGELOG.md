@@ -9,6 +9,13 @@
   FlightSQL errors keep their previous `ArrowError` shapes; an invalid IPC schema
   from the server is now an error instead of a panic.
 
+### Multi-line input
+
+- Alt/Option+Enter and Ctrl+J insert a line break in the REPL instead of
+  submitting, so smart/agent-mode questions (and SQL) can span lines. Shift+Enter
+  does the same once the terminal maps it to `ESC CR`; README lists settings for
+  common terminals. Ctrl+J no longer submits the line.
+
 ### Streaming AI answers
 
 - On an interactive terminal, OpenAI-compatible, ACP and local Codex answers now

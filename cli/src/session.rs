@@ -44,7 +44,7 @@ use once_cell::sync::Lazy;
 use rustyline::config::Builder;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
-use rustyline::{CompletionType, Editor};
+use rustyline::{Cmd, CompletionType, Editor, KeyCode, KeyEvent, Modifiers};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use tokio::fs::{remove_file, File};
@@ -138,6 +138,21 @@ fn recoverable_readline_error(error: &ReadlineError) -> bool {
 
 /// While SQL is pending, only `!name` lines are client commands. Lines starting
 /// with SQL operators (`!=`, `!~*`, `!!`, `! ...`) continue the statement.
+/// Keys that insert a line break instead of submitting, so a question can
+/// span lines. Terminals send the same CR for Enter and Shift+Enter unless told
+/// otherwise; Shift+Enter works once the terminal maps it to ESC CR, which is
+/// what Alt/Option+Enter sends. Ctrl+J (LF) works in every terminal.
+const NEWLINE_KEYS: [KeyEvent; 2] = [
+    KeyEvent(KeyCode::Enter, Modifiers::ALT),
+    KeyEvent(KeyCode::Char('J'), Modifiers::CTRL),
+];
+
+fn bind_newline_keys<H: rustyline::Helper>(rl: &mut Editor<H, DefaultHistory>) {
+    for key in NEWLINE_KEYS {
+        rl.bind_sequence(key, Cmd::Newline);
+    }
+}
+
 fn is_command_while_sql_pending(line: &str) -> bool {
     line.trim_start()
         .strip_prefix('!')
@@ -462,6 +477,7 @@ impl Session {
             .build();
         let mut rl = Editor::<CliHelper, DefaultHistory>::with_config(config)?;
         rl.set_helper(Some(CliHelper::new(self.keywords.clone())));
+        bind_newline_keys(&mut rl);
         let history_path = get_history_path();
         let mut history = HistoryPolicy {
             ai_active: mode != InteractionMode::Sql,
