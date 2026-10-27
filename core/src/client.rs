@@ -304,6 +304,14 @@ impl APIClient {
                     .into(),
             ));
         }
+        if cloud_token.is_none()
+            && u.host_str().is_some_and(|host| {
+                host.eq_ignore_ascii_case("api.databend.com")
+                    || host.eq_ignore_ascii_case("api.databend.cn")
+            })
+        {
+            return Err(Error::BadArgument("Cloud WebAPI endpoint requires cloud_api_token; SQL username/password are not account authentication".into()));
+        }
         if cloud_token.is_none() && org_slug.is_some() {
             return Err(Error::BadArgument(
                 "org_slug requires cloud_api_token".into(),

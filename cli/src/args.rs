@@ -65,6 +65,21 @@ impl std::fmt::Debug for ConnectionArgs {
 }
 
 impl ConnectionArgs {
+    pub fn is_cloud_webapi_host(host: &str) -> bool {
+        host.eq_ignore_ascii_case("api.databend.com")
+            || host.eq_ignore_ascii_case("api.databend.cn")
+    }
+
+    pub fn is_native_auth_option(key: &str) -> bool {
+        matches!(
+            key,
+            "access_token"
+                | "access_token_file"
+                | "private_key_file"
+                | "private_key_passphrase_file"
+        )
+    }
+
     pub fn apply_cloud_api_token(
         &mut self,
         command_line: Option<SensitiveString>,
@@ -82,16 +97,10 @@ impl ConnectionArgs {
     pub fn accepts_environment_cloud_token(&self, has_dsn: bool, explicit_userinfo: bool) -> bool {
         !has_dsn
             && !explicit_userinfo
-            && !self.args.keys().any(|key| {
-                matches!(
-                    key.as_str(),
-                    "cloud_api_token"
-                        | "access_token"
-                        | "access_token_file"
-                        | "private_key_file"
-                        | "private_key_passphrase_file"
-                )
-            })
+            && !self
+                .args
+                .keys()
+                .any(|key| key == "cloud_api_token" || Self::is_native_auth_option(key))
     }
 
     pub fn apply_org(&mut self, command_line: Option<String>, environment: Option<String>) {
@@ -122,6 +131,16 @@ impl ConnectionArgs {
     pub fn validate_cloud_options(&self, enable_ui: bool) -> Result<()> {
         if !self.args.contains_key("cloud_api_token") {
             return Ok(());
+        }
+        if self.args.keys().any(|key| Self::is_native_auth_option(key)) {
+            return Err(anyhow!(
+                "cloud_api_token cannot be combined with Access Token or Key Pair credentials"
+            ));
+        }
+        if self.args.contains_key("tenant") {
+            return Err(anyhow!(
+                "cloud_api_token uses org_slug, not a separate tenant parameter"
+            ));
         }
         if enable_ui {
             return Err(anyhow!(
@@ -198,7 +217,8 @@ impl ConnectionArgs {
         let port = u.port();
         let user = u.username().to_string();
         let password = u.password().unwrap_or_default();
-        let password = if args.contains_key("cloud_api_token") {
+        let password = if args.contains_key("cloud_api_token") || Self::is_cloud_webapi_host(&host)
+        {
             String::new()
         } else {
             percent_decode_str(password).decode_utf8()?.to_string()

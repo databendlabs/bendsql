@@ -215,14 +215,26 @@ def main():
 
         try:
             run("official origin through local HTTPS proxy, query/page/final with retry", ["--dsn", cloud], expected_cloud=True)
+            endpoint = "databend://root:%FF@api.databend.com:443/default?" + urlencode({
+                "tls_ca_file": ca, "retry_delay_secs": "0"})
+            env_credentials = {"BENDSQL_CLOUD_API_TOKEN": TOKEN, "BENDSQL_ORG": "org-example"}
+            run("official API DSN selects Cloud with environment credentials", ["--dsn", endpoint],
+                env_credentials, expected_cloud=True)
+            run("official API DSN selection is case-insensitive", ["--dsn", endpoint.replace("api.databend.com", "API.DATABEND.COM")],
+                env_credentials, expected_cloud=True)
+            run("Cloud DSN allows org override and ignores SQL username/password", ["--dsn", endpoint, "--org=org-example", "--user=root", "--password=ignored"],
+                env_credentials, expected_cloud=True)
+            run("BENDSQL_DSN selects Cloud before saved native credentials", [],
+                dict(env_credentials, BENDSQL_DSN=endpoint),
+                config="[connection]\nuser='root'\n[connection.args]\naccess_token_file='missing'\n",
+                expected_cloud=True)
             run("SQL session remains stable when proxy omits Set-Cookie", ["--dsn", cloud],
                 expected_cloud=True, emit_session_cookies=False)
             run("China official origin through local HTTPS proxy", ["--dsn", cloud.replace("api.databend.com", "api.databend.cn")], expected_cloud=True)
             run("Cloud transaction statements are not incorrectly warned on", ["--dsn", cloud],
                 expected_cloud=True, query="/* session */ BEGIN")
-            tls_config = "[connection]\nhost='api.databend.com'\ntls=false\n"
-            run("config TLS disable reports HTTPS requirement", ["--cloud-api-token=" + TOKEN, "--org=org-example"],
-                config=tls_config, expected_error="requires HTTPS; sslmode=disable is not supported")
+            run("explicit TLS disable reports HTTPS requirement", ["--cloud-api-token=" + TOKEN, "--org=org-example", "--tls=false"],
+                expected_error="requires HTTPS; sslmode=disable is not supported")
             no_ca = "databend://api.databend.com/default?" + urlencode({
                 "cloud_api_token": TOKEN, "org_slug": "org-example", "retry_delay_secs": "0"})
             run("TLS still rejects the mock without its test CA", ["--dsn", no_ca],
@@ -252,9 +264,17 @@ def main():
             run("empty environment token means unset", flags, {"BENDSQL_CLOUD_API_TOKEN": ""}, authorization=empty_basic)
             config = f"[connection]\nhost='127.0.0.1'\nport={server.server_port}\ntls=true\nuser='root'\n[connection.args]\ntls_ca_file='{ca}'\npresign='off'\n"
             run("global token does not replace config-file user", [], {"BENDSQL_CLOUD_API_TOKEN": TOKEN}, config, authorization=empty_basic)
+            private_config = "[connection]\nhost='localhost'\nport=8000\nuser='root'\ntls=false\n[connection.args]\naccess_token_file='missing-native-token'\nprivate_key_file='missing-native-key'\nsslmode='disable'\ntenant='tn-private'\n"
+            for gateway_dsn in [private, "not a valid DSN"]:
+                run("explicit org ignores environment DSN and saved private credentials", ["--org=org-example", "--set", f"tls_ca_file={ca}", "--set", "retry_delay_secs=0"],
+                    {"BENDSQL_DSN": gateway_dsn, "BENDSQL_PASSWORD": "private-password",
+                     "BENDSQL_CLOUD_API_TOKEN": TOKEN}, config=private_config, expected_cloud=True)
+            run("bare org uses environment and ignores SQL user/password", ["--org", "--user=root", "--password=ignored", "--set", f"tls_ca_file={ca}", "--set", "retry_delay_secs=0"],
+                {"BENDSQL_CLOUD_API_TOKEN": TOKEN, "BENDSQL_ORG": "org-example",
+                 "BENDSQL_DSN": private}, config=private_config, expected_cloud=True)
             for config in ["[connection]\nport=8000\n", "[connection]\nhost='localhost'\n"]:
-                run("explicit config default remains authoritative: " + config.splitlines()[1],
-                    ["--cloud-api-token=", "--org=org-example"], config=config,
+                run("implicit Cloud selection keeps explicit config defaults: " + config.splitlines()[1],
+                    ["--cloud-api-token=", "--set", "org_slug=org-example"], config=config,
                     expected_error="not a Gateway or private server")
         finally:
             for service in (server, proxy):

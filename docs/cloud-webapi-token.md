@@ -18,13 +18,15 @@ bendsql
 With default connection settings this uses `https://api.databend.com:443`.
 For China, add `--host api.databend.cn`. Select a Warehouse with
 `--set warehouse=my-warehouse`; otherwise WebAPI applies its default.
-Explicit host, port and TLS settings, including values in the config file, are
-never replaced by Cloud defaults.
+Without an explicit `--org`, saved host, port and TLS settings remain
+unchanged. With `--org`, saved native endpoint/credentials are ignored and Cloud
+HTTPS/443 defaults apply; explicit `--host`, `--port` and `--tls` still take
+precedence and must satisfy the Cloud endpoint/TLS rules.
 
 CLI and Driver DSN alternatives:
 
 ```bash
-bendsql --cloud-api-token '<TOKEN>' --org org-example
+bendsql --cloud-api-token '<TOKEN>' --org=org-example
 ```
 
 ```text
@@ -35,14 +37,34 @@ URL-encode DSN values. Prefer environment injection to command-line secrets.
 
 ## Credential selection
 
+- `--org=org-example` explicitly selects Cloud WebAPI. Bare `--org` also
+  selects Cloud, reading the slug from config/`BENDSQL_ORG`. Explicit values must
+  use `=` so a bare flag never consumes another argument. This selection ignores
+  Gateway/private `BENDSQL_DSN`, `BENDSQL_PASSWORD`, and saved native endpoint/user/Access Token/
+  Key Pair/tenant settings. Database, Warehouse and other query options are kept.
+  Supply the Cloud token through CLI, Cloud config or `BENDSQL_CLOUD_API_TOKEN`;
+  missing credentials fail instead of falling back to password authentication.
+- A DSN with host `api.databend.com` or `api.databend.cn` also selects Cloud,
+  even without a token in the DSN. Token/Org may come from CLI or environment;
+  `--org` may override the DSN organization. SQL user/password in the DSN or
+  supplied as override flags are ignored, never used as a fallback.
+- `--org` conflicts with an explicit Gateway/private `--dsn`, but not a Cloud
+  API DSN. Key Pair, Access Token, `tenant` and FlightSQL cannot be combined with
+  Cloud authentication. Unsafe explicit combinations fail; error messages name
+  options, never credential values. Explicit HTTP/nonstandard ports also fail.
+- Without `--org`, `--dsn` takes precedence over `BENDSQL_DSN`. Gateway/private
+  DSNs are not overridden by environment Cloud credentials.
 - Explicit `--cloud-api-token` overrides the `cloud_api_token` DSN/config value.
-- `BENDSQL_CLOUD_API_TOKEN` is a CLI fallback only when there is no
-  `--dsn`/`BENDSQL_DSN`, explicit user/password, configured user, Access Token or
-  Key Pair. It does not take over existing private connections. For an explicit
-  Cloud DSN, include its token or pass `--cloud-api-token` separately.
+- Without explicit `--org` or a Cloud API DSN, `BENDSQL_CLOUD_API_TOKEN` is a
+  fallback only when there is no Gateway DSN, explicit user/password, configured
+  user, Access Token or Key Pair. It does not take over private connections.
+- Rust driver/binding DSNs require `cloud_api_token` and `org_slug` in the DSN;
+  environment fallback and CLI overrides are CLI features. Official API hosts
+  with missing credentials fail rather than attempting SQL password login.
 - Empty environment tokens mean unset. Empty CLI/DSN tokens are errors.
-- Organization precedence is `--org` > `org_slug` in DSN/config > `BENDSQL_ORG`.
-  An empty environment Org is unset; duplicate DSN token/Org keys are rejected.
+- Explicit `--org` supplies the organization. Otherwise, `org_slug` in DSN/config
+  takes precedence over `BENDSQL_ORG`. An empty environment Org is unset;
+  duplicate DSN token/Org keys are rejected.
 - In Cloud mode username/password are ignored. Access Token, Key Pair and
   separate `tenant` parameters cannot be combined with a Cloud API token.
   There is no `--authenticator` selector.

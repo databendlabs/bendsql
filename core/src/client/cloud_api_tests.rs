@@ -550,6 +550,15 @@ async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
     assert!(client.is_cloud_webapi);
     assert_eq!(client.username(), "cloud_account");
     assert!(!client.auth.can_reload());
+    for host in ["api.databend.com", "api.databend.cn", "API.DATABEND.COM"] {
+        let error = APIClient::from_dsn(&format!("databend://root:%FF@{host}/default"))
+            .await
+            .err()
+            .unwrap();
+        assert!(error
+            .to_string()
+            .contains("Cloud WebAPI endpoint requires cloud_api_token"));
+    }
     assert!(!format!("{:?}", client.session_state()).contains(TOKEN));
     assert!(!format!("{:?}", client.session_state()).contains("org_slug"));
     assert!(matches!(client.get_presign_mode(), PresignMode::Off));

@@ -103,7 +103,11 @@ impl Client {
     pub async fn get_conn(&self) -> Result<Connection> {
         let u = Url::parse(&self.dsn)?;
         if matches!(u.scheme(), "databend+flight" | "databend+grpc")
-            && u.query_pairs().any(|(key, _)| key == "cloud_api_token")
+            && (u.query_pairs().any(|(key, _)| key == "cloud_api_token")
+                || u.host_str().is_some_and(|host| {
+                    host.eq_ignore_ascii_case("api.databend.com")
+                        || host.eq_ignore_ascii_case("api.databend.cn")
+                }))
         {
             return Err(Error::BadArgument(
                 "cloud_api_token authentication is not supported with FlightSQL".into(),
@@ -680,6 +684,15 @@ mod tests {
                 .expect("Cloud token must reject FlightSQL");
             assert!(err.to_string().contains("not supported with FlightSQL"));
             assert!(!err.to_string().contains("secret"));
+            for host in ["api.databend.com", "api.databend.cn", "API.DATABEND.COM"] {
+                let error = Client::new(format!("{scheme}://root:secret@{host}/default"))
+                    .get_conn()
+                    .await
+                    .err()
+                    .expect("API host must select Cloud before connecting");
+                assert!(error.to_string().contains("not supported with FlightSQL"));
+                assert!(!error.to_string().contains("secret"));
+            }
         }
     }
 
