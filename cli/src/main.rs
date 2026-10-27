@@ -283,16 +283,15 @@ pub async fn main() -> Result<()> {
             let host = args
                 .host
                 .clone()
-                .unwrap_or_else(|| config.connection.host.clone());
-            let mut port = config.connection.port;
-            if args.port.is_some() {
-                port = args.port;
-            }
+                .or_else(|| config.connection.host.clone())
+                .unwrap_or_else(|| "localhost".to_string());
+            let port = args.port.or(config.connection.port).or(Some(8000));
 
             let user = args
                 .user
                 .clone()
-                .unwrap_or_else(|| config.connection.user.clone());
+                .or_else(|| config.connection.user.clone())
+                .unwrap_or_else(|| "root".to_string());
             let password = args
                 .password
                 .clone()
@@ -317,11 +316,11 @@ pub async fn main() -> Result<()> {
         && !config.connection.args.contains_key("sslmode")
         && !args.set.iter().any(|(key, _)| key == "sslmode");
     let implicit_cloud_host =
-        args.dsn.is_none() && args.host.is_none() && !config.connection.explicit_host;
+        args.dsn.is_none() && args.host.is_none() && config.connection.host.is_none();
     let implicit_cloud_port =
-        args.dsn.is_none() && args.port.is_none() && !config.connection.explicit_port;
+        args.dsn.is_none() && args.port.is_none() && config.connection.port.is_none();
     let explicit_userinfo =
-        args.user.is_some() || args.password.is_some() || config.connection.explicit_user;
+        args.user.is_some() || args.password.is_some() || config.connection.user.is_some();
 
     // Override connection args with command line options
     {

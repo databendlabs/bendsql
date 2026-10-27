@@ -448,7 +448,7 @@ max_tokens = 1024
         ] {
             let text = format!("[connection]\nhost = 'database.example'\n[agent]\n{agent}");
             let config: Config = toml::from_str(&text).unwrap();
-            assert_eq!(config.connection.host, "database.example");
+            assert_eq!(config.connection.host.as_deref(), Some("database.example"));
             assert!(
                 config.agent.settings().is_err(),
                 "unexpectedly accepted: {agent}"

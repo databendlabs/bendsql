@@ -119,29 +119,51 @@ fn environment_token_is_optional_and_does_not_override_explicit_connections() {
 fn explicit_config_defaults_remain_authoritative_in_cloud_mode() {
     use crate::config::ConnectionConfig;
     let implicit: ConnectionConfig = toml::from_str("").unwrap();
-    assert!(!implicit.explicit_host && !implicit.explicit_port && !implicit.explicit_user);
-    for config in ["host = 'localhost'", "port = 8000", "user = 'root'"] {
+    assert!(implicit.host.is_none() && implicit.port.is_none() && implicit.user.is_none());
+    for config in [
+        "",
+        "host = 'localhost'",
+        "port = 8000",
+        "user = 'root'",
+        "host = 'localhost'\nport = 8000\nuser = 'root'",
+    ] {
         let connection: ConnectionConfig = toml::from_str(config).unwrap();
         let mut args = ConnectionArgs {
-            host: connection.host,
-            port: connection.port,
-            user: connection.user,
+            host: connection
+                .host
+                .clone()
+                .unwrap_or_else(|| "localhost".into()),
+            port: connection.port.or(Some(8000)),
+            user: connection.user.clone().unwrap_or_else(|| "root".into()),
             ..Default::default()
         };
         args.apply_cloud_api_token(Some("fake-token".into()), None);
-        args.cloud_defaults(!connection.explicit_host, !connection.explicit_port, true);
-        if connection.explicit_host {
+        args.cloud_defaults(connection.host.is_none(), connection.port.is_none(), true);
+        if connection.host.is_some() {
             assert_eq!(args.host, "localhost");
         } else {
             assert_eq!(args.host, "api.databend.com");
         }
-        if connection.explicit_port {
+        if connection.port.is_some() {
             assert_eq!(args.port, Some(8000));
         } else {
             assert_eq!(args.port, Some(443));
         }
-        assert_eq!(connection.explicit_user, config.starts_with("user"));
+        assert_eq!(
+            connection.user.is_some(),
+            config.lines().any(|line| line.starts_with("user"))
+        );
+        assert_eq!(args.user, "root");
     }
+}
+
+#[test]
+fn explicitly_empty_connection_config_is_not_treated_as_absent() {
+    let connection: crate::config::ConnectionConfig =
+        toml::from_str("host = ''\nport = 0\nuser = ''").unwrap();
+    assert_eq!(connection.host.as_deref(), Some(""));
+    assert_eq!(connection.port, Some(0));
+    assert_eq!(connection.user.as_deref(), Some(""));
 }
 
 #[test]
