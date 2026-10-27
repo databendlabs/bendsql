@@ -212,6 +212,24 @@ inspect AI memory and `!context clear` to reset it, not SQL input history. Compl
 disabled in smart/agent mode, except for `!mode` choices. Batch and piped SQL do not
 invoke AI.
 
+To type a multi-line question, press **Alt/Option+Enter** or **Ctrl+J** for a line
+break; Enter submits. Most terminals send the same key code for Shift+Enter and
+Enter, so Shift+Enter inserts a line break only after you map it to send `ESC CR`
+(`\x1b\r`, the Alt+Enter sequence) in the terminal, for example:
+
+| Terminal | Setting |
+| --- | --- |
+| iTerm2 | Settings → Profiles → Keys → Key Mappings: add `Shift+Return` → *Send Hex Codes* `0x1b 0x0d` |
+| VS Code | `keybindings.json`: `{"key": "shift+enter", "command": "workbench.action.terminal.sendSequence", "args": {"text": "\u001b\r"}, "when": "terminalFocus"}` |
+| WezTerm | `{ key = 'Enter', mods = 'SHIFT', action = wezterm.action.SendString '\x1b\r' }` |
+| kitty | `map shift+enter send_text all \x1b\r` |
+| Ghostty | `keybind = shift+enter=text:\x1b\r` |
+| Alacritty | `[keyboard]` `bindings = [{ key = "Enter", mods = "Shift", chars = "\u001b\r" }]` |
+| Windows Terminal | `{"command": {"action": "sendInput", "input": "\u001b\r"}, "keys": "shift+enter"}` |
+
+On macOS, Option+Enter needs "Use Option as Meta key" (Terminal.app) or
+"Option key: Esc+" (iTerm2).
+
 ### Choose an AI backend
 
 By default, BendSQL uses the first installed CLI: **Codex → Claude Code → Pi**.

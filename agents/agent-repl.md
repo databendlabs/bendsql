@@ -56,6 +56,12 @@ Mode switching does not clear context. Typing `!mode` displays the three choices
 as an inline hint, and Tab completes the mode argument. Executing `!mode` lists
 `sql | smart | agent`; use `!mode <choice>` to switch.
 
+Alt+Enter (`ESC CR`) and Ctrl+J are bound to `Cmd::Newline` in every mode
+(`NEWLINE_KEYS` in `session.rs`); plain Enter still submits. rustyline 15 cannot
+decode kitty/CSI-u or modifyOtherKeys Shift+Enter, and terminals send plain CR for
+it by default, so Shift+Enter relies on the terminal sending `ESC CR`. Do not
+enable a keyboard-enhancement protocol: it re-encodes Ctrl+C and Esc.
+
 SQL keyword hints, filename completion and SQL highlighting are disabled in
 smart/agent modes. The `!mode` choice helper remains available in every mode.
 Server table/field keywords are loaded only when SQL mode is first entered (unless

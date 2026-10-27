@@ -1049,6 +1049,29 @@ def exercise_smart_input_boundaries(executable, env, port):
         terminal.finish()
 
 
+def exercise_newline_keys(executable, env, port):
+    # Alt/Option+Enter (ESC CR, also what a terminal-mapped Shift+Enter sends)
+    # and Ctrl+J insert a line break; only a plain Enter submits.
+    # Key bindings need the raw-mode editor; TERM=dumb reads cooked lines.
+    write_config(env, '[agent]\nbackend="env"')
+    with Terminal(executable, dict(env, TERM="xterm"), port) as terminal:
+        terminal.expect("smart> ")
+        api_count = len(MockService.model_requests)
+        terminal.send("Why is this result\x1b\rso small?\nPlease check")
+        assert len(MockService.model_requests) == api_count + 1
+        question = json.loads(MockService.model_requests[-1]["messages"][-1]["content"])["question"]
+        assert question == "Why is this result\nso small?\nPlease check", question
+        sql_count = len(MockService.sql_requests)
+        terminal.send("SELECT 1\x1b\r+ 1;")
+        assert len(MockService.sql_requests) == sql_count + 1
+        assert MockService.sql_requests[-1] == "SELECT 1\n+ 1", MockService.sql_requests[-1]
+        terminal.send("!mode agent", "agent> ")
+        terminal.send("first\x1b\rsecond", "agent> ")
+        question = json.loads(MockService.model_requests[-1]["messages"][-1]["content"])["question"]
+        assert question == "first\nsecond", question
+        terminal.finish()
+
+
 def wait_http_count(items, count):
     deadline = time.monotonic() + 5
     while len(items) < count:
@@ -1906,6 +1929,7 @@ def main():
                 exercise_builtin_clis(executable, env, port)
                 exercise_acp_backend(executable, env, port)
                 exercise_smart_input_boundaries(executable, env, port)
+                exercise_newline_keys(executable, env, port)
                 exercise_sql_cancellation(executable, env, port)
                 exercise_default_backend_discovery(executable, env, port)
                 exercise_transient_ai_spinner(executable, env, port)
@@ -1931,7 +1955,7 @@ def main():
             print("PASS: mock OpenAI provider; request/auth/config, Databend skill, multi-turn evidence, errors/budgets, no SQL execution, clear, terminal Markdown/plain presentation and live streaming")
             return
         print(
-            "PASS: mock OpenAI provider; three-mode PTY sessions, SQL/AI separation, partial/failed "
+            "PASS: mock OpenAI provider; three-mode PTY sessions, Alt+Enter/Ctrl+J line breaks, SQL/AI separation, partial/failed "
             "context, multiline guard, clear, query IDs, missing model, TTY and disk privacy; "
             "configured backends, headers, priority, switching and fail-closed configuration; "
             "Codex/Claude mock CLIs, stdin context, env isolation, errors, budgets and process cleanup; "
