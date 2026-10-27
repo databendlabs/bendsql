@@ -19,11 +19,12 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use arrow::ipc::{convert::fb_to_schema, root_as_message};
+use arrow::ipc::{convert::try_fb_to_schema, root_as_message};
 use arrow_flight::decode::FlightDataDecoder;
+use arrow_flight::error::FlightError;
 use arrow_flight::sql::client::FlightSqlServiceClient;
 use arrow_flight::utils::flight_data_to_arrow_batch;
-use arrow_schema::SchemaRef as ArrowSchemaRef;
+use arrow_schema::{ArrowError, SchemaRef as ArrowSchemaRef};
 use async_trait::async_trait;
 use percent_encoding::percent_decode_str;
 use tokio::sync::Mutex;
@@ -93,7 +94,10 @@ impl IConnection for FlightSQLConnection {
     async fn exec(&self, sql: &str) -> Result<i64> {
         self.handshake().await?;
         let mut client = self.client.lock().await;
-        let affected_rows = client.execute_update(sql.to_string(), None).await?;
+        let affected_rows = client
+            .execute_update(sql.to_string(), None)
+            .await
+            .map_err(flight_error)?;
         Ok(affected_rows)
     }
 
@@ -111,13 +115,20 @@ impl IConnection for FlightSQLConnection {
     async fn query_iter_ext(&self, sql: &str) -> Result<RowStatsIterator> {
         self.handshake().await?;
         let mut client = self.client.lock().await;
-        let mut stmt = client.prepare(sql.to_string(), None).await?;
-        let flight_info = stmt.execute().await?;
+        let mut stmt = client
+            .prepare(sql.to_string(), None)
+            .await
+            .map_err(flight_error)?;
+        let flight_info = stmt.execute().await.map_err(flight_error)?;
         let ticket = flight_info.endpoint[0]
             .ticket
             .as_ref()
             .ok_or_else(|| Error::Protocol("Ticket is empty".to_string()))?;
-        let flight_data = client.do_get(ticket.clone()).await?.into_inner();
+        let flight_data = client
+            .do_get(ticket.clone())
+            .await
+            .map_err(flight_error)?
+            .into_inner();
         let (schema, rows) = FlightSQLRows::try_from_flight_data(flight_data).await?;
         Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
     }
@@ -199,7 +210,8 @@ impl FlightSQLConnection {
         let mut client = self.client.lock().await;
         let _token = client
             .handshake(&self.args.user, self.args.password.inner())
-            .await?;
+            .await
+            .map_err(flight_error)?;
         *handshaked = true;
         Ok(())
     }
@@ -374,7 +386,7 @@ impl FlightSQLRows {
         let ipc_schema = message.header_as_schema().ok_or_else(|| {
             Error::Protocol("Invalid Message: Cannot get header as Schema".to_string())
         })?;
-        let arrow_schema = Arc::new(fb_to_schema(ipc_schema));
+        let arrow_schema = Arc::new(try_fb_to_schema(ipc_schema)?);
         let schema = arrow_schema.clone().try_into()?;
         let rows = Self {
             schema: arrow_schema,
@@ -417,6 +429,18 @@ impl Stream for FlightSQLRows {
             Poll::Pending => Poll::Pending,
         }
     }
+}
+
+/// Arrow Flight 57+ returns `FlightError` from the FlightSQL client. Map it to
+/// the `ArrowError` shapes the 56 client produced, so callers that inspect
+/// errors (e.g. `IpcError` containing "Unauthenticated") keep working.
+fn flight_error(err: FlightError) -> Error {
+    let err = match err {
+        FlightError::Arrow(err) => err,
+        FlightError::Tonic(status) => ArrowError::IpcError(format!("{status:?}")),
+        err => ArrowError::ExternalError(Box::new(err)),
+    };
+    Error::Arrow(err)
 }
 
 #[cfg(test)]

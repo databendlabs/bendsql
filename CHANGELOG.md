@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Dependencies
+
+- Upgrade Arrow to 60 and tonic to 0.14, which moves zstd to 0.14.3 / zstd-safe
+  8.2.0 and clears RUSTSEC-2026-0391, RUSTSEC-2026-0398 and RUSTSEC-2026-0403.
+  FlightSQL errors keep their previous `ArrowError` shapes; an invalid IPC schema
+  from the server is now an error instead of a panic.
+
 ### Streaming AI answers
 
 - On an interactive terminal, OpenAI-compatible and ACP answers now stream by

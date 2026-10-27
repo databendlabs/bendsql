@@ -31,14 +31,14 @@ jsonb = { version = "0.5.6" }
 tokio-stream = "0.1"
 chrono = { version = "0.4.40", default-features = false, features = ["clock"] }
 chrono-tz = { version = "0.10.4" }
-arrow = { version = "56" }
-arrow-array = { version = "56" }
-arrow-schema = { version = "56" }
-arrow-flight = { version = "56", features = ["flight-sql-experimental"] }
-arrow-ipc = { version = "56", features = ["lz4", "zstd"]}
-tonic = { version = "0.13", default-features = false, features = [
+arrow = { version = "60" }
+arrow-array = { version = "60" }
+arrow-schema = { version = "60" }
+arrow-flight = { version = "60", features = ["flight-sql"] }
+arrow-ipc = { version = "60", features = ["lz4", "zstd"]}
+tonic = { version = "0.14", default-features = false, features = [
     "transport",
     "codegen",
+    "tls-ring",
     "tls-webpki-roots",
-    "prost",
 ] }
