@@ -124,6 +124,48 @@ fn canonical_builtin(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Store built-in overrides written under an alias (`[agent.backends.codex]`)
+/// under the canonical name, so they apply however the backend is selected,
+/// including discovery. Alias sections with a non-CLI type or another adapter
+/// stay ordinary named backends. Two sections for one built-in are rejected
+/// rather than merged or picked silently; the error is the config path.
+fn canonicalize_builtin_overrides(backends: &mut toml::Table) -> std::result::Result<(), String> {
+    let aliases: Vec<(String, &'static str)> = backends
+        .iter()
+        .filter_map(|(name, value)| {
+            let canonical = canonical_builtin(name).filter(|canonical| canonical != name)?;
+            let Some(BackendConfig::Cli { adapter, .. }) = builtin_backend(name) else {
+                return None;
+            };
+            let table = value.as_table()?;
+            let is_override = table.get("type").and_then(toml::Value::as_str) == Some("cli")
+                && table.get("adapter").and_then(toml::Value::as_str)
+                    == Some(adapter_name(adapter));
+            is_override.then(|| (name.clone(), canonical))
+        })
+        .collect();
+    for (alias, canonical) in aliases {
+        if backends.contains_key(canonical) {
+            return Err(format!(
+                "agent.backends.{canonical} (also configured as agent.backends.{alias}; keep one)"
+            ));
+        }
+        if let Some(value) = backends.remove(&alias) {
+            backends.insert(canonical.to_string(), value);
+        }
+    }
+    Ok(())
+}
+
+fn adapter_name(adapter: CliAdapter) -> &'static str {
+    match adapter {
+        CliAdapter::Codex => "codex",
+        CliAdapter::ClaudeCode => "claude-code",
+        CliAdapter::Pi => "pi",
+        CliAdapter::Evot => "evot",
+    }
+}
+
 fn builtin_backend(name: &str) -> Option<BackendConfig> {
     let adapter = match canonical_builtin(name)? {
         "local-claude" => CliAdapter::ClaudeCode,
@@ -201,7 +243,7 @@ impl<'de> Deserialize<'de> for AgentConfig {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
         let mut raw = toml::Value::deserialize(deserializer)?;
         if let Some(backends) = raw.get_mut("backends").and_then(toml::Value::as_table_mut) {
-            for (name, value) in backends {
+            for (name, value) in backends.iter_mut() {
                 let Some(BackendConfig::Cli { adapter, .. }) = builtin_backend(name) else {
                     continue;
                 };
@@ -215,16 +257,20 @@ impl<'de> Deserialize<'de> for AgentConfig {
                     .is_none_or(|ty| ty.as_str() == Some("cli"))
                 {
                     table.entry("type").or_insert_with(|| "cli".into());
-                    table.entry("adapter").or_insert_with(|| match adapter {
-                        CliAdapter::Codex => "codex".into(),
-                        CliAdapter::ClaudeCode => "claude-code".into(),
-                        CliAdapter::Pi => "pi".into(),
-                        CliAdapter::Evot => "evot".into(),
-                    });
+                    table
+                        .entry("adapter")
+                        .or_insert_with(|| adapter_name(adapter).into());
                     table
                         .entry("allow_external_agent")
                         .or_insert_with(|| true.into());
                 }
+            }
+            if let Err(duplicate) = canonicalize_builtin_overrides(backends) {
+                return Ok(Self {
+                    invalid: true,
+                    invalid_path: Some(duplicate),
+                    ..Self::default()
+                });
             }
         }
         Ok(
@@ -389,6 +435,86 @@ allow_external_agent = false
                 toml::from_str(&format!("[agent.backends.local-codex]\n{options}")).unwrap();
             assert!(config.agent.settings().is_err());
         }
+    }
+
+    #[test]
+    fn alias_named_overrides_apply_under_every_name() {
+        for (section, names) in [
+            ("codex", ["codex", "local-codex"]),
+            ("claude", ["claude", "local-claude"]),
+            ("claude-code", ["claude-code", "local-claude"]),
+            ("pi", ["pi", "local-pi"]),
+            ("evot", ["evot", "local-evot"]),
+        ] {
+            let config: Config = toml::from_str(&format!(
+                "[agent.backends.{section}]\ncommand = \"/custom/{section}\"\nmodel = \"m\""
+            ))
+            .unwrap();
+            let settings = config.agent.settings().unwrap();
+            // Discovery and status use canonical names, so the override lives there.
+            assert!(!settings.backends.contains_key(section), "{section}");
+            for name in names {
+                match settings.backend(name).unwrap().as_ref() {
+                    BackendConfig::Cli { command, model, .. } => {
+                        assert_eq!(
+                            command.as_deref(),
+                            Some(format!("/custom/{section}").as_str())
+                        );
+                        assert_eq!(model.as_deref(), Some("m"));
+                    }
+                    _ => panic!("expected CLI for {name}"),
+                }
+            }
+        }
+
+        // Disabling through the alias also disables the canonical name.
+        let config: Config =
+            toml::from_str("[agent.backends.evot]\nallow_external_agent = false").unwrap();
+        let settings = config.agent.settings().unwrap();
+        assert!(matches!(
+            settings.backend("local-evot").unwrap().as_ref(),
+            BackendConfig::Cli {
+                allow_external_agent: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn one_builtin_configured_under_two_names_is_rejected() {
+        for sections in [
+            "[agent.backends.codex]\nmodel='a'\n[agent.backends.local-codex]\nmodel='b'",
+            "[agent.backends.claude]\nmodel='a'\n[agent.backends.claude-code]\nmodel='b'",
+        ] {
+            let config: Config = toml::from_str(sections).unwrap();
+            let error = config.agent.settings().err().unwrap().to_string();
+            assert!(error.contains("keep one"), "{error}");
+            assert!(!error.contains("model"), "{error}");
+        }
+    }
+
+    #[test]
+    fn alias_named_custom_backend_with_other_adapter_stays_custom() {
+        let config: Config = toml::from_str(
+            "[agent.backends.codex]\ntype = \"cli\"\nadapter = \"pi\"\ncommand = \"/custom/pi\"",
+        )
+        .unwrap();
+        let settings = config.agent.settings().unwrap();
+        assert!(matches!(
+            settings.backend("codex").unwrap().as_ref(),
+            BackendConfig::Cli {
+                adapter: CliAdapter::Pi,
+                ..
+            }
+        ));
+        assert!(matches!(
+            settings.backend("local-codex").unwrap().as_ref(),
+            BackendConfig::Cli {
+                adapter: CliAdapter::Codex,
+                command: None,
+                ..
+            }
+        ));
     }
 
     #[test]

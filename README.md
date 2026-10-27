@@ -245,6 +245,10 @@ other variable a CLI needs must be listed explicitly:
 env_allowlist = ["ANTHROPIC_BASE_URL"]
 ```
 
+Built-in overrides accept either name: `[agent.backends.claude]` and
+`[agent.backends.local-claude]` (likewise `codex`, `pi`, `evot`) are the same
+backend. Use only one of them.
+
 For an OpenAI-compatible service, add a named backend to
 `~/.config/bendsql/config.toml`:
 

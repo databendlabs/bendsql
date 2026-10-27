@@ -35,6 +35,10 @@
 - Like other built-ins it accepts `command`, `model` (passed as `--model`),
   `env_allowlist` and `allow_external_agent` overrides. `EVOT_LLM_*` variables
   are forwarded so environment-based evot provider settings keep working.
+- Built-in overrides now accept the short alias as section name for every
+  built-in: `[agent.backends.codex]` is the same as `[agent.backends.local-codex]`
+  and applies under both names and to discovery. Configuring one built-in under
+  both names is rejected as an invalid AI config.
 
 ### Interactive SQL and AI modes
 

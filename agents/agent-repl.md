@@ -309,8 +309,14 @@ env_allowlist = ["CUSTOM_AUTH_KEY"]
 allow_external_agent = false
 ```
 
-Exact custom names take precedence over built-ins. Aliases honor canonical-name
-customizations and disable controls; malformed overrides do not fall back to the
+Exact custom names take precedence over built-ins. Overrides may be written under
+the canonical name or an alias (`[agent.backends.codex]` equals
+`[agent.backends.local-codex]`): an alias section with no `type` (or `type = "cli"`
+and the built-in's own adapter) is stored under the canonical name at load time, so
+it applies to every name and to discovery. Configuring one built-in under two names
+is an invalid AI config (`keep one`), never merged. An alias section with another
+type or adapter remains an ordinary named backend that shadows the alias, while the
+canonical name keeps the built-in. Malformed overrides do not fall back to the
 built-in defaults. Independently named custom CLI profiles still require
 `type = "cli"`, an `adapter` and `allow_external_agent = true`.
 
