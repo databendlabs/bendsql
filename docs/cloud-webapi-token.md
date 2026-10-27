@@ -66,15 +66,21 @@ are rejected rather than forwarding credentials.
   `X-DatabendCloud-Warehouse`. No Basic/Bearer credentials or cookies are sent.
 - Login 404 is compatible with servers without `/v1/session/login`;
   `login=disable` skips that probe. Other login/auth failures are returned.
-- SQL uses `POST /v1/query` with `string_fields=true`, GET polling/page/final,
-  and POST kill. There is no generic management REST command interface.
+- SQL uses `POST /v1/query`, GET polling/page/final, and POST kill. Results use
+  the server's default string-field format; no explicit `string_fields` override
+  is needed. There is no generic management REST command interface.
 - Login, page and final requests retain normal bounded retries. Query submission
   retries only connect errors before any bytes are sent, not timeout/503 or
   ambiguous request/body failures. Check a write's outcome before retrying it.
-- Transactions and temporary tables are **not guaranteed across requests**.
-  Cookies and SQL session heartbeat/refresh/logout are not used. Choose a native
-  Gateway/private connection for session-dependent workloads. The CLI warns on
-  transaction-control statements in this mode; it does not emulate session support.
+- Transactions use the returned session state and sticky-node routing.
+  `BEGIN`, `COMMIT` and `ROLLBACK` operate across requests on one connection;
+  transaction-control statements are not blocked or warned on.
+- Temporary tables are currently unavailable because this mode disables cookies.
+  The server rejects their creation with code 1006:
+  `can not use temp table in http handler if cookie is not enabled`.
+  Use a native Gateway connection for temporary-table workloads.
+- SQL session heartbeat/refresh/logout are not implemented in Cloud mode. The
+  transaction check does not establish long-idle session or failover guarantees.
 - FlightSQL, bound parameters, stage attachments, Arrow, pagination tuning,
   stage upload and streaming load are unsupported. Presign probing is disabled.
 - `--ui` is rejected: its web Python runner could expose the personal token.

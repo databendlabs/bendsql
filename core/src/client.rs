@@ -731,9 +731,6 @@ impl APIClient {
             .with_session(Some(session_state))
             .with_stage_attachment(stage_attachment_config)
             .with_params(params);
-        if self.is_cloud_webapi {
-            req = req.with_string_fields();
-        }
 
         // headers
         let query_id = self.gen_query_id();

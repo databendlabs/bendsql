@@ -353,6 +353,48 @@ async fn cloud_completed_queries_release_tracking_without_heartbeat() {
 }
 
 #[tokio::test]
+async fn cloud_transactions_preserve_session_and_sticky_routing_without_cookies() {
+    let server = MockServer::new(|request| {
+        let body: Value = serde_json::from_slice(&request.body).unwrap();
+        let sql = body["sql"].as_str().unwrap();
+        let mut reply = query_reply();
+        reply["next_uri"] = Value::Null;
+        reply["node_id"] = json!("transaction-node");
+        assert!(!request.headers.contains_key("cookie"));
+        assert!(body.get("string_fields").is_none());
+        if sql == "BEGIN" {
+            reply["session"] =
+                json!({"database":"default", "txn_state":"Active", "need_sticky":true});
+        } else {
+            assert_eq!(body["session"]["txn_state"], "Active");
+            assert_eq!(
+                request.headers["x-databend-sticky-node"],
+                "transaction-node"
+            );
+            if sql == "SELECT 1" {
+                reply["session"] = body["session"].clone();
+            } else {
+                assert!(sql == "COMMIT" || sql == "ROLLBACK");
+                reply["session"] =
+                    json!({"database":"default", "txn_state":"AutoCommit", "need_sticky":false});
+            }
+        }
+        MockReply::json(reply)
+    })
+    .await;
+    let client = Arc::new(client(&server).await);
+    for end in ["COMMIT", "ROLLBACK"] {
+        client.query_all("BEGIN", None).await.unwrap();
+        assert!(client.in_active_transaction());
+        client.query_all("SELECT 1", None).await.unwrap();
+        assert!(client.in_active_transaction());
+        client.query_all(end, None).await.unwrap();
+        assert!(!client.in_active_transaction());
+    }
+    assert_eq!(server.requests.lock().len(), 6);
+}
+
+#[tokio::test]
 async fn native_completed_queries_release_tracking_too() {
     let server = MockServer::new(|request| {
         let mut body = query_reply();
@@ -612,7 +654,7 @@ async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
     }
     assert_eq!(requests[1].method, "POST");
     let body: Value = serde_json::from_slice(&requests[1].body).unwrap();
-    assert_eq!(body["string_fields"], true);
+    assert!(body.get("string_fields").is_none());
     for key in [
         "pagination",
         "params",

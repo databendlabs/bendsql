@@ -113,14 +113,19 @@ class CloudE2EHarnessTests(unittest.TestCase):
     def test_suite_uses_read_only_sql_and_does_not_print_identity(self):
         runner = Mock()
         runner.query.side_effect = [[["42", "cloud-e2e"]], [["private-user@example", "public"]],
-                                    [[str(index)] for index in range(5000)], []]
+                                    [[str(index)] for index in range(5000)],
+                                    [["transaction-ok"]], [["transaction-ok"]], []]
         output = io.StringIO()
         with redirect_stdout(output):
             e2e.run_suite(runner)
         self.assertNotIn("private-user@example", output.getvalue())
         for call in runner.query.call_args_list:
-            self.assertTrue(call.args[1].startswith("SELECT "))
-        self.assertEqual(runner.query.call_count, 4)
+            sql = call.args[1]
+            self.assertTrue(sql.startswith("SELECT ") or sql in {
+                "BEGIN; SELECT 'transaction-ok'; ROLLBACK",
+                "BEGIN; SELECT 'transaction-ok'; COMMIT",
+            })
+        self.assertEqual(runner.query.call_count, 6)
 
     def test_incomplete_result_fails_without_printing_rows(self):
         runner = Mock()

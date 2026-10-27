@@ -958,11 +958,6 @@ impl Session {
             }
         }
 
-        if crate::ast::is_transaction_control(query)
-            && self.conn.info().await.handler == "CloudWebAPI"
-        {
-            eprintln!("Warning: Cloud WebAPI does not guarantee transactions or temporary tables across requests; use a native Gateway connection for session-dependent workloads.");
-        }
         let start = Instant::now();
         let kind = QueryKind::from(query);
         match kind {

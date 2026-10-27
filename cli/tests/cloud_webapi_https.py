@@ -146,7 +146,7 @@ def main():
             "retry_delay_secs": "0"})
 
         def run(name, args, environment=None, config=None, expected_cloud=False,
-                authorization=None, expected_error=None, query="SELECT 1", transaction_warning=False):
+                authorization=None, expected_error=None, query="SELECT 1"):
             with tempfile.TemporaryDirectory(prefix="bendsql-home-") as home:
                 if config:
                     target = Path(home) / ".bendsql"
@@ -169,7 +169,7 @@ def main():
                 else:
                     assert result.returncode == 0, (name, text)
                     assert "1" in result.stdout.splitlines(), (name, text)
-                    assert ("Cloud WebAPI does not guarantee transactions" in result.stderr) == transaction_warning, name
+                    assert "Cloud WebAPI does not guarantee transactions" not in result.stderr, name
                     for method, path, headers, body in server.records:
                         headers = {key.lower(): value for key, value in headers.items()}
                         if expected_cloud:
@@ -180,7 +180,7 @@ def main():
                             assert "x-databendcloud-token" not in headers, name
                             assert headers.get("authorization") == authorization, name
                         if path == "/v1/query":
-                            assert json.loads(body).get("string_fields") is (True if expected_cloud else None), name
+                            assert "string_fields" not in json.loads(body), name
                     if expected_cloud:
                         assert server.tunnels, name + ": CLI did not use local CONNECT proxy"
                         assert all(target in {"api.databend.com:443", "api.databend.cn:443"}
@@ -197,8 +197,8 @@ def main():
         try:
             run("official origin through local HTTPS proxy, query/page/final with retry", ["--dsn", cloud], expected_cloud=True)
             run("China official origin through local HTTPS proxy", ["--dsn", cloud.replace("api.databend.com", "api.databend.cn")], expected_cloud=True)
-            run("Cloud transaction statements warn about session limitations", ["--dsn", cloud],
-                expected_cloud=True, query="/* session */ BEGIN", transaction_warning=True)
+            run("Cloud transaction statements are not incorrectly warned on", ["--dsn", cloud],
+                expected_cloud=True, query="/* session */ BEGIN")
             tls_config = "[connection]\nhost='api.databend.com'\ntls=false\n"
             run("config TLS disable reports HTTPS requirement", ["--cloud-api-token=" + TOKEN, "--org=org-example"],
                 config=tls_config, expected_error="requires HTTPS; sslmode=disable is not supported")

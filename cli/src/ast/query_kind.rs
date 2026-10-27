@@ -122,22 +122,6 @@ impl From<&str> for QueryKind {
     }
 }
 
-/// Detect transaction control without logging SQL or matching string literals.
-/// The tokenizer skips ordinary comments; this is a warning, not SQL validation.
-pub fn is_transaction_control(query: &str) -> bool {
-    let mut tokens = Tokenizer::new(query);
-    let Some(Ok(first)) = tokens.next() else {
-        return false;
-    };
-    match first.text().to_ascii_uppercase().as_str() {
-        "BEGIN" | "COMMIT" | "ROLLBACK" => true,
-        "START" => {
-            matches!(tokens.next(), Some(Ok(token)) if token.text().eq_ignore_ascii_case("TRANSACTION"))
-        }
-        _ => false,
-    }
-}
-
 pub fn quote_string_in_box_display(query: &str) -> bool {
     let mut tz = Tokenizer::new(query);
     match tz.next() {
@@ -216,30 +200,6 @@ fn gendata_parser(input: &str) -> IResult<&str, QueryKind> {
 #[cfg(test)]
 mod test {
     use super::QueryKind;
-
-    #[test]
-    fn transaction_control_warning_is_lexical_not_a_substring_match() {
-        for sql in [
-            "BEGIN",
-            "begin transaction;",
-            "/* note */ START TRANSACTION",
-            "-- comment\nCOMMIT",
-            "ROLLBACK",
-        ] {
-            assert!(super::is_transaction_control(sql), "{sql}");
-        }
-        for sql in [
-            "SELECT 'BEGIN'",
-            "SELECT 1 /* COMMIT */",
-            "CREATE PROCEDURE p() AS BEGIN END",
-            "'BEGIN'",
-            "\"COMMIT\"",
-            "START OTHER",
-            "",
-        ] {
-            assert!(!super::is_transaction_control(sql), "{sql}");
-        }
-    }
 
     #[test]
     fn test_query_kind() {

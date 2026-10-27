@@ -67,6 +67,7 @@ class Runner:
             environment = dict(self.environment, HOME=home)
             command = [self.binary, "--non-interactive", "--output=tsv", "--log-level=off",
                        "--set", "warehouse=default", "--set", "retry_count=3",
+                       "--set", "login=disable",
                        f"--query={sql}"]
             try:
                 result = subprocess.run(command, env=environment, stdin=subprocess.DEVNULL,
@@ -109,6 +110,13 @@ def run_suite(runner):
     if len(rows) != 5000 or any(row != [str(index)] for index, row in enumerate(rows)):
         raise E2EFailure("large-result: incomplete or misordered results; output withheld")
     print("PASS: complete ordered result stream (5000 rows)")
+
+    for ending in ("ROLLBACK", "COMMIT"):
+        rows = runner.query("transaction-" + ending.lower(),
+                            "BEGIN; SELECT 'transaction-ok'; " + ending)
+        if rows != [["transaction-ok"]]:
+            raise E2EFailure("transaction: incomplete result; output withheld")
+    print("PASS: read-only transaction commit and rollback on one connection")
 
     runner.query("SQL-error", "SELECT cloud_e2e_missing_column", expected_error="cloud_e2e_missing_column")
     print("PASS: server SQL error propagation")

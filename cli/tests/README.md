@@ -71,6 +71,9 @@ Only bounded, read-only SQL is submitted:
 - Nonempty `current_user()` / `current_role()` results (identity values withheld).
 - Complete, ordered retrieval of 5,000 generated rows. This checks the result
   stream but does not assume a particular server page size.
+- `BEGIN`/read-only query/`ROLLBACK` and `BEGIN`/read-only query/`COMMIT` on one
+  connection, without transaction warnings. The optional login probe is disabled
+  because this suite targets the query API, not a future WebAPI login endpoint.
 - Propagation of an intentional unknown-column SQL error.
 
 Each CLI invocation has a 90-second deadline. No tables, grants or resources are
