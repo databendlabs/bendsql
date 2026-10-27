@@ -1136,6 +1136,22 @@ command = {json.dumps(mock)}
             assert len(acp_records(path, "prompt")[-1]["messages"]) == 6
             terminal.send("!ask long-answer")
             assert b"[Answer truncated at 8 KiB]" in b"".join(terminal.transcript)
+            # The answer limit ends the turn: the adapter is cancelled and
+            # stopped instead of awaited, and the truncated answer is kept.
+            count = len(acp_records(path, "prompt"))
+            transcript = len(terminal.transcript)
+            started = time.monotonic()
+            terminal.send("!ask endless-answer")
+            assert time.monotonic() - started < 10, "the client waited for an endless turn"
+            assert b"[Answer truncated at 8 KiB]" in b"".join(terminal.transcript[transcript:])
+            prompt = wait_acp_prompt(path, count + 1)
+            wait_stopped(prompt)
+            assert any(record["pid"] == prompt["pid"] for record in acp_records(path, "cancel"))
+            terminal.send("!ask After a full answer")
+            # The truncated answer is history like any successful one.
+            history = acp_records(path, "prompt")[-1]["messages"]
+            assert history[-2]["role"] == "assistant" and history[-2]["content"].startswith("中"), history[-2]
+            assert history[-2]["content"].endswith("[Answer truncated at 8 KiB]")
             terminal.send("!ask max-tokens")
             assert b"[ACP answer truncated by model output limit]" in b"".join(terminal.transcript)
             terminal.send("!context clear")

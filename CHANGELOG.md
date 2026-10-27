@@ -46,6 +46,11 @@
   built-in: `[agent.backends.codex]` is the same as `[agent.backends.local-codex]`
   and applies under both names and to discovery. Configuring one built-in under
   both names is rejected as an invalid AI config.
+- ACP answers (evot and `type = "acp"`) stop at the 8 KiB answer limit: BendSQL
+  cancels the adapter and keeps the truncated answer instead of waiting for, or
+  timing out on, the rest of a long generation. The per-turn ACP transport budget
+  rises from 1 MiB / 4096 frames to 16 MiB / 65536 frames for token-sized and
+  thought frames, which are parsed and dropped.
 
 ### Interactive SQL and AI modes
 

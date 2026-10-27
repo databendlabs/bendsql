@@ -22,6 +22,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
 
@@ -144,7 +145,7 @@ def main():
             if question == "overflow-frame":
                 answer("x" * (128 * 1024 + 1))
             if question == "overflow-wire":
-                for _ in range(20):
+                for _ in range(250):
                     update("agent_thought_chunk", content={"type": "text", "text": "x" * 70000})
             if question == "overflow-stderr":
                 sys.stderr.write("private-acp-secret" * 3000)
@@ -170,6 +171,23 @@ def main():
             if question == "no-answer":
                 result(prompt_id)
                 continue
+            if question == "endless-answer":
+                # Token-sized frames that would outlast the frame budget and the
+                # request timeout; the client must stop at its answer limit.
+                def watch_cancel():
+                    for line in sys.stdin:
+                        if json.loads(line).get("method") == "session/cancel":
+                            record("cancel", params=json.loads(line)["params"])
+                threading.Thread(target=watch_cancel, daemon=True).start()
+                deadline = time.monotonic() + 60
+                frames = 0
+                while time.monotonic() < deadline:
+                    answer("中")
+                    frames += 1
+                    if frames % 64 == 0:
+                        time.sleep(0.01)
+                result(prompt_id)
+                return
             if question == "long-answer":
                 for _ in range(20):
                     answer("中" * 1000)

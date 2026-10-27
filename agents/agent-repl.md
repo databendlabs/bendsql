@@ -580,11 +580,16 @@ a remote model request stopped. Fresh processes/sessions mean `!context clear` a
 switches cannot accidentally resume old local conversation state; they cannot erase
 history retained by the adapter or its upstream services.
 
-Transport limits are 128 KiB per incoming JSON-RPC line, 1 MiB total incoming data
-and 4096 frames per invocation. Outgoing data is capped at 1 MiB (512 KiB per line)
+Transport limits are 128 KiB per incoming JSON-RPC line, 16 MiB total incoming data
+and 65536 frames per invocation (adapters stream a token or two per frame, plus
+thought frames that are parsed and dropped; a measured evot reasoning turn sent
+17.5k thought frames before answering). Outgoing data is capped at 1 MiB (512 KiB per line)
 including the escaped prompt. Only individual newline-delimited JSON-RPC 2.0
 objects are accepted, not batches. Prompt text remains capped at 256 KiB, retained
-answer text at 8 KiB. Stderr is drained/discarded with fixed memory; diagnostic
+answer text at 8 KiB. Reaching the answer limit with no tool/capability use so far
+decides the turn: BendSQL sends `session/cancel`, waits at most 200 ms, stops the
+process group and keeps the truncated answer (marked `[Answer truncated at 8 KiB]`)
+instead of waiting for the rest; nothing after that point is examined. Stderr is drained/discarded with fixed memory; diagnostic
 volume does not invalidate a successful result. Pipes are serviced concurrently. All
 protocol/process diagnostics are sanitized rather than exposing server error text,
 private paths or credentials. Static arguments are limited to 32 / 16 KiB total.

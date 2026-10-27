@@ -220,10 +220,14 @@ impl Drop for Worker {
 
 #[cfg(unix)]
 const MAX_FRAME_BYTES: usize = 128 * 1024;
+// Frames are validated and dropped; only the bounded answer is retained, so
+// these bound parsing work, not memory. Adapters stream a token or two per
+// frame: one measured evot reasoning turn sent 17.5k thought frames (~3 MB)
+// before its first answer token. The request timeout bounds wall time.
 #[cfg(unix)]
-const MAX_WIRE_BYTES: usize = 1024 * 1024;
+const MAX_WIRE_BYTES: usize = 16 * 1024 * 1024;
 #[cfg(unix)]
-const MAX_FRAMES: usize = 4096;
+const MAX_FRAMES: usize = 64 * 1024;
 
 #[cfg(unix)]
 #[derive(Default)]
@@ -284,6 +288,9 @@ struct Answer {
     text: String,
     truncated: bool,
     denied: bool,
+    /// Fired when the answer reaches its limit with no capability use so far:
+    /// the turn is decided, so the rest of it is neither awaited nor examined.
+    full: tokio_util::sync::CancellationToken,
     /// Display-only deltas; `finish` still decides whether the turn counts.
     output: Option<AnswerStream>,
 }
@@ -295,6 +302,9 @@ impl Answer {
         notification: agent_client_protocol::schema::v1::SessionNotification,
     ) -> agent_client_protocol::Result<()> {
         use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
+        if self.full.is_cancelled() {
+            return Ok(());
+        }
         if self.session.is_none()
             && !matches!(
                 notification.update,
@@ -328,6 +338,9 @@ impl Answer {
                     self.text.push_str(&text);
                 }
                 self.truncated |= cut;
+                if self.truncated && !self.denied {
+                    self.full.cancel();
+                }
             }
             SessionUpdate::AgentMessageChunk(_)
             | SessionUpdate::ToolCall(_)
@@ -368,7 +381,7 @@ async fn run(
     use agent_client_protocol::schema::v1::{
         CancelNotification, ClientCapabilities, ContentBlock, Implementation, InitializeRequest,
         NewSessionRequest, PromptRequest, RequestPermissionOutcome, RequestPermissionResponse,
-        SessionNotification, TextContent,
+        SessionNotification, StopReason, TextContent,
     };
     use agent_client_protocol::schema::ProtocolVersion;
     use agent_client_protocol::{Agent, Client, ConnectionTo, Lines, UntypedMessage};
@@ -430,6 +443,7 @@ async fn run(
     let notifications = state.clone();
     let requests = state.clone();
     let runner_state = state.clone();
+    let full = state.lock().unwrap().full.clone();
     let cwd = directory.path().to_owned();
     let protocol = Client.builder()
         .on_receive_notification(async move |notification: UntypedMessage, _cx| {
@@ -441,7 +455,13 @@ async fn run(
             notifications.lock().unwrap().update(notification)
         }, agent_client_protocol::on_receive_notification!())
         .on_receive_request(async move |request: UntypedMessage, responder, _cx| {
-            requests.lock().unwrap().denied = true;
+            {
+                let mut state = requests.lock().unwrap();
+                // Still refused below; a decided (full) answer is unaffected.
+                if !state.full.is_cancelled() {
+                    state.denied = true;
+                }
+            }
             if request.method == "session/request_permission" {
                 responder.respond(serde_json::to_value(RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled))?)
             } else {
@@ -474,6 +494,16 @@ async fn run(
             tokio::pin!(work);
             tokio::select! {
                 result = &mut work => result,
+                _ = full.cancelled() => {
+                    // Everything past the limit would be discarded: stop the
+                    // adapter instead of waiting (or timing out) for its end.
+                    let session = runner_state.lock().unwrap().session.clone();
+                    if let Some(session) = session {
+                        let _ = connection.send_notification(CancelNotification::new(session));
+                        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), &mut work).await;
+                    }
+                    runner_state.lock().unwrap().finish(StopReason::EndTurn).map_err(|_| agent_client_protocol::Error::invalid_request())
+                }
                 _ = cancel.cancelled() => {
                     let session = runner_state.lock().unwrap().session.clone();
                     if let Some(session) = session {
@@ -646,7 +676,7 @@ mod tests {
         assert!(budget.accept("x", MAX_FRAME_BYTES).is_err());
         let mut budget = Budget::default();
         let frame = "x".repeat(MAX_FRAME_BYTES);
-        for _ in 0..7 {
+        for _ in 0..MAX_WIRE_BYTES / (MAX_FRAME_BYTES + 1) {
             budget.accept(&frame, MAX_FRAME_BYTES).unwrap();
         }
         assert!(budget.accept(&frame, MAX_FRAME_BYTES).is_err());
@@ -727,9 +757,75 @@ mod tests {
             .finish(StopReason::EndTurn)
             .unwrap()
             .contains("truncated at 8 KiB"));
+        let mut answer = Answer {
+            session: Some("session".into()),
+            collecting: true,
+            ..Answer::default()
+        };
+        answer.update(notification("session", "ok".into())).unwrap();
         assert!(answer
             .update(notification("wrong", "private-secret".into()))
             .is_err());
+        assert!(answer.finish(StopReason::EndTurn).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn full_answer_decides_the_turn() {
+        use agent_client_protocol::schema::v1::{
+            ContentBlock, ContentChunk, SessionNotification, SessionUpdate, StopReason,
+            TextContent, ToolCall,
+        };
+        let chunk = |text: String| {
+            SessionNotification::new(
+                "session".to_owned(),
+                SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
+                    TextContent::new(text),
+                ))),
+            )
+        };
+        let tool = || {
+            SessionNotification::new(
+                "session".to_owned(),
+                SessionUpdate::ToolCall(ToolCall::new("tool", "private-secret")),
+            )
+        };
+        let fresh = || Answer {
+            session: Some("session".into()),
+            collecting: true,
+            ..Answer::default()
+        };
+        let limit = super::super::memory::MAX_TEXT_BYTES;
+
+        // Below the limit nothing is decided yet.
+        let mut answer = fresh();
+        answer.update(chunk("x".repeat(limit))).unwrap();
+        assert!(!answer.full.is_cancelled());
+
+        // Crossing it fires once; later frames, tool use included, are ignored.
+        answer.update(chunk("over".into())).unwrap();
+        assert!(answer.full.is_cancelled());
+        answer.update(tool()).unwrap();
+        answer
+            .update(SessionNotification::new(
+                "wrong".to_owned(),
+                SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
+                    TextContent::new("private-secret"),
+                ))),
+            ))
+            .unwrap();
+        assert!(!answer.denied);
+        assert_eq!(answer.text.len(), limit);
+        assert!(answer
+            .finish(StopReason::EndTurn)
+            .unwrap()
+            .ends_with("[Answer truncated at 8 KiB]"));
+
+        // Tool use before the limit still invalidates, and nothing stops early.
+        let mut answer = fresh();
+        answer.update(tool()).unwrap();
+        answer.update(chunk("x".repeat(limit + 1))).unwrap();
+        assert!(!answer.full.is_cancelled());
         assert!(answer.finish(StopReason::EndTurn).is_err());
     }
 }
