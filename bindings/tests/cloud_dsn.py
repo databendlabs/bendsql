@@ -137,6 +137,18 @@ def run_suite(executable, binding):
                 True,
                 "requires org",
             ),
+            (
+                "empty Organization ID",
+                dsn(extra={"org": ""}),
+                True,
+                "valid Organization ID",
+            ),
+            (
+                "whitespace Organization ID",
+                dsn(extra={"org": " "}),
+                True,
+                "valid Organization ID",
+            ),
             ("explicit HTTP", dsn(scheme="databend+http"), True, "requires HTTPS"),
             ("TLS disabled", dsn(extra={"sslmode": "disable"}), True, "requires HTTPS"),
             (

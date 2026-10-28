@@ -24,6 +24,7 @@ mod pages;
 mod presign;
 mod request;
 mod response;
+mod transport;
 
 mod capability;
 mod client_mgr;

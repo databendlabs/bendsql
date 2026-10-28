@@ -15,11 +15,8 @@
 use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth};
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
-use crate::cloud_api::{
-    is_cloud_webapi_host, CloudApiAuth, DEFAULT_CLOUD_WEBAPI_HOST, HEADER_CLOUD_WAREHOUSE,
-};
+use crate::cloud_api::{is_cloud_webapi_host, CloudApiAuth, DEFAULT_CLOUD_WEBAPI_HOST};
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
-use crate::global_cookie_store::GlobalCookieStore;
 use crate::login::{
     LoginRequest, LoginResponseResult, RefreshResponse, RefreshSessionTokenRequest,
     SessionTokenInfo,
@@ -27,6 +24,7 @@ use crate::login::{
 use crate::presign::{presign_upload_to_stage, PresignMode, PresignedResponse, Reader};
 use crate::response::LoadResponse;
 use crate::stage::StageLocation;
+use crate::transport::{Transport, UploadKind};
 use crate::{
     error::{suggests_sslmode_disable, Error, RequestKind, Result},
     request::{PaginationConfig, QueryRequest, StageAttachmentConfig},
@@ -44,7 +42,6 @@ use log::{debug, error, info, warn};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use percent_encoding::percent_decode_str;
-use reqwest::cookie::CookieStore;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_TYPE};
 use reqwest::multipart::{Form, Part};
 use reqwest::{
@@ -68,15 +65,12 @@ use url::Url;
 const HEADER_QUERY_ID: &str = "X-DATABEND-QUERY-ID";
 const HEADER_TENANT: &str = "X-DATABEND-TENANT";
 const HEADER_STICKY_NODE: &str = "X-DATABEND-STICKY-NODE";
-const HEADER_WAREHOUSE: &str = "X-DATABEND-WAREHOUSE";
 const HEADER_STAGE_NAME: &str = "X-DATABEND-STAGE-NAME";
 const HEADER_ROUTE_HINT: &str = "X-DATABEND-ROUTE-HINT";
 const TXN_STATE_ACTIVE: &str = "Active";
 const HEADER_SQL: &str = "X-DATABEND-SQL";
 const HEADER_QUERY_CONTEXT: &str = "X-DATABEND-QUERY-CONTEXT";
 const HEADER_SESSION_ID: &str = "X-DATABEND-SESSION-ID";
-const HEADER_CLIENT_CAPS: &str = "X-DATABEND-CLIENT-CAPS";
-const HEADER_SESSION: &str = "X-DATABEND-SESSION";
 const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 const CONTENT_TYPE_ARROW_OR_JSON: &str = "application/vnd.apache.arrow.stream";
 const DEFAULT_USERNAME: &str = "root";
@@ -119,10 +113,7 @@ pub struct APIClient {
     endpoint: Url,
 
     auth: Arc<dyn Auth>,
-    is_cloud_webapi: bool,
-    // Opaque server-issued state, isolated to this connection. No Cookie fallback.
-    cloud_session_header: Mutex<Option<HeaderValue>>,
-    cloud_session_init: tokio::sync::Mutex<()>,
+    transport: Transport,
 
     /// Tenant ID used only in Databend Cloud management mode.
     /// This is NOT for specifying tenant in normal usage.
@@ -236,17 +227,9 @@ impl APIClient {
         }
     }
 
-    fn is_cloud_org_not_found(&self, status: StatusCode, body: &[u8]) -> bool {
-        self.is_cloud_webapi
-            && status == StatusCode::NOT_FOUND
-            && serde_json::from_slice::<Value>(body).is_ok_and(|value| {
-                value.get("error").and_then(Value::as_str) == Some("OrgNotFound")
-            })
-    }
-
     fn status_body_to_error(&self, status: StatusCode, body: &[u8]) -> Error {
-        if self.is_cloud_org_not_found(status, body) {
-            return Error::Response { status, msg: "Organization ID does not exist or has been changed; check org in your DSN/config or --org <ORG>".into() };
+        if self.transport.is_org_not_found(status, body) {
+            return Error::Response { status, msg: "Organization ID does not exist or has been changed; check org in your DSN or --org <ORG>".into() };
         }
         let error = match serde_json::from_slice::<ResponseWithErrorCode>(body) {
             Ok(resp) if status == StatusCode::UNAUTHORIZED => Error::AuthFailure(resp.error),
@@ -509,7 +492,7 @@ impl APIClient {
             let org =
                 org.ok_or_else(|| Error::BadArgument("cloud_api_token requires org".into()))?;
             client.auth = Arc::new(CloudApiAuth::new(client.endpoint.clone(), token, org)?);
-            client.is_cloud_webapi = true;
+            client.transport = Transport::cloud();
             if client.tenant.is_some() {
                 return Err(Error::BadArgument(
                     "Cloud WebAPI selects its tenant using org, not tenant".into(),
@@ -559,22 +542,12 @@ impl APIClient {
                 cli_builder = cli_builder.add_root_certificate(cert);
             }
         }
-        if self.is_cloud_webapi {
-            cli_builder = cli_builder.redirect(reqwest::redirect::Policy::none());
-        } else {
-            let cookie_provider = GlobalCookieStore::new();
-            let cookie = HeaderValue::from_static("cookie_enabled=true");
-            let mut initial_cookies = [&cookie].into_iter();
-            cookie_provider
-                .set_cookies(&mut initial_cookies, &Url::parse("https://a.com").unwrap());
-            cli_builder = cli_builder.cookie_provider(Arc::new(cookie_provider));
-        }
-        self.cli = cli_builder.build()?;
+        self.cli = self.transport.configure_client(cli_builder).build()?;
         Ok(())
     }
 
     async fn check_presign(self: &Arc<Self>) -> Result<()> {
-        if self.is_cloud_webapi {
+        if !self.transport.supports_presign() {
             self.set_presign_mode(PresignMode::Off);
             return Ok(());
         }
@@ -653,7 +626,7 @@ impl APIClient {
 
     /// Whether the connection uses Cloud account authentication and WebAPI routing.
     pub fn is_cloud_webapi(&self) -> bool {
-        self.is_cloud_webapi
+        self.transport.is_cloud_webapi()
     }
 
     pub fn username(&self) -> String {
@@ -737,7 +710,7 @@ impl APIClient {
     }
 
     fn wrap_auth_or_session_token(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
-        if self.is_cloud_webapi {
+        if !self.transport.uses_native_session_apis() {
             return self.auth.wrap(builder);
         }
         if let Some(info) = &self.session_token_info {
@@ -755,11 +728,8 @@ impl APIClient {
         force_json_body: bool,
         params: Option<serde_json::Value>,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
-        if self.is_cloud_webapi && (stage_attachment_config.is_some() || params.is_some()) {
-            return Err(Error::BadArgument(
-                "Cloud WebAPI does not support stage attachments or bound parameters".into(),
-            ));
-        }
+        self.transport
+            .validate_query_payload(stage_attachment_config.is_some(), params.is_some())?;
         if !self.in_active_transaction() {
             self.route_hint.next();
         }
@@ -896,7 +866,7 @@ impl APIClient {
         let response = self
             .query_request_helper(
                 request,
-                self.is_cloud_webapi,
+                self.transport.retry_page_503(),
                 true,
                 true,
                 RequestKind::QueryPage,
@@ -930,16 +900,14 @@ impl APIClient {
 
         info!("{method} query: {uri}");
 
-        let mut builder = if self.is_cloud_webapi && !is_kill {
-            self.cli.get(endpoint.clone())
-        } else {
-            self.cli.post(endpoint.clone())
-        };
+        let mut builder = self
+            .cli
+            .request(self.transport.end_query_method(is_kill), endpoint.clone());
         if let Some(node_id) = node_id {
             builder = builder.header(HEADER_STICKY_NODE, node_id)
         }
         builder = self.wrap_auth_or_session_token(builder)?;
-        if self.is_cloud_webapi {
+        if self.transport.retry_query_termination() {
             let request = builder
                 .headers(headers)
                 .timeout(self.page_request_timeout)
@@ -1025,12 +993,8 @@ impl APIClient {
             headers.insert(HEADER_TENANT, tenant.parse()?);
         }
         let warehouse = self.warehouse.lock().clone();
-        if self.is_cloud_webapi {
-            if let Some(warehouse) = warehouse {
-                headers.insert(HEADER_CLOUD_WAREHOUSE, warehouse.parse()?);
-            }
-        } else if let Some(warehouse) = warehouse {
-            headers.insert(HEADER_WAREHOUSE, warehouse.parse()?);
+        if let Some(warehouse) = warehouse {
+            headers.insert(self.transport.warehouse_header(), warehouse.parse()?);
         }
         let route_hint = self.route_hint.current();
         headers.insert(HEADER_ROUTE_HINT, route_hint.parse()?);
@@ -1101,11 +1065,7 @@ impl APIClient {
         data: Reader,
         size: u64,
     ) -> Result<()> {
-        if self.is_cloud_webapi {
-            return Err(Error::BadArgument(
-                "stage upload is not supported through Cloud WebAPI".into(),
-            ));
-        }
+        self.transport.validate_upload(UploadKind::Stage)?;
         match self.get_presign_mode() {
             PresignMode::Off => self.upload_to_stage_with_stream(stage, data, size).await,
             PresignMode::On => {
@@ -1183,11 +1143,7 @@ impl APIClient {
         data: Reader,
         file_name: &str,
     ) -> Result<LoadResponse> {
-        if self.is_cloud_webapi {
-            return Err(Error::BadArgument(
-                "streaming load is not supported through Cloud WebAPI".into(),
-            ));
-        }
+        self.transport.validate_upload(UploadKind::Streaming)?;
         let body = Body::wrap_stream(ReaderStream::new(data));
         let part = Part::stream(body).file_name(file_name.to_string());
         let endpoint = self.endpoint.join("v1/streaming_load")?;
@@ -1239,7 +1195,9 @@ impl APIClient {
             .query_request_helper(request, true, false, true, RequestKind::Login)
             .await?;
         if response.status == StatusCode::NOT_FOUND
-            && !self.is_cloud_org_not_found(response.status, &response.body)
+            && !self
+                .transport
+                .is_org_not_found(response.status, &response.body)
         {
             info!("login return 404, skip login on the old version server");
             return Ok(());
@@ -1268,7 +1226,10 @@ impl APIClient {
                 self.capability = Capability::from_server_version(&server_version);
                 self.server_version = Some(server_version.clone());
                 let session_id = self.session_id.as_str();
-                if let Some(tokens) = info.tokens.filter(|_| !self.is_cloud_webapi) {
+                if let Some(tokens) = info
+                    .tokens
+                    .filter(|_| self.transport.uses_native_session_apis())
+                {
                     info!(
                         "[session {session_id}] login success with session token version = {server_version}",
                     );
@@ -1282,7 +1243,7 @@ impl APIClient {
     }
 
     pub(crate) async fn try_heartbeat(&self) -> Result<()> {
-        if self.is_cloud_webapi {
+        if !self.transport.uses_native_session_apis() {
             return Ok(());
         }
         let endpoint = self.endpoint.join("/v1/session/heartbeat")?;
@@ -1365,7 +1326,7 @@ impl APIClient {
     }
 
     pub(crate) fn need_logout(&self) -> bool {
-        if self.is_cloud_webapi {
+        if !self.transport.uses_native_session_apis() {
             return false;
         }
         self.session_token_info.is_some()
@@ -1421,49 +1382,6 @@ impl APIClient {
         None
     }
 
-    fn apply_cloud_session_headers(&self, request: &mut Request) -> Result<()> {
-        if self.is_cloud_webapi {
-            if request.url().origin() != self.endpoint.origin() {
-                return Err(Error::BadArgument(
-                    "refusing to send Cloud session state to another origin".into(),
-                ));
-            }
-            request.headers_mut().remove(reqwest::header::COOKIE);
-            request.headers_mut().insert(
-                HEADER_CLIENT_CAPS,
-                HeaderValue::from_static("session_header"),
-            );
-            request.headers_mut().remove(HEADER_SESSION);
-            if let Some(header) = self.cloud_session_header.lock().as_ref() {
-                request.headers_mut().insert(HEADER_SESSION, header.clone());
-            }
-        }
-        Ok(())
-    }
-
-    fn update_cloud_session_header(&self, headers: &HeaderMap) -> Result<()> {
-        if self.is_cloud_webapi {
-            let mut values = headers.get_all(HEADER_SESSION).iter();
-            if let Some(header) = values.next() {
-                // Keep future encodings opaque, but bound connection state and
-                // reject ambiguous/invalid headers without echoing their value.
-                if header.is_empty()
-                    || header.as_bytes().len() > 8192
-                    || header.to_str().is_err()
-                    || values.next().is_some()
-                {
-                    return Err(Error::Decode(
-                        "invalid Cloud session response header".into(),
-                    ));
-                }
-                let mut header = header.clone();
-                header.set_sensitive(true);
-                *self.cloud_session_header.lock() = Some(header);
-            }
-        }
-        Ok(())
-    }
-
     /// Send request with retry and return raw HTTP status/headers/body.
     ///
     /// retry on
@@ -1479,32 +1397,20 @@ impl APIClient {
         reload_auth_if_401: bool,
         request_kind: RequestKind,
     ) -> Result<HttpResponseData> {
-        // Only serialize requests until one server-issued session is known.
-        // Concurrent first queries must not bootstrap different SQL sessions.
-        let needs_session = self.is_cloud_webapi && self.cloud_session_header.lock().is_none();
-        let _session_init = if needs_session {
-            let guard = self.cloud_session_init.lock().await;
-            if self.cloud_session_header.lock().is_none() {
-                Some(guard)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let _session_init = self.transport.bootstrap_guard().await;
         let mut refreshed = false;
         let mut retries = 0;
         // Only query submission can have ambiguous SQL side effects. Connect
         // errors precede sending bytes; login/page/final can be safely repeated.
-        let allow_replay =
-            !self.is_cloud_webapi || !matches!(request_kind, RequestKind::QueryStart);
+        let allow_replay = self.transport.allow_replay(&request_kind);
         let max_retries = self.retry_count;
         let retry_delay = Duration::from_secs(self.retry_delay_secs);
 
         loop {
             // Refresh before each attempt: a page/final retry may follow a
             // session refresh header received even when its body read failed.
-            self.apply_cloud_session_headers(&mut request)?;
+            self.transport
+                .prepare_request(&mut request, &self.endpoint)?;
             let req = request.try_clone().expect("request not cloneable");
             let response = match self.cli.execute(req).await {
                 Ok(response) => response,
@@ -1544,13 +1450,14 @@ impl APIClient {
 
             let status = response.status();
             let headers = response.headers().clone();
-            self.update_cloud_session_header(&headers)
+            self.transport
+                .observe_response(&headers)
                 .map_err(|error| error.with_context(request_kind.clone()))?;
             let body = match response.bytes().await {
                 Ok(body) => body,
                 Err(err) => {
                     if let Some(reason) = Self::retry_reason_for_reqwest(&err)
-                        .or_else(|| self.is_cloud_webapi.then_some("response body error"))
+                        .or_else(|| self.transport.body_error_fallback())
                         .filter(|_| allow_replay)
                     {
                         if retries >= max_retries.saturating_sub(1) {
@@ -1743,9 +1650,7 @@ impl Default for APIClient {
             tenant: None,
             warehouse: Mutex::new(None),
             auth: Arc::new(BasicAuth::new(DEFAULT_USERNAME, "")) as Arc<dyn Auth>,
-            is_cloud_webapi: false,
-            cloud_session_header: Mutex::new(None),
-            cloud_session_init: tokio::sync::Mutex::new(()),
+            transport: Transport::default(),
             session_state: Mutex::new(SessionState::default()),
             wait_time_secs: None,
             max_rows_in_buffer: None,

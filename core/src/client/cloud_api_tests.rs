@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use crate::transport::{HEADER_CLIENT_CAPS, HEADER_SESSION};
 use std::sync::atomic::AtomicUsize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -148,7 +149,7 @@ fn query_reply() -> Value {
 
 async fn client(server: &MockServer) -> APIClient {
     let mut client = APIClient::from_dsn(&format!("databend://ignored:ignored@127.0.0.1:{}/default?sslmode=disable&warehouse=wh&retry_delay_secs=0", server.url.port().unwrap())).await.unwrap();
-    client.is_cloud_webapi = true;
+    client.transport = Transport::cloud();
     client.auth = Arc::new(CloudApiAuth::for_test(
         server.url.clone(),
         TOKEN.into(),
@@ -512,7 +513,7 @@ async fn cloud_drop_during_final_request_releases_tracking_without_duplicate_cle
 async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
     let dsn = format!("databend://ignored:%FF@api.databend.com/default?cloud_api_token={TOKEN}&org={ORG}&warehouse=wh");
     let client = APIClient::from_dsn(&dsn).await.unwrap();
-    assert!(client.is_cloud_webapi);
+    assert!(client.is_cloud_webapi());
     assert_eq!(client.username(), "cloud_account");
     assert!(!client.auth.can_reload());
     for host in ["api.databend.com", "api.databend.cn", "API.DATABEND.COM"] {
@@ -698,7 +699,7 @@ async fn cloud_login_does_not_hide_auth_failures_or_switch_credentials() {
     let mut client = client(&server).await;
     client.login().await.unwrap();
     assert!(client.session_token_info.is_none());
-    assert!(client.is_cloud_webapi);
+    assert!(client.is_cloud_webapi());
 }
 
 #[tokio::test]
@@ -813,7 +814,10 @@ async fn cloud_session_header_is_opaque_sensitive_and_origin_scoped() {
         .header(HEADER_SESSION, "caller-supplied-session")
         .build()
         .unwrap();
-    client.apply_cloud_session_headers(&mut request).unwrap();
+    client
+        .transport
+        .prepare_request(&mut request, &client.endpoint)
+        .unwrap();
     assert!(!request.headers().contains_key(HEADER_SESSION));
     assert!(!request.headers().contains_key(reqwest::header::COOKIE));
     assert_eq!(request.headers()[HEADER_CLIENT_CAPS], "session_header");
@@ -822,11 +826,15 @@ async fn cloud_session_header_is_opaque_sensitive_and_origin_scoped() {
     let opaque = r#"{"id":"server-session-id", "last_refresh_time":7, "future":"value"}"#;
     let mut headers = HeaderMap::new();
     headers.insert(HEADER_SESSION, HeaderValue::from_str(opaque).unwrap());
-    client.update_cloud_session_header(&headers).unwrap();
+    client.transport.observe_response(&headers).unwrap();
     client
-        .update_cloud_session_header(&HeaderMap::new())
+        .transport
+        .observe_response(&HeaderMap::new())
         .unwrap();
-    client.apply_cloud_session_headers(&mut request).unwrap();
+    client
+        .transport
+        .prepare_request(&mut request, &client.endpoint)
+        .unwrap();
     assert_eq!(request.headers()[HEADER_SESSION], opaque);
     assert!(request.headers()[HEADER_SESSION].is_sensitive());
     assert!(!format!("{request:?}").contains("server-session-id"));
@@ -835,7 +843,10 @@ async fn cloud_session_header_is_opaque_sensitive_and_origin_scoped() {
         .get("http://other.invalid/v1/query")
         .build()
         .unwrap();
-    assert!(client.apply_cloud_session_headers(&mut foreign).is_err());
+    assert!(client
+        .transport
+        .prepare_request(&mut foreign, &client.endpoint)
+        .is_err());
     assert!(!foreign.headers().contains_key(HEADER_SESSION));
     assert!(server.requests.lock().is_empty());
 }
@@ -846,7 +857,7 @@ async fn cloud_rejects_invalid_response_session_headers_without_overwriting_stat
     let client = client(&server).await;
     let mut valid = HeaderMap::new();
     valid.insert(HEADER_SESSION, HeaderValue::from_static("known-session"));
-    client.update_cloud_session_header(&valid).unwrap();
+    client.transport.observe_response(&valid).unwrap();
     for value in [
         HeaderValue::from_static(""),
         HeaderValue::from_str(&"x".repeat(8193)).unwrap(),
@@ -854,21 +865,23 @@ async fn cloud_rejects_invalid_response_session_headers_without_overwriting_stat
     ] {
         let mut headers = HeaderMap::new();
         headers.insert(HEADER_SESSION, value);
-        let error = client.update_cloud_session_header(&headers).unwrap_err();
+        let error = client.transport.observe_response(&headers).unwrap_err();
         assert_eq!(
             error.to_string(),
             "DecodeError: invalid Cloud session response header"
         );
-        assert_eq!(
-            client.cloud_session_header.lock().as_ref().unwrap(),
-            "known-session"
-        );
+        let mut request = client.cli.get(server.url.clone()).build().unwrap();
+        client
+            .transport
+            .prepare_request(&mut request, &client.endpoint)
+            .unwrap();
+        assert_eq!(request.headers()[HEADER_SESSION], "known-session");
     }
     valid.append(
         HEADER_SESSION,
         HeaderValue::from_static("ambiguous-session"),
     );
-    assert!(client.update_cloud_session_header(&valid).is_err());
+    assert!(client.transport.observe_response(&valid).is_err());
 }
 
 #[tokio::test]
@@ -886,7 +899,7 @@ async fn native_cookie_behavior_does_not_adopt_cloud_session_headers() {
     })
     .await;
     let mut client = client(&server).await;
-    client.is_cloud_webapi = false;
+    client.transport = Transport::Native;
     client.auth = Arc::new(BasicAuth::new("root", ""));
     client.build_client(None).await.unwrap();
     client
@@ -897,7 +910,12 @@ async fn native_cookie_behavior_does_not_adopt_cloud_session_headers() {
         .query_page("q1", "/v1/query/q1/page/0", &None)
         .await
         .unwrap();
-    assert!(client.cloud_session_header.lock().is_none());
+    let mut request = client.cli.get(server.url.clone()).build().unwrap();
+    client
+        .transport
+        .prepare_request(&mut request, &client.endpoint)
+        .unwrap();
+    assert!(!request.headers().contains_key(HEADER_SESSION));
     assert_eq!(server.requests.lock().len(), 2);
 }
 
@@ -946,11 +964,19 @@ async fn cloud_org_not_found_is_actionable_without_hiding_other_failures() {
         .to_string();
     assert!(error.contains("Organization ID does not exist or has been changed"));
     let body = br#"{"error":"OrgNotFound","message":"Org not found"}"#;
-    assert!(!cloud.is_cloud_org_not_found(StatusCode::FORBIDDEN, body));
-    assert!(!cloud.is_cloud_org_not_found(StatusCode::NOT_FOUND, br#"{"error":"QueryNotFound"}"#));
-    assert!(!cloud.is_cloud_org_not_found(StatusCode::NOT_FOUND, b"not found"));
+    assert!(!cloud
+        .transport
+        .is_org_not_found(StatusCode::FORBIDDEN, body));
+    assert!(!cloud
+        .transport
+        .is_org_not_found(StatusCode::NOT_FOUND, br#"{"error":"QueryNotFound"}"#));
+    assert!(!cloud
+        .transport
+        .is_org_not_found(StatusCode::NOT_FOUND, b"not found"));
     let native = APIClient::default();
-    assert!(!native.is_cloud_org_not_found(StatusCode::NOT_FOUND, body));
+    assert!(!native
+        .transport
+        .is_org_not_found(StatusCode::NOT_FOUND, body));
 }
 
 #[tokio::test]
