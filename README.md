@@ -248,7 +248,8 @@ required flags through `--help`.
 evot (`--backend evot`, or `local-evot`) runs as
 `evot acp --tools readonly --permission ask --ephemeral`: evot asks BendSQL before
 every tool call and BendSQL always refuses, so no tool runs, and sessions stay in
-memory. If the model tries a tool, that answer is discarded. It needs an evot
+memory. If the model tries a tool, the refused call is skipped and the model
+answers without it; an answer is discarded only if a tool reports that it ran. It needs an evot
 release with `acp --permission`; BendSQL checks `evot --help` before sending context. Answers stream as they are generated.
 evot reads its usual `~/.evotai/evot.env`; `EVOT_LLM_*` variables are also forwarded.
 

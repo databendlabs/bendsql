@@ -46,6 +46,9 @@ pub struct AcpBackend {
     /// instance, before any context is sent.
     probe: Option<CliAdapter>,
     probed: tokio::sync::OnceCell<()>,
+    /// The adapter runs no tool until this client allows it (evot with
+    /// `--permission ask`, verified by the probe), and this client never does.
+    gated_tools: bool,
 }
 
 impl AcpBackend {
@@ -69,6 +72,7 @@ impl AcpBackend {
             env: child_environment(None, env_allowlist)?,
             probe: None,
             probed: tokio::sync::OnceCell::new(),
+            gated_tools: false,
         })
     }
 
@@ -96,6 +100,7 @@ impl AcpBackend {
             env: child_environment(Some(CliAdapter::Evot), env_allowlist)?,
             probe: Some(CliAdapter::Evot),
             probed: tokio::sync::OnceCell::new(),
+            gated_tools: true,
         })
     }
 
@@ -166,12 +171,22 @@ impl AcpBackend {
             let executable = self.executable.clone();
             let args = self.args.clone();
             let env = self.env.clone();
+            let gated_tools = self.gated_tools;
             // Own the adapter in a separate task so abandoning this future can
             // send protocol cancellation before cleanup. The worker is bounded.
             let mut worker = Worker {
                 cancel,
                 join: Some(tokio::spawn(async move {
-                    run(executable, args, env, input, worker_cancel, output).await
+                    run(
+                        executable,
+                        args,
+                        env,
+                        input,
+                        worker_cancel,
+                        output,
+                        gated_tools,
+                    )
+                    .await
                 })),
             };
             let result = worker.join.as_mut().unwrap().await;
@@ -186,6 +201,7 @@ impl AcpBackend {
                 &self.env,
                 &self.probe,
                 &self.probed,
+                &self.gated_tools,
                 messages,
                 output,
             );
@@ -288,6 +304,14 @@ struct Answer {
     text: String,
     truncated: bool,
     denied: bool,
+    /// See [`AcpBackend::gated_tools`]. A tool call announced as pending, whose
+    /// permission request this client refused and that is then at most reported
+    /// failed never ran, so it does not invalidate the turn. Any other tool
+    /// signal still does, and so does a call that never asked for permission.
+    gated_tools: bool,
+    /// Gated tool calls announced as pending, and those this client refused.
+    announced: std::collections::HashSet<String>,
+    refused: std::collections::HashSet<String>,
     /// Fired when the answer reaches its limit with no capability use so far:
     /// the turn is decided, so the rest of it is neither awaited nor examined.
     full: tokio_util::sync::CancellationToken,
@@ -301,7 +325,7 @@ impl Answer {
         &mut self,
         notification: agent_client_protocol::schema::v1::SessionNotification,
     ) -> agent_client_protocol::Result<()> {
-        use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate};
+        use agent_client_protocol::schema::v1::{ContentBlock, SessionUpdate, ToolCallStatus};
         if self.full.is_cancelled() {
             return Ok(());
         }
@@ -338,10 +362,17 @@ impl Answer {
                     self.text.push_str(&text);
                 }
                 self.truncated |= cut;
-                if self.truncated && !self.denied {
+                if self.truncated && self.settled() {
                     self.full.cancel();
                 }
             }
+            SessionUpdate::ToolCall(call)
+                if self.gated_tools && call.status == ToolCallStatus::Pending =>
+            {
+                self.announced.insert(call.tool_call_id.to_string());
+            }
+            SessionUpdate::ToolCallUpdate(update)
+                if self.gated_tools && self.refused_update(&update) => {}
             SessionUpdate::AgentMessageChunk(_)
             | SessionUpdate::ToolCall(_)
             | SessionUpdate::ToolCallUpdate(_) => self.denied = true,
@@ -350,9 +381,58 @@ impl Answer {
         Ok(())
     }
 
+    /// No tool use so far that could have run.
+    fn settled(&self) -> bool {
+        !self.denied && self.announced.is_subset(&self.refused)
+    }
+
+    /// A refused gated call may stay pending or be reported failed; nothing
+    /// that says it ran, or that names an unknown call, is harmless.
+    fn refused_update(&self, update: &agent_client_protocol::schema::v1::ToolCallUpdate) -> bool {
+        use agent_client_protocol::schema::v1::ToolCallStatus;
+        let id = update.tool_call_id.to_string();
+        match update.fields.status {
+            Some(ToolCallStatus::Pending) => {
+                self.announced.contains(&id) || self.refused.contains(&id)
+            }
+            Some(ToolCallStatus::Failed) => self.refused.contains(&id),
+            _ => false,
+        }
+    }
+
+    /// Record an agent → client request, which the caller always refuses. Only
+    /// a gated adapter's permission request for a not-yet-running call of this
+    /// session leaves the turn usable; anything else invalidates it.
+    fn request(&mut self, request: &agent_client_protocol::UntypedMessage) {
+        use agent_client_protocol::schema::v1::{RequestPermissionRequest, ToolCallStatus};
+        if self.full.is_cancelled() {
+            return; // Still refused by the caller; the answer is decided.
+        }
+        let harmless = self.gated_tools
+            && self.session.is_some()
+            && request.method == "session/request_permission"
+            && serde_json::from_value::<RequestPermissionRequest>(request.params.clone())
+                .ok()
+                .filter(|permission| Some(&permission.session_id) == self.session.as_ref())
+                .filter(|permission| {
+                    matches!(
+                        permission.tool_call.fields.status,
+                        None | Some(ToolCallStatus::Pending)
+                    )
+                })
+                .map(|permission| {
+                    self.refused
+                        .insert(permission.tool_call.tool_call_id.to_string());
+                })
+                .is_some();
+        if !harmless {
+            self.denied = true;
+        }
+    }
+
     fn finish(&self, reason: agent_client_protocol::schema::v1::StopReason) -> Result<String> {
         use agent_client_protocol::schema::v1::StopReason;
-        if self.denied {
+        if !self.settled() {
             bail!("ACP adapter requested unsupported capabilities or reported tool use; answer suppressed");
         }
         if !matches!(reason, StopReason::EndTurn | StopReason::MaxTokens) {
@@ -377,6 +457,7 @@ async fn run(
     input: String,
     cancel: tokio_util::sync::CancellationToken,
     output: Option<AnswerStream>,
+    gated_tools: bool,
 ) -> Result<String> {
     use agent_client_protocol::schema::v1::{
         CancelNotification, ClientCapabilities, ContentBlock, Implementation, InitializeRequest,
@@ -438,6 +519,7 @@ async fn run(
     );
     let state = Arc::new(Mutex::new(Answer {
         output,
+        gated_tools,
         ..Answer::default()
     }));
     let notifications = state.clone();
@@ -455,13 +537,7 @@ async fn run(
             notifications.lock().unwrap().update(notification)
         }, agent_client_protocol::on_receive_notification!())
         .on_receive_request(async move |request: UntypedMessage, responder, _cx| {
-            {
-                let mut state = requests.lock().unwrap();
-                // Still refused below; a decided (full) answer is unaffected.
-                if !state.full.is_cancelled() {
-                    state.denied = true;
-                }
-            }
+            requests.lock().unwrap().request(&request);
             if request.method == "session/request_permission" {
                 responder.respond(serde_json::to_value(RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled))?)
             } else {
@@ -766,6 +842,218 @@ mod tests {
         assert!(answer
             .update(notification("wrong", "private-secret".into()))
             .is_err());
+        assert!(answer.finish(StopReason::EndTurn).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refused_gated_tool_calls_do_not_invalidate_the_turn() {
+        use agent_client_protocol::schema::v1::{
+            ContentBlock, ContentChunk, PermissionOption, PermissionOptionKind,
+            RequestPermissionRequest, SessionNotification, SessionUpdate, StopReason, TextContent,
+            ToolCall, ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields,
+        };
+        use agent_client_protocol::UntypedMessage;
+        let note = |session: &str, update: SessionUpdate| {
+            SessionNotification::new(session.to_owned(), update)
+        };
+        let text = |value: &str| {
+            note(
+                "session",
+                SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
+                    TextContent::new(value),
+                ))),
+            )
+        };
+        let call = |id: &str, status: ToolCallStatus| {
+            note(
+                "session",
+                SessionUpdate::ToolCall(ToolCall::new(id.to_owned(), "read").status(status)),
+            )
+        };
+        let call_update = |id: &str, status: Option<ToolCallStatus>| {
+            let mut fields = ToolCallUpdateFields::new();
+            fields.status = status;
+            note(
+                "session",
+                SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(id.to_owned(), fields)),
+            )
+        };
+        let permission = |session: &str, id: &str, status: Option<ToolCallStatus>| {
+            let mut fields = ToolCallUpdateFields::new();
+            fields.status = status;
+            UntypedMessage::new(
+                "session/request_permission",
+                RequestPermissionRequest::new(
+                    session.to_owned(),
+                    ToolCallUpdate::new(id.to_owned(), fields),
+                    vec![PermissionOption::new(
+                        "allow",
+                        "Allow",
+                        PermissionOptionKind::AllowOnce,
+                    )],
+                ),
+            )
+            .unwrap()
+        };
+        let fresh = |gated_tools: bool| Answer {
+            session: Some("session".into()),
+            collecting: true,
+            gated_tools,
+            ..Answer::default()
+        };
+
+        // evot's refusal flow: announced pending, permission refused, reported
+        // failed, then the model answers without it. Two calls, one per id.
+        let mut answer = fresh(true);
+        answer.update(text("Before. ")).unwrap();
+        for id in ["read-1", "read-2"] {
+            answer.update(call(id, ToolCallStatus::Pending)).unwrap();
+            answer.request(&permission("session", id, Some(ToolCallStatus::Pending)));
+            answer
+                .update(call_update(id, Some(ToolCallStatus::Failed)))
+                .unwrap();
+        }
+        answer.update(text("After.")).unwrap();
+        assert_eq!(
+            answer.finish(StopReason::EndTurn).unwrap(),
+            "Before. After."
+        );
+
+        // A permission request without a status is also a not-yet-running call.
+        let mut answer = fresh(true);
+        answer
+            .update(call("read", ToolCallStatus::Pending))
+            .unwrap();
+        answer.request(&permission("session", "read", None));
+        answer.update(text("ok")).unwrap();
+        assert!(answer.finish(StopReason::EndTurn).is_ok());
+
+        // Anything that says a tool ran, or skips the refusal, still invalidates.
+        type Misuse<'a> = Box<dyn Fn(&mut Answer) + 'a>;
+        let invalid: Vec<Misuse<'_>> = vec![
+            // Ran after (despite) the refusal.
+            Box::new(|answer| {
+                answer
+                    .update(call("read", ToolCallStatus::Pending))
+                    .unwrap();
+                answer.request(&permission("session", "read", None));
+                answer
+                    .update(call_update("read", Some(ToolCallStatus::InProgress)))
+                    .unwrap();
+            }),
+            Box::new(|answer| {
+                answer
+                    .update(call("read", ToolCallStatus::Pending))
+                    .unwrap();
+                answer.request(&permission("session", "read", None));
+                answer
+                    .update(call_update("read", Some(ToolCallStatus::Completed)))
+                    .unwrap();
+            }),
+            // Status-less updates may carry output of a running tool.
+            Box::new(|answer| {
+                answer
+                    .update(call("read", ToolCallStatus::Pending))
+                    .unwrap();
+                answer.request(&permission("session", "read", None));
+                answer.update(call_update("read", None)).unwrap();
+            }),
+            // Announced but never asked: it may have run unasked.
+            Box::new(|answer| {
+                answer
+                    .update(call("read", ToolCallStatus::Pending))
+                    .unwrap();
+            }),
+            // Failed without a refusal: it may have run and failed.
+            Box::new(|answer| {
+                answer
+                    .update(call("read", ToolCallStatus::Pending))
+                    .unwrap();
+                answer
+                    .update(call_update("read", Some(ToolCallStatus::Failed)))
+                    .unwrap();
+            }),
+            // Announced as already running or done.
+            Box::new(|answer| {
+                answer
+                    .update(call("read", ToolCallStatus::InProgress))
+                    .unwrap();
+            }),
+            Box::new(|answer| {
+                answer
+                    .update(call("read", ToolCallStatus::Completed))
+                    .unwrap();
+            }),
+            // Updates for a call that was never announced or refused.
+            Box::new(|answer| {
+                answer
+                    .update(call_update("other", Some(ToolCallStatus::Pending)))
+                    .unwrap();
+            }),
+            // Permission asked for a running call, or for another session.
+            Box::new(|answer| {
+                answer
+                    .update(call("read", ToolCallStatus::Pending))
+                    .unwrap();
+                answer.request(&permission(
+                    "session",
+                    "read",
+                    Some(ToolCallStatus::InProgress),
+                ));
+            }),
+            Box::new(|answer| {
+                answer
+                    .update(call("read", ToolCallStatus::Pending))
+                    .unwrap();
+                answer.request(&permission("other", "read", None));
+            }),
+            // Every other client capability.
+            Box::new(|answer| {
+                answer.request(
+                    &UntypedMessage::new("fs/read_text_file", serde_json::json!({})).unwrap(),
+                );
+            }),
+            Box::new(|answer| {
+                answer.request(
+                    &UntypedMessage::new("session/request_permission", serde_json::json!({}))
+                        .unwrap(),
+                );
+            }),
+        ];
+        for (case, misuse) in invalid.iter().enumerate() {
+            let mut answer = fresh(true);
+            misuse(&mut answer);
+            answer.update(text("answer")).unwrap();
+            assert!(answer.finish(StopReason::EndTurn).is_err(), "case {case}");
+        }
+
+        // A full answer stops early only once every announced call is refused.
+        let limit = super::super::memory::MAX_TEXT_BYTES;
+        let mut answer = fresh(true);
+        answer
+            .update(call("read", ToolCallStatus::Pending))
+            .unwrap();
+        answer.update(text(&"x".repeat(limit + 1))).unwrap();
+        assert!(!answer.full.is_cancelled());
+        let mut answer = fresh(true);
+        answer
+            .update(call("read", ToolCallStatus::Pending))
+            .unwrap();
+        answer.request(&permission("session", "read", None));
+        answer.update(text(&"x".repeat(limit + 1))).unwrap();
+        assert!(answer.full.is_cancelled());
+
+        // Generic ACP adapters promise nothing: any tool signal invalidates.
+        let mut answer = fresh(false);
+        answer
+            .update(call("read", ToolCallStatus::Pending))
+            .unwrap();
+        answer.update(text("answer")).unwrap();
+        assert!(answer.finish(StopReason::EndTurn).is_err());
+        let mut answer = fresh(false);
+        answer.request(&permission("session", "read", None));
+        answer.update(text("answer")).unwrap();
         assert!(answer.finish(StopReason::EndTurn).is_err());
     }
 

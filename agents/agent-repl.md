@@ -364,7 +364,16 @@ The adapters use distinct structured-output protocols:
   its limits, capability denial and cancellation. The model is offered evot's
   read-only tools (read/grep/glob/search), but `--permission ask` makes evot send
   `session/request_permission` before executing any call, and BendSQL always
-  answers `cancelled`, so no tool runs and the turn is discarded. `--tools none`
+  answers `cancelled`, so no tool runs. Because that gate is verified (`--permission`
+  in the help probe, fixed argv), a refused call does not taint the turn: a
+  `tool_call` with status `pending`, a permission request for it (status absent
+  or `pending`, this session) and later updates with status `pending`, or
+  `failed` after the refusal, are tolerated, and the model's answer without the
+  tool is kept. Anything else still taints: `in_progress`/`completed` (or a
+  status-less update) for any call, a call announced but never refused, `failed`
+  without a refusal, unknown call IDs, other sessions and every non-permission
+  request. A full answer stops early only when every announced call is refused.
+  Generic `type = "acp"` adapters promise no such gate and keep the strict rule. `--tools none`
   would be stricter, but the evot-pro gateway only serves requests shaped like the
   evot agent and rejects tool-free ones (HTTP 403 `client_not_allowed`); the
   read-only profile is a genuine evot agent session, not a disguise. `--ephemeral`
@@ -568,7 +577,8 @@ For each question it:
 Permission requests always receive the ACP `cancelled` outcome; filesystem,
 terminal, elicitation and extension requests receive `Method not found`. Any such
 request or reported tool use taints the turn: its answer is suppressed and is not
-saved in conversation history. Unexpected session IDs, non-text answer content,
+saved in conversation history (built-in evot's refused, never-run calls are the
+one exception; see Local CLI backends). Unexpected session IDs, non-text answer content,
 malformed frames, errors or unsuccessful completion also fail without fallback.
 Authenticate and configure the adapter outside BendSQL if necessary.
 

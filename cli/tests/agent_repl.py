@@ -1007,15 +1007,22 @@ def exercise_evot_builtin(executable, env, port):
                 before = len(b"".join(terminal.transcript))
                 terminal.send("!ask tool-call")
                 assert b"AI error:" in b"".join(terminal.transcript)[before:]
-                # A permission request (evot asks before every tool call) is
-                # refused, so the tool never runs, and the turn is discarded.
+                # So does a call that runs even though its permission was refused.
                 before = len(b"".join(terminal.transcript))
-                terminal.send("!ask permission")
+                terminal.send("!ask ran-after-refusal")
                 assert b"AI error:" in b"".join(terminal.transcript)[before:]
+                # evot asks before every tool call; the refusal means it never
+                # runs, so the model's answer without it is kept.
+                before = len(b"".join(terminal.transcript))
+                terminal.send("!ask refused-tool")
+                assert b"Answered without the tool." in b"".join(terminal.transcript)[before:], b"".join(terminal.transcript)[before:][-600:]
+                assert b"AI error:" not in b"".join(terminal.transcript)[before:]
                 reply = acp_records(path, "client_reply")[-1]["reply"]
                 assert reply["result"] == {"outcome": {"outcome": "cancelled"}}, reply
                 terminal.send("!ask After tool use")
-                assert len(acp_records(path, "prompt")[-1]["messages"]) == 6, "Tainted turns stay out of history"
+                history = acp_records(path, "prompt")[-1]["messages"]
+                assert len(history) == 8, "Only the refused-tool turn joins history"
+                assert history[-2]["content"] == "Answered without the tool."
                 assert len(MockService.sql_requests) == sql_count
                 terminal.finish()
                 for secret in [b"private-acp-secret", b"private-thinking", b"private-evot-key"]:

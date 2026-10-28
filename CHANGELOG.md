@@ -36,7 +36,10 @@
   Pi. BendSQL starts `evot acp --tools readonly --permission ask --ephemeral` per
   question through its ACP client: evot asks before every tool call and BendSQL
   always refuses, so no tool runs, and evot keeps no session on disk. Answers
-  stream live; a turn where the model tried a tool is discarded. `evot --help`
+  stream live. A tool call evot asked about and BendSQL refused never ran, so the
+  model's answer without it is kept; a tool reported as running or completed (or
+  any call that skipped the permission request) still discards the turn. Generic
+  `type = "acp"` adapters keep the strict rule. `evot --help`
   must advertise `acp`, `--tools`, `--permission`, `--ephemeral` and `--model`;
   older evot releases receive no context.
 - Like other built-ins it accepts `command`, `model` (passed as `--model`),

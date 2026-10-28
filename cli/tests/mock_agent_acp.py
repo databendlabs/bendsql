@@ -43,9 +43,9 @@ def send(value):
     print(json.dumps({"jsonrpc": "2.0", **value}), flush=True)
 
 
-def update(kind, **fields):
+def update(session_update, /, **fields):
     send({"method": "session/update", "params": {
-        "sessionId": SESSION, "update": {"sessionUpdate": kind, **fields},
+        "sessionId": SESSION, "update": {"sessionUpdate": session_update, **fields},
     }})
 
 
@@ -152,6 +152,27 @@ def main():
                 sys.stderr.flush()
             if question == "tool-call":
                 update("tool_call", toolCallId="tool", title="private-acp-secret", kind="execute", status="completed")
+            if question in ["refused-tool", "ran-after-refusal"]:
+                # evot --permission ask: announce pending, ask, then report the
+                # refused call failed (or, for a broken adapter, run it anyway).
+                update("tool_call", toolCallId="read-1", title="private-acp-secret",
+                       status="pending", rawInput={"path": "/private/secret"}, kind="read")
+                send({"id": "server-request", "method": "session/request_permission", "params": {
+                    "sessionId": SESSION,
+                    "toolCall": {"toolCallId": "read-1", "title": "private-acp-secret", "status": "pending"},
+                    "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                                {"optionId": "reject", "name": "Reject", "kind": "reject_once"}],
+                }})
+                receive_reply("server-request")
+                if question == "refused-tool":
+                    update("tool_call_update", toolCallId="read-1", status="failed",
+                           rawOutput={"error": "private-acp-secret denied"})
+                    answer("Answered without the tool.")
+                    result(prompt_id)
+                    continue
+                update("tool_call_update", toolCallId="read-1", status="in_progress")
+                update("tool_call_update", toolCallId="read-1", status="completed",
+                       content=[{"type": "content", "content": {"type": "text", "text": "private-acp-secret"}}])
             if question in ["permission", "read-file", "write-file", "terminal", "extension"]:
                 methods = {"permission": "session/request_permission", "read-file": "fs/read_text_file",
                            "write-file": "fs/write_text_file", "terminal": "terminal/create", "extension": "_private/execute_sql"}
@@ -161,7 +182,7 @@ def main():
                     "options": [{"optionId": "allow", "name": "Approve", "kind": "allow_always"}],
                 }})
                 receive_reply("server-request")
-            if question in ["tool-call", "permission", "read-file", "write-file", "terminal", "extension"]:
+            if question in ["tool-call", "ran-after-refusal", "permission", "read-file", "write-file", "terminal", "extension"]:
                 answer("private-acp-secret after capability denial")
                 # Leave enough time for a live frame if the client incorrectly
                 # continues publishing text after the turn is invalidated.
