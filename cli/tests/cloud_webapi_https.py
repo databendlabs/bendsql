@@ -32,7 +32,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import uuid
 from urllib.parse import urlencode
 
 TOKEN = "fake-cloud-https-secret"
@@ -83,6 +82,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.server.state.emit_session_cookies:
             self.send_header("Set-Cookie", "session_id=mock-sql-session; Path=/; Secure; HttpOnly")
             self.send_header("Set-Cookie", "last_refresh_time=123; Path=/; Secure")
+        if self.server.state.cloud and self.headers.get("X-DATABEND-CLIENT-CAPS") == "session_header":
+            self.send_header("X-DATABEND-SESSION", f"opaque-https-session-{self.server.state.session_version}")
+            self.server.state.session_version += 1
         self.end_headers()
         self.wfile.write(body)
 
@@ -165,6 +167,7 @@ def main():
                 env.update(environment or {})
                 server.records, server.pages, server.cloud, server.tunnels = [], 0, expected_cloud, []
                 server.emit_session_cookies = emit_session_cookies
+                server.session_version = 0
                 result = subprocess.run([binary, "--non-interactive", f"--query={query}", *args],
                                         env=env, capture_output=True, text=True, timeout=15)
                 text = result.stdout + result.stderr
@@ -182,22 +185,18 @@ def main():
                             assert headers.get("x-databendcloud-token") == TOKEN, name
                             assert headers.get("x-databendcloud-org") == "org-example", name
                             assert "authorization" not in headers, name
-                            cookies = dict(part.strip().split("=", 1) for part in headers.get("cookie", "").split(";") if "=" in part)
-                            assert cookies.get("cookie_enabled") == "true", name
-                            assert set(cookies) == {"cookie_enabled", "session_id", "last_refresh_time"}, name
-                            if index > 0 and emit_session_cookies:
-                                assert cookies.get("session_id") == "mock-sql-session", name
-                                assert cookies.get("last_refresh_time") == "123", name
+                            assert "cookie" not in headers, name
+                            assert headers.get("x-databend-client-caps") == "session_header", name
+                            if index == 0:
+                                assert "x-databend-session" not in headers, name
                             else:
-                                uuid.UUID(cookies["session_id"])
-                                assert cookies["last_refresh_time"].isdigit(), name
-                                if index == 0:
-                                    initial_session_id = cookies["session_id"]
-                                else:
-                                    assert cookies["session_id"] == initial_session_id, name
+                                assert headers.get("x-databend-session") == f"opaque-https-session-{index - 1}", name
                         else:
                             assert "x-databendcloud-token" not in headers, name
                             assert headers.get("authorization") == authorization, name
+                            assert "cookie_enabled=true" in headers.get("cookie", ""), name
+                            assert "x-databend-client-caps" not in headers, name
+                            assert "x-databend-session" not in headers, name
                         if path == "/v1/query":
                             assert "string_fields" not in json.loads(body), name
                     if expected_cloud:
@@ -228,7 +227,7 @@ def main():
                 dict(env_credentials, BENDSQL_DSN=endpoint),
                 config="[connection]\nuser='root'\n[connection.args]\naccess_token_file='missing'\n",
                 expected_cloud=True)
-            run("SQL session remains stable when proxy omits Set-Cookie", ["--dsn", cloud],
+            run("session header round-trip does not depend on Set-Cookie", ["--dsn", cloud],
                 expected_cloud=True, emit_session_cookies=False)
             run("China official origin through local HTTPS proxy", ["--dsn", cloud.replace("api.databend.com", "api.databend.cn")], expected_cloud=True)
             run("Cloud transaction statements are not incorrectly warned on", ["--dsn", cloud],

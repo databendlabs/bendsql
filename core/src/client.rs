@@ -16,7 +16,6 @@ use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPair
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
 use crate::cloud_api::{CloudApiAuth, HEADER_CLOUD_WAREHOUSE};
-use crate::cloud_cookie_store::CloudCookieStore;
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
 use crate::global_cookie_store::GlobalCookieStore;
 use crate::login::{
@@ -74,6 +73,8 @@ const TXN_STATE_ACTIVE: &str = "Active";
 const HEADER_SQL: &str = "X-DATABEND-SQL";
 const HEADER_QUERY_CONTEXT: &str = "X-DATABEND-QUERY-CONTEXT";
 const HEADER_SESSION_ID: &str = "X-DATABEND-SESSION-ID";
+const HEADER_CLIENT_CAPS: &str = "X-DATABEND-CLIENT-CAPS";
+const HEADER_SESSION: &str = "X-DATABEND-SESSION";
 const CONTENT_TYPE_ARROW: &str = "application/vnd.apache.arrow.stream";
 const CONTENT_TYPE_ARROW_OR_JSON: &str = "application/vnd.apache.arrow.stream";
 const DEFAULT_USERNAME: &str = "root";
@@ -117,6 +118,9 @@ pub struct APIClient {
 
     auth: Arc<dyn Auth>,
     is_cloud_webapi: bool,
+    // Opaque server-issued state, isolated to this connection. No Cookie fallback.
+    cloud_session_header: Mutex<Option<HeaderValue>>,
+    cloud_session_init: tokio::sync::Mutex<()>,
 
     /// Tenant ID used only in Databend Cloud management mode.
     /// This is NOT for specifying tenant in normal usage.
@@ -528,9 +532,7 @@ impl APIClient {
             }
         }
         if self.is_cloud_webapi {
-            cli_builder = cli_builder
-                .redirect(reqwest::redirect::Policy::none())
-                .cookie_provider(Arc::new(CloudCookieStore::new(self.endpoint.clone())));
+            cli_builder = cli_builder.redirect(reqwest::redirect::Policy::none());
         } else {
             let cookie_provider = GlobalCookieStore::new();
             let cookie = HeaderValue::from_static("cookie_enabled=true");
@@ -1389,6 +1391,49 @@ impl APIClient {
         None
     }
 
+    fn apply_cloud_session_headers(&self, request: &mut Request) -> Result<()> {
+        if self.is_cloud_webapi {
+            if request.url().origin() != self.endpoint.origin() {
+                return Err(Error::BadArgument(
+                    "refusing to send Cloud session state to another origin".into(),
+                ));
+            }
+            request.headers_mut().remove(reqwest::header::COOKIE);
+            request.headers_mut().insert(
+                HEADER_CLIENT_CAPS,
+                HeaderValue::from_static("session_header"),
+            );
+            request.headers_mut().remove(HEADER_SESSION);
+            if let Some(header) = self.cloud_session_header.lock().as_ref() {
+                request.headers_mut().insert(HEADER_SESSION, header.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn update_cloud_session_header(&self, headers: &HeaderMap) -> Result<()> {
+        if self.is_cloud_webapi {
+            let mut values = headers.get_all(HEADER_SESSION).iter();
+            if let Some(header) = values.next() {
+                // Keep future encodings opaque, but bound connection state and
+                // reject ambiguous/invalid headers without echoing their value.
+                if header.is_empty()
+                    || header.as_bytes().len() > 8192
+                    || header.to_str().is_err()
+                    || values.next().is_some()
+                {
+                    return Err(Error::Decode(
+                        "invalid Cloud session response header".into(),
+                    ));
+                }
+                let mut header = header.clone();
+                header.set_sensitive(true);
+                *self.cloud_session_header.lock() = Some(header);
+            }
+        }
+        Ok(())
+    }
+
     /// Send request with retry and return raw HTTP status/headers/body.
     ///
     /// retry on
@@ -1404,6 +1449,19 @@ impl APIClient {
         reload_auth_if_401: bool,
         request_kind: RequestKind,
     ) -> Result<HttpResponseData> {
+        // Only serialize requests until one server-issued session is known.
+        // Concurrent first queries must not bootstrap different SQL sessions.
+        let needs_session = self.is_cloud_webapi && self.cloud_session_header.lock().is_none();
+        let _session_init = if needs_session {
+            let guard = self.cloud_session_init.lock().await;
+            if self.cloud_session_header.lock().is_none() {
+                Some(guard)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let mut refreshed = false;
         let mut retries = 0;
         // Only query submission can have ambiguous SQL side effects. Connect
@@ -1414,6 +1472,9 @@ impl APIClient {
         let retry_delay = Duration::from_secs(self.retry_delay_secs);
 
         loop {
+            // Refresh before each attempt: a page/final retry may follow a
+            // session refresh header received even when its body read failed.
+            self.apply_cloud_session_headers(&mut request)?;
             let req = request.try_clone().expect("request not cloneable");
             let response = match self.cli.execute(req).await {
                 Ok(response) => response,
@@ -1453,6 +1514,8 @@ impl APIClient {
 
             let status = response.status();
             let headers = response.headers().clone();
+            self.update_cloud_session_header(&headers)
+                .map_err(|error| error.with_context(request_kind.clone()))?;
             let body = match response.bytes().await {
                 Ok(body) => body,
                 Err(err) => {
@@ -1651,6 +1714,8 @@ impl Default for APIClient {
             warehouse: Mutex::new(None),
             auth: Arc::new(BasicAuth::new(DEFAULT_USERNAME, "")) as Arc<dyn Auth>,
             is_cloud_webapi: false,
+            cloud_session_header: Mutex::new(None),
+            cloud_session_init: tokio::sync::Mutex::new(()),
             session_state: Mutex::new(SessionState::default()),
             wait_time_secs: None,
             max_rows_in_buffer: None,

@@ -85,12 +85,13 @@ are rejected rather than forwarding credentials.
 ## Compatibility and limitations
 
 - Cloud requests use `X-DatabendCloud-Token`, `X-DatabendCloud-Org` and optional
-  `X-DatabendCloud-Warehouse`. No Basic/Bearer credentials or browser login
-  cookies are sent. Each connection has its own exact-origin SQL Cookie store:
-  `cookie_enabled=true`, `session_id` and `last_refresh_time` only. Cookie expiry
-  and deletion are honored; other domains, ports, protocols and connections do
-  not share this state. API Token authentication remains required on every
-  request; SQL cookies never replace it.
+  `X-DatabendCloud-Warehouse`. SQL session state uses
+  `X-DATABEND-CLIENT-CAPS: session_header` and the server's `X-DATABEND-SESSION`
+  response header. The latest value is kept opaque and echoed on subsequent
+  requests to the same origin, including safe retries. Each connection starts
+  without a session header; no local session ID or Cookie is pre-generated.
+  No Cookie or Basic/Bearer credentials are sent. API Token authentication is
+  required on every request; the session header never replaces it.
 - Login 404 is compatible with servers without `/v1/session/login`;
   `login=disable` skips that probe. Other login/auth failures are returned.
 - SQL uses `POST /v1/query`, GET polling/page/final, and POST kill. Results use
@@ -102,16 +103,18 @@ are rejected rather than forwarding credentials.
 - Transactions use the returned session state and sticky-node routing.
   `BEGIN`, `COMMIT` and `ROLLBACK` operate across requests on one connection;
   transaction-control statements are not blocked or warned on.
-- SQL session cookies are enabled for temporary-table workloads on one connection.
+- Temporary tables use the server-issued session header on one connection.
   Do not expect temporary tables to be visible from another connection, even
   when the account, organization and Warehouse are identical.
-- SQL session heartbeat/refresh/logout are not implemented in Cloud mode. The
-  transaction check does not establish long-idle session or failover guarantees.
+- The backend must support `session_header`; there is no Cookie fallback.
+  Refreshed response headers are saved automatically. Session-token refresh,
+  background heartbeat and logout APIs are not used in Cloud mode; long-idle
+  session and failover behavior are not guaranteed.
 - FlightSQL, bound parameters, stage attachments, Arrow, pagination tuning,
   stage upload and streaming load are unsupported. Presign probing is disabled.
 - `--ui` is rejected: its web Python runner could expose the personal token.
 - Worksheet query history, result retention and other server side effects apply.
 
-Token headers are marked sensitive; argv/DSN/Debug and AI-active logs are masked.
+Token and session headers are marked sensitive; argv/DSN/Debug and AI-active logs are masked.
 Raw and JSON-escaped token echoes in errors are redacted; SQL result data is not
 rewritten. These protections do not make it safe to share the token or a full DSN.

@@ -28,11 +28,10 @@ struct MockRequest {
     body: Vec<u8>,
 }
 
-fn sql_session_cookie(request: &MockRequest) -> &str {
-    request.headers["cookie"]
-        .split(';')
-        .find_map(|part| part.trim().strip_prefix("session_id="))
-        .unwrap()
+fn assert_cloud_session_transport(request: &MockRequest) {
+    assert_eq!(request.headers["x-databend-client-caps"], "session_header");
+    assert!(!request.headers.contains_key("cookie"));
+    assert!(!request.headers.contains_key("authorization"));
 }
 
 struct MockReply {
@@ -360,15 +359,14 @@ async fn cloud_completed_queries_release_tracking_without_heartbeat() {
 }
 
 #[tokio::test]
-async fn cloud_transactions_preserve_session_and_sticky_routing_with_scoped_cookies() {
+async fn cloud_transactions_preserve_session_and_sticky_routing_with_session_headers() {
     let server = MockServer::new(|request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
         let sql = body["sql"].as_str().unwrap();
         let mut reply = query_reply();
         reply["next_uri"] = Value::Null;
         reply["node_id"] = json!("transaction-node");
-        assert!(request.headers["cookie"].contains("cookie_enabled=true"));
-        assert!(uuid::Uuid::parse_str(sql_session_cookie(request)).is_ok());
+        assert_cloud_session_transport(request);
         assert!(body.get("string_fields").is_none());
         if sql == "BEGIN" {
             reply["session"] =
@@ -387,7 +385,11 @@ async fn cloud_transactions_preserve_session_and_sticky_routing_with_scoped_cook
                     json!({"database":"default", "txn_state":"AutoCommit", "need_sticky":false});
             }
         }
-        MockReply::json(reply)
+        let mut reply = MockReply::json(reply);
+        reply
+            .headers
+            .push((HEADER_SESSION, "opaque-transaction-session".into()));
+        reply
     })
     .await;
     let client = Arc::new(client(&server).await);
@@ -401,9 +403,11 @@ async fn cloud_transactions_preserve_session_and_sticky_routing_with_scoped_cook
     }
     let requests = server.requests.lock();
     assert_eq!(requests.len(), 6);
+    assert!(!requests[0].headers.contains_key("x-databend-session"));
     assert!(requests
         .iter()
-        .all(|request| sql_session_cookie(request) == sql_session_cookie(&requests[0])));
+        .skip(1)
+        .all(|request| request.headers["x-databend-session"] == "opaque-transaction-session"));
 }
 
 #[tokio::test]
@@ -595,8 +599,10 @@ async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
 
 #[tokio::test]
 async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
-    let server = MockServer::new(|request| {
-        if request.path.starts_with("/v1/session/login") {
+    let responses = Arc::new(AtomicUsize::new(0));
+    let count = responses.clone();
+    let server = MockServer::new(move |request| {
+        let mut reply = if request.path.starts_with("/v1/session/login") {
             let mut reply = MockReply::error(404);
             reply
                 .headers
@@ -610,7 +616,12 @@ async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
             reply
         } else {
             MockReply::json(query_reply())
-        }
+        };
+        reply.headers.push((
+            HEADER_SESSION,
+            format!("opaque-session-{}", count.fetch_add(1, Ordering::SeqCst)),
+        ));
+        reply
     })
     .await;
     let mut client = client(&server).await;
@@ -637,11 +648,15 @@ async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
         assert_eq!(request.headers["x-databendcloud-org"], ORG);
         assert_eq!(request.headers["x-databendcloud-warehouse"], "wh");
         assert!(!request.headers.contains_key("authorization"));
-        let cookies = &request.headers["cookie"];
-        assert!(cookies.contains("cookie_enabled=true"));
-        assert!(!cookies.contains("console-cookie"));
-        assert_eq!(cookies.contains("session_id=sql-session"), index > 0);
-        assert_eq!(cookies.contains("last_refresh_time=123"), index > 0);
+        assert_cloud_session_transport(request);
+        if index == 0 {
+            assert!(!request.headers.contains_key("x-databend-session"));
+        } else {
+            assert_eq!(
+                request.headers["x-databend-session"],
+                format!("opaque-session-{}", index - 1)
+            );
+        }
         assert!(!request.headers.contains_key("x-databend-warehouse"));
     }
     assert_eq!(requests[1].method, "POST");
@@ -721,12 +736,15 @@ async fn cloud_unsupported_payloads_fail_before_network_requests() {
 }
 
 #[tokio::test]
-async fn cloud_sql_cookie_state_is_not_shared_by_clients_with_the_same_origin() {
+async fn cloud_session_headers_are_not_shared_by_clients_with_the_same_origin() {
     let server = MockServer::new(|_| {
         let mut reply = MockReply::json(query_reply());
         reply
             .headers
-            .push(("Set-Cookie", "session_id=first-client; Path=/".into()));
+            .push((HEADER_SESSION, "first-client-session".into()));
+        reply
+            .headers
+            .push(("Set-Cookie", "session_id=not-used; Path=/".into()));
         reply
     })
     .await;
@@ -745,13 +763,144 @@ async fn cloud_sql_cookie_state_is_not_shared_by_clients_with_the_same_origin() 
         .await
         .unwrap();
     let requests = server.requests.lock();
-    assert!(uuid::Uuid::parse_str(sql_session_cookie(&requests[0])).is_ok());
-    assert_eq!(sql_session_cookie(&requests[1]), "first-client");
-    assert!(uuid::Uuid::parse_str(sql_session_cookie(&requests[2])).is_ok());
-    assert_ne!(
-        sql_session_cookie(&requests[0]),
-        sql_session_cookie(&requests[2])
+    assert!(!requests[0].headers.contains_key("x-databend-session"));
+    assert_eq!(
+        requests[1].headers["x-databend-session"],
+        "first-client-session"
     );
+    assert!(!requests[2].headers.contains_key("x-databend-session"));
+    for request in requests.iter() {
+        assert_cloud_session_transport(request);
+    }
+}
+
+#[tokio::test]
+async fn cloud_concurrent_first_queries_share_one_server_issued_session() {
+    let server = MockServer::new(|_| {
+        let mut reply = MockReply::json(query_reply());
+        reply
+            .headers
+            .push((HEADER_SESSION, "shared-bootstrap-session".into()));
+        reply.headers.push(("X-Mock-Delay", "25".into()));
+        reply
+    })
+    .await;
+    let client = Arc::new(client(&server).await);
+    let (first, second) = tokio::join!(
+        client.start_query_inner("SELECT 1", None, false, None),
+        client.start_query_inner("SELECT 2", None, false, None),
+    );
+    first.unwrap();
+    second.unwrap();
+    let requests = server.requests.lock();
+    assert_eq!(requests.len(), 2);
+    assert!(!requests[0].headers.contains_key("x-databend-session"));
+    assert_eq!(
+        requests[1].headers["x-databend-session"],
+        "shared-bootstrap-session"
+    );
+    for request in requests.iter() {
+        assert_cloud_session_transport(request);
+    }
+}
+
+#[tokio::test]
+async fn cloud_session_header_is_opaque_sensitive_and_origin_scoped() {
+    let server = MockServer::new(|_| MockReply::json(query_reply())).await;
+    let client = client(&server).await;
+    let mut request = client
+        .cli
+        .get(server.url.clone())
+        .header(reqwest::header::COOKIE, "browser=not-allowed")
+        .header(HEADER_SESSION, "caller-supplied-session")
+        .build()
+        .unwrap();
+    client.apply_cloud_session_headers(&mut request).unwrap();
+    assert!(!request.headers().contains_key(HEADER_SESSION));
+    assert!(!request.headers().contains_key(reqwest::header::COOKIE));
+    assert_eq!(request.headers()[HEADER_CLIENT_CAPS], "session_header");
+
+    // Echo unknown/future fields byte-for-byte; do not decode or synthesize IDs.
+    let opaque = r#"{"id":"server-session-id", "last_refresh_time":7, "future":"value"}"#;
+    let mut headers = HeaderMap::new();
+    headers.insert(HEADER_SESSION, HeaderValue::from_str(opaque).unwrap());
+    client.update_cloud_session_header(&headers).unwrap();
+    client
+        .update_cloud_session_header(&HeaderMap::new())
+        .unwrap();
+    client.apply_cloud_session_headers(&mut request).unwrap();
+    assert_eq!(request.headers()[HEADER_SESSION], opaque);
+    assert!(request.headers()[HEADER_SESSION].is_sensitive());
+    assert!(!format!("{request:?}").contains("server-session-id"));
+    let mut foreign = client
+        .cli
+        .get("http://other.invalid/v1/query")
+        .build()
+        .unwrap();
+    assert!(client.apply_cloud_session_headers(&mut foreign).is_err());
+    assert!(!foreign.headers().contains_key(HEADER_SESSION));
+    assert!(server.requests.lock().is_empty());
+}
+
+#[tokio::test]
+async fn cloud_rejects_invalid_response_session_headers_without_overwriting_state() {
+    let server = MockServer::new(|_| MockReply::json(query_reply())).await;
+    let client = client(&server).await;
+    let mut valid = HeaderMap::new();
+    valid.insert(HEADER_SESSION, HeaderValue::from_static("known-session"));
+    client.update_cloud_session_header(&valid).unwrap();
+    for value in [
+        HeaderValue::from_static(""),
+        HeaderValue::from_str(&"x".repeat(8193)).unwrap(),
+        HeaderValue::from_bytes(b"\x80").unwrap(),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.insert(HEADER_SESSION, value);
+        let error = client.update_cloud_session_header(&headers).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "DecodeError: invalid Cloud session response header"
+        );
+        assert_eq!(
+            client.cloud_session_header.lock().as_ref().unwrap(),
+            "known-session"
+        );
+    }
+    valid.append(
+        HEADER_SESSION,
+        HeaderValue::from_static("ambiguous-session"),
+    );
+    assert!(client.update_cloud_session_header(&valid).is_err());
+}
+
+#[tokio::test]
+async fn native_cookie_behavior_does_not_adopt_cloud_session_headers() {
+    let server = MockServer::new(|request| {
+        assert_eq!(request.headers["authorization"], "Basic cm9vdDo=");
+        assert!(request.headers["cookie"].contains("cookie_enabled=true"));
+        assert!(!request.headers.contains_key("x-databend-client-caps"));
+        assert!(!request.headers.contains_key("x-databend-session"));
+        let mut reply = MockReply::json(query_reply());
+        reply
+            .headers
+            .push((HEADER_SESSION, "not-for-native".into()));
+        reply
+    })
+    .await;
+    let mut client = client(&server).await;
+    client.is_cloud_webapi = false;
+    client.auth = Arc::new(BasicAuth::new("root", ""));
+    client.build_client(None).await.unwrap();
+    client
+        .start_query_inner("SELECT 1", None, false, None)
+        .await
+        .unwrap();
+    client
+        .query_page("q1", "/v1/query/q1/page/0", &None)
+        .await
+        .unwrap();
+    assert!(client.cloud_session_header.lock().is_none());
+    assert_eq!(server.requests.lock().len(), 2);
 }
 
 #[tokio::test]
@@ -828,14 +977,24 @@ async fn cloud_safe_requests_retry_503() {
         let calls = Arc::new(AtomicUsize::new(0));
         let seen = calls.clone();
         let server = MockServer::new(move |request| {
-            if seen.fetch_add(1, Ordering::SeqCst) == 0 {
-                return MockReply::error(503);
+            assert_cloud_session_transport(request);
+            let attempt = seen.fetch_add(1, Ordering::SeqCst);
+            if attempt == 0 {
+                assert!(!request.headers.contains_key("x-databend-session"));
+            } else {
+                assert_eq!(request.headers["x-databend-session"], "retry-session-0");
             }
-            if request.path.starts_with("/v1/session/login") {
+            let mut reply = if attempt == 0 {
+                MockReply::error(503)
+            } else if request.path.starts_with("/v1/session/login") {
                 MockReply::json(json!({"version":"1.2.952"}))
             } else {
                 MockReply::json(query_reply())
-            }
+            };
+            reply
+                .headers
+                .push((HEADER_SESSION, format!("retry-session-{attempt}")));
+            reply
         })
         .await;
         let mut client = client(&server).await;
@@ -860,9 +1019,19 @@ async fn cloud_page_retries_timeout_and_truncated_body_but_submission_does_not()
         for submission in [false, true] {
             let calls = Arc::new(AtomicUsize::new(0));
             let seen = calls.clone();
-            let server = MockServer::new(move |_| {
+            let server = MockServer::new(move |request| {
+                assert_cloud_session_transport(request);
+                let attempt = seen.fetch_add(1, Ordering::SeqCst);
+                if attempt > 0 && fault == "X-Mock-Truncate" {
+                    assert_eq!(request.headers["x-databend-session"], "read-session-0");
+                } else {
+                    assert!(!request.headers.contains_key("x-databend-session"));
+                }
                 let mut reply = MockReply::json(query_reply());
-                if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                reply
+                    .headers
+                    .push((HEADER_SESSION, format!("read-session-{attempt}")));
+                if attempt == 0 {
                     reply.headers.push((fault, "200".into()));
                 }
                 reply
@@ -890,10 +1059,11 @@ async fn cloud_page_retries_timeout_and_truncated_body_but_submission_does_not()
 #[tokio::test]
 async fn cloud_submission_retries_connect_errors_before_sending_bytes() {
     let server = MockServer::new(|_| MockReply::json(query_reply())).await;
-    let client = client(&server).await;
+    let mut client = client(&server).await;
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     drop(listener);
+    client.endpoint = Url::parse(&format!("http://{addr}/")).unwrap();
     let request = client
         .cli
         .post(format!("http://{addr}/v1/query"))

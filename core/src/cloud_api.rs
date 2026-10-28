@@ -99,7 +99,7 @@ impl Auth for CloudApiAuth {
             ));
         }
         request.headers_mut().remove(AUTHORIZATION);
-        // Let only the scoped CookieStore attach SQL session cookies at send.
+        // Cloud SQL session state uses headers, never browser/SQL cookies.
         request.headers_mut().remove(COOKIE);
         request
             .headers_mut()

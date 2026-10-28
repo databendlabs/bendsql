@@ -8,9 +8,10 @@ loopback CONNECT proxy. The CLI still uses the official API hostname/443 and
 production origin checks; the proxy never forwards traffic. Temporary test
 certificates cover the official hostnames and are trusted only by the child CLI
 via `tls_ca_file`, without modifying DNS/hosts or the system trust store. Tests
-cover certificate verification, query/page/final routing, retries, SQL Cookie
-allowlisting/connection isolation, and private-auth isolation. An omitted SQL
-Set-Cookie response also verifies the client-generated session stays stable.
+cover certificate verification, query/page/final routing, retries, opaque session
+header rotation and private-auth isolation. Cloud requests always declare
+`session_header`, start without a session ID, echo the latest response header,
+and never send Cookies even if the mock sends `Set-Cookie`.
 `test_cloud_webapi_e2e.py` tests the live harness with mocked subprocess results. These tests run on PRs without production credentials or Docker:
 
 ```bash
@@ -76,7 +77,7 @@ The suite uses bounded queries and one randomly named temporary table:
   connection, without transaction warnings. The optional login probe is disabled
   because this suite targets the query API, not a future WebAPI login endpoint.
 - Create, insert, read and drop one temporary table across requests, proving
-  SQL session Cookie continuity without creating persistent objects.
+  SQL session header continuity without creating persistent objects.
 - Propagation of an intentional unknown-column SQL error.
 
 Each CLI invocation has a 90-second deadline. No persistent tables, grants or
