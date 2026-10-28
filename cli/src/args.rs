@@ -115,7 +115,7 @@ impl ConnectionArgs {
         if implicit_host && self.host == "localhost" {
             self.host = DEFAULT_CLOUD_WEBAPI_HOST.into();
         }
-        if implicit_port && matches!(self.port, None | Some(8000)) {
+        if implicit_port {
             self.port = Some(443);
         }
         if implicit_tls {
