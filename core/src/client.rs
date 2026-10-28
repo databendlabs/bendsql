@@ -1613,10 +1613,6 @@ impl APIClient {
         }
     }
 
-    pub(crate) fn unregister_query_for_heartbeat(&self, query_id: &str) {
-        self.queries_need_heartbeat.lock().remove(query_id);
-    }
-
     pub(crate) fn register_query_for_heartbeat(&self, query_id: &str, state: QueryState) {
         let mut queries = self.queries_need_heartbeat.lock();
         queries.insert(query_id.to_string(), state);

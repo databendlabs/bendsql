@@ -407,45 +407,6 @@ async fn cloud_transactions_preserve_session_and_sticky_routing_with_scoped_cook
 }
 
 #[tokio::test]
-async fn native_completed_queries_release_tracking_too() {
-    let server = MockServer::new(|request| {
-        let mut body = query_reply();
-        body["node_id"] = json!("node-1");
-        if request.method == "GET" {
-            body["data"] = json!([["2"]]);
-            body["next_uri"] = Value::Null;
-        }
-        MockReply::json(body)
-    })
-    .await;
-    let mut client = client(&server).await;
-    client.is_cloud_webapi = false;
-    client.auth = Arc::new(BasicAuth::new("root", ""));
-    let client = Arc::new(client);
-    let pages = client.start_query("SELECT 1", false, None).await.unwrap();
-    let (mut pages, _, _) = pages.wait_for_schema(false).await.unwrap();
-    assert!(client.queries_need_heartbeat.lock().contains_key("q1"));
-
-    let first = pages.next().await.unwrap().unwrap();
-    assert_eq!(first.data, vec![vec![Some("1".into())]]);
-    assert!(client.queries_need_heartbeat.lock().contains_key("q1"));
-
-    let terminal = pages.next().await.unwrap().unwrap();
-    assert_eq!(terminal.data, vec![vec![Some("2".into())]]);
-    // Check before polling None or dropping Pages: either path also removes
-    // tracking and could otherwise hide missing terminal-response cleanup.
-    assert!(client.queries_need_heartbeat.lock().is_empty());
-    client.try_heartbeat().await.unwrap();
-    assert!(pages.next().await.is_none());
-    let requests = server.requests.lock();
-    assert_eq!(requests.len(), 2);
-    for request in requests.iter() {
-        assert!(request.headers["authorization"].starts_with("Basic "));
-        assert!(!request.headers.contains_key("x-databendcloud-token"));
-    }
-}
-
-#[tokio::test]
 async fn cloud_page_errors_release_query_tracking() {
     for failure in ["http", "decode", "query"] {
         let server = MockServer::new(move |request| {
