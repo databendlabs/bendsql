@@ -139,7 +139,7 @@ impl Pages {
 
                 self.add_back(page);
                 let last_access_time = self.last_access_time.clone();
-                if let Some(node_id) = &self.node_id {
+                if let (Some(node_id), Some(_)) = (&self.node_id, &self.next_uri) {
                     let state = QueryState {
                         node_id: node_id.to_string(),
                         last_access_time,
@@ -179,6 +179,9 @@ impl Stream for Pages {
                 Poll::Ready(Ok((resp, batches))) => {
                     self.next_uri = resp.next_uri.clone();
                     self.next_page_future = None;
+                    if self.next_uri.is_none() {
+                        self.client.unregister_query_for_heartbeat(&self.query_id);
+                    }
                     if resp.data.is_empty() && !self.need_progress {
                         self.poll_next(cx)
                     } else {
@@ -190,6 +193,7 @@ impl Stream for Pages {
                 Poll::Ready(Err(e)) => {
                     self.next_page_future = None;
                     self.next_uri = None;
+                    self.client.unregister_query_for_heartbeat(&self.query_id);
                     Poll::Ready(Some(Err(e)))
                 }
                 Poll::Pending => Poll::Pending,
@@ -219,6 +223,7 @@ impl Drop for Pages {
                 self.client.finalize_query(&self.query_id)
             }
         }
+        self.client.unregister_query_for_heartbeat(&self.query_id);
     }
 }
 

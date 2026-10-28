@@ -1451,7 +1451,14 @@ impl APIClient {
         let mut queries = self.queries_need_heartbeat.lock();
         queries.insert(query_id.to_string(), state);
     }
+
+    pub(crate) fn unregister_query_for_heartbeat(&self, query_id: &str) {
+        self.queries_need_heartbeat.lock().remove(query_id);
+    }
 }
+
+#[cfg(test)]
+mod tracking_tests;
 
 fn json_from_slice<'a, T>(body: &'a [u8]) -> Result<T>
 where
