@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
-use databend_client::SensitiveString;
+use databend_client::{is_cloud_webapi_host, SensitiveString, DEFAULT_CLOUD_WEBAPI_HOST};
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 
 #[cfg(test)]
@@ -65,11 +65,6 @@ impl std::fmt::Debug for ConnectionArgs {
 }
 
 impl ConnectionArgs {
-    pub fn is_cloud_webapi_host(host: &str) -> bool {
-        host.eq_ignore_ascii_case("api.databend.com")
-            || host.eq_ignore_ascii_case("api.databend.cn")
-    }
-
     pub fn is_native_auth_option(key: &str) -> bool {
         matches!(
             key,
@@ -118,7 +113,7 @@ impl ConnectionArgs {
             return;
         }
         if implicit_host && self.host == "localhost" {
-            self.host = "api.databend.com".into();
+            self.host = DEFAULT_CLOUD_WEBAPI_HOST.into();
         }
         if implicit_port && matches!(self.port, None | Some(8000)) {
             self.port = Some(443);
@@ -217,8 +212,7 @@ impl ConnectionArgs {
         let port = u.port();
         let user = u.username().to_string();
         let password = u.password().unwrap_or_default();
-        let password = if args.contains_key("cloud_api_token") || Self::is_cloud_webapi_host(&host)
-        {
+        let password = if args.contains_key("cloud_api_token") || is_cloud_webapi_host(&host) {
             String::new()
         } else {
             percent_decode_str(password).decode_utf8()?.to_string()

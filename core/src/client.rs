@@ -15,7 +15,9 @@
 use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth};
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
-use crate::cloud_api::{CloudApiAuth, HEADER_CLOUD_WAREHOUSE};
+use crate::cloud_api::{
+    is_cloud_webapi_host, CloudApiAuth, DEFAULT_CLOUD_WEBAPI_HOST, HEADER_CLOUD_WAREHOUSE,
+};
 use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
 use crate::global_cookie_store::GlobalCookieStore;
 use crate::login::{
@@ -308,12 +310,7 @@ impl APIClient {
                     .into(),
             ));
         }
-        if cloud_token.is_none()
-            && u.host_str().is_some_and(|host| {
-                host.eq_ignore_ascii_case("api.databend.com")
-                    || host.eq_ignore_ascii_case("api.databend.cn")
-            })
-        {
+        if cloud_token.is_none() && u.host_str().is_some_and(is_cloud_webapi_host) {
             return Err(Error::BadArgument("Cloud WebAPI endpoint requires cloud_api_token; SQL username/password are not account authentication".into()));
         }
         if cloud_token.is_none() && org_slug.is_some() {
@@ -322,7 +319,7 @@ impl APIClient {
             ));
         }
         if cloud_token.is_some() && u.host_str().is_none() {
-            client.host = "api.databend.com".into();
+            client.host = DEFAULT_CLOUD_WEBAPI_HOST.into();
         }
         let username = u.username().to_string();
         if cloud_token.is_none() && !username.is_empty() {

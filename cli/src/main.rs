@@ -32,7 +32,7 @@ use std::io::{stdin, IsTerminal};
 
 use anyhow::{anyhow, Context, Result};
 use clap::{parser::ValueSource, ArgAction, CommandFactory, FromArgMatches, Parser};
-use databend_client::SensitiveString;
+use databend_client::{is_cloud_webapi_host, SensitiveString};
 use log::info;
 use once_cell::sync::Lazy;
 
@@ -234,10 +234,7 @@ impl Args {
             .dsn
             .as_ref()
             .and_then(|dsn| url::Url::parse(dsn.inner()).ok())
-            .is_some_and(|dsn| {
-                dsn.host_str()
-                    .is_some_and(ConnectionArgs::is_cloud_webapi_host)
-            });
+            .is_some_and(|dsn| dsn.host_str().is_some_and(is_cloud_webapi_host));
         if self.org.is_none() && !cloud_dsn {
             return Ok(false);
         }

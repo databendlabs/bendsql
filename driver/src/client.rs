@@ -28,7 +28,7 @@ use crate::placeholder::PlaceholderVisitor;
 use crate::ConnectionInfo;
 use crate::Params;
 
-use databend_client::PresignedResponse;
+use databend_client::{is_cloud_webapi_host, PresignedResponse};
 use databend_common_ast::ast::Statement;
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::raw_rows::{RawRow, RawRowIterator};
@@ -104,10 +104,7 @@ impl Client {
         let u = Url::parse(&self.dsn)?;
         if matches!(u.scheme(), "databend+flight" | "databend+grpc")
             && (u.query_pairs().any(|(key, _)| key == "cloud_api_token")
-                || u.host_str().is_some_and(|host| {
-                    host.eq_ignore_ascii_case("api.databend.com")
-                        || host.eq_ignore_ascii_case("api.databend.cn")
-                }))
+                || u.host_str().is_some_and(is_cloud_webapi_host))
         {
             return Err(Error::BadArgument(
                 "cloud_api_token authentication is not supported with FlightSQL".into(),

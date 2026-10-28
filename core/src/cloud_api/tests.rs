@@ -15,6 +15,33 @@
 use super::*;
 
 #[test]
+fn official_hosts_are_exact_and_case_insensitive() {
+    assert!(is_cloud_webapi_host(DEFAULT_CLOUD_WEBAPI_HOST));
+    for host in [
+        "api.databend.com",
+        "api.databend.cn",
+        "API.DATABEND.COM",
+        "Api.Databend.Cn",
+    ] {
+        assert!(is_cloud_webapi_host(host), "{host}");
+    }
+    for host in [
+        "",
+        "localhost",
+        "databend.com",
+        "tenant.gw.databend.com",
+        "api.databend.com.evil.example",
+        "evil-api.databend.cn",
+        "api.databend.com.",
+        " api.databend.com",
+        "https://api.databend.com",
+        "api.databend.com:443",
+    ] {
+        assert!(!is_cloud_webapi_host(host), "{host}");
+    }
+}
+
+#[test]
 fn official_origins_are_exact_and_https_only() {
     let endpoint = Url::parse("https://api.databend.com").unwrap();
     let auth =

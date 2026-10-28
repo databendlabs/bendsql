@@ -21,6 +21,21 @@ use url::Url;
 #[cfg(test)]
 mod tests;
 
+/// Default host for Cloud WebAPI API-token connections.
+pub const DEFAULT_CLOUD_WEBAPI_HOST: &str = "api.databend.com";
+
+const CLOUD_WEBAPI_HOSTS: [&str; 2] = [DEFAULT_CLOUD_WEBAPI_HOST, "api.databend.cn"];
+
+/// Recognize an official Cloud WebAPI hostname (ASCII case-insensitive).
+///
+/// This only selects the authentication mode. It does not validate the URL's
+/// scheme or port, or authorize forwarding credentials to another origin.
+pub fn is_cloud_webapi_host(host: &str) -> bool {
+    CLOUD_WEBAPI_HOSTS
+        .iter()
+        .any(|official| host.eq_ignore_ascii_case(official))
+}
+
 pub(crate) const HEADER_CLOUD_TOKEN: &str = "X-DATABENDCLOUD-TOKEN";
 pub(crate) const HEADER_CLOUD_ORG: &str = "X-DATABENDCLOUD-ORG";
 pub(crate) const HEADER_CLOUD_WAREHOUSE: &str = "X-DATABENDCLOUD-WAREHOUSE";
@@ -35,17 +50,19 @@ pub(crate) struct CloudApiAuth {
 impl CloudApiAuth {
     pub(crate) fn new(endpoint: Url, token: String, org: String) -> Result<Self> {
         let official = endpoint.port_or_known_default() == Some(443)
-            && matches!(
-                endpoint.host_str(),
-                Some("api.databend.com" | "api.databend.cn")
-            );
+            && endpoint.host_str().is_some_and(is_cloud_webapi_host);
         if endpoint.scheme() != "https" {
             return Err(Error::BadArgument(
                 "cloud_api_token requires HTTPS; sslmode=disable is not supported".into(),
             ));
         }
         if !official {
-            return Err(Error::BadArgument("cloud_api_token requires https://api.databend.com or https://api.databend.cn, not a Gateway or private server".into()));
+            let origins = CLOUD_WEBAPI_HOSTS
+                .map(|host| format!("https://{host}"))
+                .join(" or ");
+            return Err(Error::BadArgument(format!(
+                "cloud_api_token requires {origins}, not a Gateway or private server"
+            )));
         }
         Self::with_endpoint(endpoint, token, org)
     }
