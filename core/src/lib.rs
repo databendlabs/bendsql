@@ -36,6 +36,7 @@ mod settings;
 
 pub use auth::SensitiveString;
 pub use client::APIClient;
+#[doc(hidden)]
 pub use cloud_api::{is_cloud_webapi_host, DEFAULT_CLOUD_WEBAPI_HOST};
 pub use error::Error;
 pub use error::RequestKind;

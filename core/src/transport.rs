@@ -105,6 +105,7 @@ impl Transport {
     }
 
     pub(crate) fn retry_query_termination(&self) -> bool {
+        // Cloud final/kill use session-aware bounded retries; retain native's existing direct-send path.
         match self {
             Self::Native => false,
             Self::CloudWebApi { .. } => true,
@@ -145,6 +146,7 @@ impl Transport {
     }
 
     pub(crate) fn retry_page_503(&self) -> bool {
+        // Retry transient Cloud WebAPI 503s on safe page GETs; retain native's existing 503 behavior.
         match self {
             Self::Native => false,
             Self::CloudWebApi { .. } => true,
@@ -159,6 +161,7 @@ impl Transport {
     }
 
     pub(crate) fn body_error_fallback(&self) -> Option<&'static str> {
+        // Retry Cloud body-read failures only for replay-safe requests; retain native's narrower classification.
         match self {
             Self::Native => None,
             Self::CloudWebApi { .. } => Some("response body error"),
