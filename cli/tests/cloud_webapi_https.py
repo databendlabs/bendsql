@@ -149,7 +149,7 @@ def main():
         private = "databend://root:pw@127.0.0.1:" + str(server.server_port) + "/default?" + urlencode({
             "tls_ca_file": ca, "presign": "off", "retry_delay_secs": "0"})
         cloud = "databend://api.databend.com:443/default?" + urlencode({
-            "tls_ca_file": ca, "cloud_api_token": TOKEN, "org_slug": "org-example",
+            "tls_ca_file": ca, "cloud_api_token": TOKEN, "org": "org-example",
             "retry_delay_secs": "0"})
 
         def run(name, args, environment=None, config=None, expected_cloud=False,
@@ -213,68 +213,46 @@ def main():
                 print("PASS:", name)
 
         try:
-            run("official origin through local HTTPS proxy, query/page/final with retry", ["--dsn", cloud], expected_cloud=True)
+            env_credentials = {"BENDSQL_CLOUD_API_TOKEN": TOKEN}
             endpoint = "databend://root:%FF@api.databend.com:443/default?" + urlencode({
-                "tls_ca_file": ca, "retry_delay_secs": "0"})
-            env_credentials = {"BENDSQL_CLOUD_API_TOKEN": TOKEN, "BENDSQL_ORG": "org-example"}
-            run("official API DSN selects Cloud with environment credentials", ["--dsn", endpoint],
-                env_credentials, expected_cloud=True)
-            run("official API DSN selection is case-insensitive", ["--dsn", endpoint.replace("api.databend.com", "API.DATABEND.COM")],
-                env_credentials, expected_cloud=True)
-            run("Cloud DSN allows org override and ignores SQL username/password", ["--dsn", endpoint, "--org=org-example", "--user=root", "--password=ignored"],
-                env_credentials, expected_cloud=True)
-            run("BENDSQL_DSN selects Cloud before saved native credentials", [],
-                dict(env_credentials, BENDSQL_DSN=endpoint),
-                config="[connection]\nuser='root'\n[connection.args]\naccess_token_file='missing'\n",
-                expected_cloud=True)
-            run("session header round-trip does not depend on Set-Cookie", ["--dsn", cloud],
-                expected_cloud=True, emit_session_cookies=False)
-            run("China official origin through local HTTPS proxy", ["--dsn", cloud.replace("api.databend.com", "api.databend.cn")], expected_cloud=True)
-            run("Cloud transaction statements are not incorrectly warned on", ["--dsn", cloud],
-                expected_cloud=True, query="/* session */ BEGIN")
-            run("explicit TLS disable reports HTTPS requirement", ["--cloud-api-token=" + TOKEN, "--org=org-example", "--tls=false"],
-                expected_error="requires HTTPS; sslmode=disable is not supported")
-            no_ca = "databend://api.databend.com/default?" + urlencode({
-                "cloud_api_token": TOKEN, "org_slug": "org-example", "retry_delay_secs": "0"})
-            run("TLS still rejects the mock without its test CA", ["--dsn", no_ca],
-                expected_error="error sending request")
-            for endpoint in ["localhost:8443", "staging.example:8443", "api.databend.com:8443"]:
-                untrusted = cloud.replace("api.databend.com:443", endpoint)
-                run("production allowlist rejects " + endpoint, ["--dsn", untrusted],
-                    expected_error="not a Gateway or private server")
+                "tls_ca_file": ca, "org": "org-example", "retry_delay_secs": "0"})
+            run("Cloud DSN through HTTPS, pagination/session refresh/final", ["--dsn", cloud], expected_cloud=True)
+            run("Cloud DSN with environment token", ["--dsn", endpoint], env_credentials, expected_cloud=True)
+            run("Cloud BENDSQL_DSN with environment token", [], dict(env_credentials, BENDSQL_DSN=endpoint), expected_cloud=True)
+            run("case-insensitive official host", ["--dsn", endpoint.replace("api.databend.com", "API.DATABEND.COM")], env_credentials, expected_cloud=True)
+            run("Cloud DSN org override", ["--dsn", endpoint.replace("org=org-example", "org=other"), "--org", "org-example"], env_credentials, expected_cloud=True)
+            run("header sessions ignore Set-Cookie", ["--dsn", cloud], expected_cloud=True, emit_session_cookies=False)
+            run("China DSN", ["--dsn", cloud.replace("api.databend.com", "api.databend.cn")], expected_cloud=True)
+            run("transaction pass-through", ["--dsn", cloud], expected_cloud=True, query="/* session */ BEGIN")
+            cloud_flags = ["--org", "org-example", "--set", f"tls_ca_file={ca}", "--set", "retry_delay_secs=0"]
+            run("org selects Cloud default target", cloud_flags, env_credentials, expected_cloud=True)
+            run("org region override", [*cloud_flags, "--host", "api.databend.cn"], env_credentials, expected_cloud=True)
+            run("explicit SQL user conflicts with Cloud", [*cloud_flags, "--user=root"], env_credentials, expected_error="cannot be combined with --user")
+            run("explicit SQL password conflicts with Cloud", [*cloud_flags, "--password=ignored"], env_credentials, expected_error="cannot be combined with --password")
+            run("explicit TLS disable fails", [*cloud_flags, "--tls=false"], env_credentials, expected_error="requires HTTPS")
+            run("official host alone is not a selector", ["--host", "api.databend.com"], env_credentials, expected_error="requires org")
+            run("explicit token alone is not a selector", ["--cloud-api-token=" + TOKEN], expected_error="requires org")
+            no_ca = "databend://api.databend.com/default?" + urlencode({"cloud_api_token": TOKEN, "org": "org-example", "retry_delay_secs": "0"})
+            run("TLS verifies the mock CA", ["--dsn", no_ca], expected_error="error sending request")
+            for host in ["localhost:8443", "staging.example:8443", "api.databend.com:8443"]:
+                run("untrusted origin rejected: " + host, ["--dsn", cloud.replace("api.databend.com:443", host)], expected_error="official HTTPS API host")
             basic = "Basic " + base64.b64encode(b"root:pw").decode()
-            run("global token does not replace explicit DSN credentials", ["--dsn", private],
-                {"BENDSQL_CLOUD_API_TOKEN": TOKEN}, authorization=basic)
-            run("native transaction statements keep existing behavior", ["--dsn", private],
-                authorization=basic, query="BEGIN")
-            run("global token does not replace BENDSQL_DSN", [],
-                {"BENDSQL_CLOUD_API_TOKEN": TOKEN, "BENDSQL_DSN": private}, authorization=basic)
-            flags = ["--host=127.0.0.1", f"--port={server.server_port}", "--tls=true",
-                     "--set", f"tls_ca_file={ca}", "--set", "presign=off"]
-            cloud_flags = ["--host=api.databend.com", "--port=443", "--tls=true",
-                           "--set", f"tls_ca_file={ca}", "--set", "retry_delay_secs=0"]
-            run("environment token works for a credential-free CLI connection", [*cloud_flags, "--org=org-example"],
-                {"BENDSQL_CLOUD_API_TOKEN": TOKEN}, expected_cloud=True)
-            run("global token does not replace user/password flags", [*flags, "--user=root", "--password=pw"],
-                {"BENDSQL_CLOUD_API_TOKEN": TOKEN}, authorization=basic)
-            run("global token does not replace an Access Token", [*flags, "--set", "access_token=native-fixture"],
-                {"BENDSQL_CLOUD_API_TOKEN": TOKEN}, authorization="Bearer native-fixture")
+            run("native DSN ignores ambient Cloud token", ["--dsn", private], env_credentials, authorization=basic)
+            run("native BENDSQL_DSN ignores ambient Cloud token", [], dict(env_credentials, BENDSQL_DSN=private), authorization=basic)
+            run("native transactions unchanged", ["--dsn", private], authorization=basic, query="BEGIN")
+            flags = ["--host=127.0.0.1", f"--port={server.server_port}", "--tls=true", "--set", f"tls_ca_file={ca}", "--set", "presign=off"]
             empty_basic = "Basic " + base64.b64encode(b"root:").decode()
-            run("empty environment token means unset", flags, {"BENDSQL_CLOUD_API_TOKEN": ""}, authorization=empty_basic)
-            config = f"[connection]\nhost='127.0.0.1'\nport={server.server_port}\ntls=true\nuser='root'\n[connection.args]\ntls_ca_file='{ca}'\npresign='off'\n"
-            run("global token does not replace config-file user", [], {"BENDSQL_CLOUD_API_TOKEN": TOKEN}, config, authorization=empty_basic)
+            run("host flag plus environment token stays native", flags, env_credentials, authorization=empty_basic)
+            run("private credentials plus environment token stay native", [*flags, "--user=root", "--password=pw"], env_credentials, authorization=basic)
+            run("native Access Token stays native", [*flags, "--set", "access_token=native-fixture"], env_credentials, authorization="Bearer native-fixture")
+            run("empty environment token is ignored in native mode", flags, {"BENDSQL_CLOUD_API_TOKEN": ""}, authorization=empty_basic)
+            native_config = f"[connection]\nhost='127.0.0.1'\nport={server.server_port}\ntls=true\n[connection.args]\ntls_ca_file='{ca}'\npresign='off'\n"
+            run("config host plus environment token stays native", [], env_credentials, config=native_config, authorization=empty_basic)
             private_config = "[connection]\nhost='localhost'\nport=8000\nuser='root'\ntls=false\n[connection.args]\naccess_token_file='missing-native-token'\nprivate_key_file='missing-native-key'\nsslmode='disable'\ntenant='tn-private'\n"
             for gateway_dsn in [private, "not a valid DSN"]:
-                run("explicit org ignores environment DSN and saved private credentials", ["--org=org-example", "--set", f"tls_ca_file={ca}", "--set", "retry_delay_secs=0"],
-                    {"BENDSQL_DSN": gateway_dsn, "BENDSQL_PASSWORD": "private-password",
-                     "BENDSQL_CLOUD_API_TOKEN": TOKEN}, config=private_config, expected_cloud=True)
-            run("bare org uses environment and ignores SQL user/password", ["--org", "--user=root", "--password=ignored", "--set", f"tls_ca_file={ca}", "--set", "retry_delay_secs=0"],
-                {"BENDSQL_CLOUD_API_TOKEN": TOKEN, "BENDSQL_ORG": "org-example",
-                 "BENDSQL_DSN": private}, config=private_config, expected_cloud=True)
-            for config in ["[connection]\nport=8000\n", "[connection]\nhost='localhost'\n"]:
-                run("implicit Cloud selection keeps explicit config defaults: " + config.splitlines()[1],
-                    ["--cloud-api-token=", "--set", "org_slug=org-example"], config=config,
-                    expected_error="not a Gateway or private server")
+                run("org overrides ambient private target with warnings", cloud_flags,
+                    dict(env_credentials, BENDSQL_DSN=gateway_dsn, BENDSQL_PASSWORD="native-password"), config=private_config, expected_cloud=True)
+            run("Cloud config is not supported", [], env_credentials, config="[connection.args]\norg='org-example'\n", expected_error="not supported in config [connection]")
         finally:
             for service in (server, proxy):
                 service.shutdown()

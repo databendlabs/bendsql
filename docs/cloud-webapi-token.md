@@ -1,7 +1,8 @@
 # Connect to Cloud WebAPI with an API token
 
-Use a personal Cloud API token and organization **slug** (the console's
-Organization ID, not its display name). BendSQL connects directly to WebAPI;
+Use a personal Cloud API token and the **Organization ID（组织 ID）** shown in
+the console's organization settings, not its display name or an internal numeric
+OrgID/tenant ID. BendSQL connects directly to WebAPI;
 no Gateway address, tenant ID, browser login or client-side JWT exchange is needed.
 WebAPI determines the Cloud account, SQL identity, permissions and revocation policy.
 
@@ -11,68 +12,80 @@ Inject the token from a secret manager, then select the organization:
 
 ```bash
 export BENDSQL_CLOUD_API_TOKEN='<TOKEN>'
-export BENDSQL_ORG='org-example'
-bendsql
+bendsql --org org-example
 ```
 
-With default connection settings this uses `https://api.databend.com:443`.
-For China, add `--host api.databend.cn`. Select a Warehouse with
-`--set warehouse=my-warehouse`; otherwise WebAPI applies its default.
-Without an explicit `--org`, saved host, port and TLS settings remain
-unchanged. With `--org`, saved native endpoint/credentials are ignored and Cloud
-HTTPS/443 defaults apply; explicit `--host`, `--port` and `--tls` still take
-precedence and must satisfy the Cloud endpoint/TLS rules.
+Cloud defaults to `https://api.databend.com:443`. For China, add
+`--host api.databend.cn`. Select a Warehouse with `--set warehouse=my-warehouse`;
+otherwise WebAPI applies its default. Only `--org <ORG>` or a DSN `org=` selects
+Cloud. A token or official host alone does not select it. Cloud parameters in
+config and `--set` are not supported.
 
 CLI and Driver DSN alternatives:
 
 ```bash
-bendsql --cloud-api-token '<TOKEN>' --org=org-example
+bendsql --cloud-api-token '<TOKEN>' --org org-example
 ```
 
 ```text
-databend://api.databend.com:443/default?cloud_api_token=<TOKEN>&org_slug=org-example&warehouse=my-warehouse
+databend://api.databend.com:443/default?cloud_api_token=<TOKEN>&org=org-example&warehouse=my-warehouse
 ```
 
-URL-encode DSN values. Prefer environment injection to command-line secrets.
+URL-encode DSN values. In CLI automation, keep the target and credential separate:
+
+```bash
+export BENDSQL_DSN='databend://api.databend.com/default?org=org-example&warehouse=my-warehouse'
+export BENDSQL_CLOUD_API_TOKEN='<TOKEN>'
+bendsql
+```
+
+Prefer environment injection to command-line secrets. The token environment
+variable supplies a credential only; it never selects or changes a target.
+
+### Organization changes
+
+The console allows this Organization ID to be changed (its rename dialog calls
+it a slug). Changing it changes the organization's access address: update saved
+DSNs and `--org` arguments afterwards; old saved DSNs/configurations no longer work.
+An explicit WebAPI `OrgNotFound` response is reported as "Organization ID does
+not exist or has been changed". Other 404/authentication failures are not
+misclassified as an organization rename.
 
 ## Credential selection
 
-- `--org=org-example` explicitly selects Cloud WebAPI. Bare `--org` also
-  selects Cloud, reading the slug from config/`BENDSQL_ORG`. Explicit values must
-  use `=` so a bare flag never consumes another argument. This selection ignores
-  Gateway/private `BENDSQL_DSN`, `BENDSQL_PASSWORD`, and saved native endpoint/user/Access Token/
-  Key Pair/tenant settings. Database, Warehouse and other query options are kept.
-  Supply the Cloud token through CLI, Cloud config or `BENDSQL_CLOUD_API_TOKEN`;
-  missing credentials fail instead of falling back to password authentication.
-- A DSN with host `api.databend.com` or `api.databend.cn` also selects Cloud,
-  even without a token in the DSN. Token/Org may come from CLI or environment;
-  `--org` may override the DSN organization. SQL user/password in the DSN or
-  supplied as override flags are ignored, never used as a fallback.
-- `--org` conflicts with an explicit Gateway/private `--dsn`, but not a Cloud
-  API DSN. Key Pair, Access Token, `tenant` and FlightSQL cannot be combined with
-  Cloud authentication. Unsafe explicit combinations fail; error messages name
-  options, never credential values. Explicit HTTP/nonstandard ports also fail.
-- Without `--org`, `--dsn` takes precedence over `BENDSQL_DSN`. Gateway/private
-  DSNs are not overridden by environment Cloud credentials.
-- Explicit `--cloud-api-token` overrides the `cloud_api_token` DSN/config value.
-- Without explicit `--org` or a Cloud API DSN, `BENDSQL_CLOUD_API_TOKEN` is a
-  fallback only when there is no Gateway DSN, explicit user/password, configured
-  user, Access Token or Key Pair. It does not take over private connections.
-- Rust driver/binding DSNs require `cloud_api_token` and `org_slug` in the DSN;
-  environment fallback and CLI overrides are CLI features. Official API hosts
-  with missing credentials fail rather than attempting SQL password login.
-- Empty environment tokens mean unset. Empty CLI/DSN tokens are errors.
-- Explicit `--org` supplies the organization. Otherwise, `org_slug` in DSN/config
-  takes precedence over `BENDSQL_ORG`. An empty environment Org is unset;
-  duplicate DSN token/Org keys are rejected.
-- In Cloud mode username/password are ignored. Access Token, Key Pair and
-  separate `tenant` parameters cannot be combined with a Cloud API token.
-  There is no `--authenticator` selector.
+- Only `--org <ORG>` or `org=` in `--dsn` / `BENDSQL_DSN` selects Cloud.
+  `--org` requires a nonempty value and overrides the DSN organization.
+  There is no `BENDSQL_ORG` or valueless `--org`.
+- In Cloud mode credentials resolve as: CLI `--cloud-api-token` > DSN
+  `cloud_api_token` > `BENDSQL_CLOUD_API_TOKEN`. Missing/empty explicit credentials
+  fail; an empty environment token is unset. Outside Cloud the environment token
+  is ignored, including for otherwise default local settings. An explicit token
+  without `org` fails. An official API host without `org` also fails.
+- Config `[connection]` is private/Gateway configuration only. Cloud parameters
+  `org`, `org_slug` and `cloud_api_token` in `[connection.args]` are rejected,
+  as are those keys in `--set`. Use CLI/DSN for Cloud parameters.
+- `--org` conflicts with an explicit private/Gateway `--dsn`. An ambient private
+  `BENDSQL_DSN` is ignored instead, with a warning naming `BENDSQL_DSN` only.
+  Cloud mode ignores saved `[connection]` and `BENDSQL_PASSWORD` with warnings
+  naming their sources, not values. Pass database/Warehouse/query settings
+  explicitly for Cloud; no saved private connection fields are carried over.
+- CLI `--user`, `--password`, Key Pair flags and `--flight` conflict with Cloud.
+  Explicit Access Token/Key Pair/tenant options also fail. User/password embedded
+  in a Cloud DSN are ignored for compatibility, never used as fallback credentials.
+- Explicit HTTP, TLS disable and nonstandard Cloud ports fail instead of being
+  corrected. `--host` must be an official WebAPI host. Cloud defaults are global
+  HTTPS/443 even when saved private configuration specifies HTTP/8000.
+- `--dsn` takes precedence over `BENDSQL_DSN`. Native authentication, CLI password
+  overrides and `BENDSQL_PASSWORD` retain their behavior outside Cloud mode.
+- Rust driver, Python and Node bindings require both `org` and `cloud_api_token`
+  in the DSN. They do not read CLI environment credentials. Duplicate token/org
+  DSN keys are rejected. The unreleased `org_slug` key is not a supported alias.
 
-Private/Gateway authentication is unchanged when Cloud mode is not selected.
-The connection label is `cloud_account` / `CloudWebAPI`, not the ignored SQL
-username or an API-token parameter name. Use `SELECT current_user(), current_role()`
-to inspect the server's actual SQL identity.
+Interactive connections identify the actual mode: Cloud displays the official
+host, Organization ID and `with Cloud API token`; private mode continues to show
+its host/user. Tokens and session values are never displayed. Driver metadata
+identifies Cloud as `cloud_account` / `CloudWebAPI`.
+Use `SELECT current_user(), current_role()` for the server's actual SQL identity.
 
 ## Endpoints
 

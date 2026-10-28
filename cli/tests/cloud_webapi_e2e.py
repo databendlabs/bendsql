@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 class E2EFailure(Exception):
@@ -48,11 +49,27 @@ def child_environment(environment, home):
                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
                "http_proxy", "https_proxy", "all_proxy", "no_proxy"}
     result = {key: value for key, value in environment.items() if key in allowed}
-    for key in ("BENDSQL_CLOUD_API_TOKEN", "BENDSQL_ORG"):
+    for key in ("BENDSQL_CLOUD_API_TOKEN", "BENDSQL_DSN"):
         value = environment.get(key, "")
         if not value.strip():
             raise E2EFailure("Required Cloud E2E Secrets are missing or empty")
         result[key] = value
+    try:
+        target = urlsplit(result["BENDSQL_DSN"])
+        pairs = parse_qsl(target.query, keep_blank_values=True, errors="strict")
+        orgs = [value for key, value in pairs if key == "org"]
+        valid = (target.scheme in {"databend", "databend+https"}
+                 and target.hostname in {"api.databend.com", "api.databend.cn"}
+                 and target.port in {None, 443} and not target.username and not target.password
+                 and not target.fragment and len(orgs) == 1 and bool(orgs[0].strip())
+                 and all(key in {"org", "warehouse"} for key, _ in pairs))
+    except (ValueError, UnicodeError):
+        valid = False
+    if not valid:
+        raise E2EFailure("Cloud E2E BENDSQL_DSN requires an official HTTPS API host and exactly one org; no credentials or custom options")
+    # DSN mode ignores --set. Pin suite settings in the child DSN instead.
+    query = urlencode({"org": orgs[0], "warehouse": "default", "retry_count": "3", "login": "disable"})
+    result["BENDSQL_DSN"] = urlunsplit(("databend", f"{target.hostname}:443", target.path or "/default", query, ""))
     result.update(HOME=home, TERM="dumb", RUST_BACKTRACE="0")
     return result
 
@@ -67,8 +84,6 @@ class Runner:
         with tempfile.TemporaryDirectory(prefix="bendsql-cloud-e2e-") as home:
             environment = dict(self.environment, HOME=home)
             command = [self.binary, "--non-interactive", "--output=tsv", "--log-level=off",
-                       "--set", "warehouse=default", "--set", "retry_count=3",
-                       "--set", "login=disable",
                        f"--query={sql}"]
             try:
                 result = subprocess.run(command, env=environment, stdin=subprocess.DEVNULL,

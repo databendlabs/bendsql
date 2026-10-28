@@ -102,12 +102,18 @@ impl Client {
 
     pub async fn get_conn(&self) -> Result<Connection> {
         let u = Url::parse(&self.dsn)?;
-        if matches!(u.scheme(), "databend+flight" | "databend+grpc")
+        let has_org = u.query_pairs().any(|(key, _)| key == "org");
+        if !has_org
             && (u.query_pairs().any(|(key, _)| key == "cloud_api_token")
                 || u.host_str().is_some_and(is_cloud_webapi_host))
         {
             return Err(Error::BadArgument(
-                "cloud_api_token authentication is not supported with FlightSQL".into(),
+                "Cloud WebAPI requires org (Organization ID); cloud_api_token alone does not select Cloud mode".into(),
+            ));
+        }
+        if has_org && matches!(u.scheme(), "databend+flight" | "databend+grpc") {
+            return Err(Error::BadArgument(
+                "Cloud WebAPI is not supported with FlightSQL".into(),
             ));
         }
         match u.scheme() {
@@ -672,7 +678,7 @@ mod tests {
     async fn cloud_api_token_rejects_flight_before_connecting() {
         for scheme in ["databend+flight", "databend+grpc"] {
             let client = Client::new(format!(
-                "{scheme}://localhost/default?cloud_api_token=secret"
+                "{scheme}://localhost/default?org=example&cloud_api_token=secret"
             ));
             let err = client
                 .get_conn()
@@ -687,7 +693,7 @@ mod tests {
                     .await
                     .err()
                     .expect("API host must select Cloud before connecting");
-                assert!(error.to_string().contains("not supported with FlightSQL"));
+                assert!(error.to_string().contains("requires org"));
                 assert!(!error.to_string().contains("secret"));
             }
         }

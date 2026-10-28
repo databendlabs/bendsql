@@ -26,10 +26,12 @@ python3 -m unittest discover -s cli/tests -p 'test_cloud_webapi_e2e.py' -v
 Configure repository Actions Secrets in `databendlabs/bendsql`:
 
 - `BENDSQL_CLOUD_API_TOKEN`: a dedicated, least-privilege Cloud test account token.
-- `BENDSQL_ORG`: that account's test organization slug.
+- `BENDSQL_DSN`: `databend://api.databend.com/default?org=<ORG>`, where `<ORG>` is
+  the Organization ID shown in console organization settings. For China, use
+  `api.databend.cn`. Do not put credentials or custom options in this DSN.
 
-The test explicitly selects Warehouse `default` and the default global WebAPI
-endpoint. The account must have permission to query that Warehouse. Do not use a
+The test validates the official target and pins Warehouse `default`, retry count
+and disabled optional login in the child DSN. The account must have permission to query that Warehouse. Do not use a
 personal administrator or production account; Cloud API tokens may reach every
 organization to which their account belongs. Keep the account out of production
 organizations and rotate the token regularly.

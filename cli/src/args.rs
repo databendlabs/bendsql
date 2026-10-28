@@ -89,43 +89,31 @@ impl ConnectionArgs {
         }
     }
 
-    pub fn accepts_environment_cloud_token(&self, has_dsn: bool, explicit_userinfo: bool) -> bool {
-        !has_dsn
-            && !explicit_userinfo
-            && !self
-                .args
-                .keys()
-                .any(|key| key == "cloud_api_token" || Self::is_native_auth_option(key))
-    }
-
-    pub fn apply_org(&mut self, command_line: Option<String>, environment: Option<String>) {
-        if let Some(org) = command_line {
-            self.args.insert("org_slug".into(), org);
-        } else if !self.args.contains_key("org_slug") {
-            if let Some(org) = environment {
-                self.args.insert("org_slug".into(), org);
-            }
-        }
-    }
-
-    pub fn cloud_defaults(&mut self, implicit_host: bool, implicit_port: bool, implicit_tls: bool) {
-        if !self.args.contains_key("cloud_api_token") {
-            return;
-        }
-        if implicit_host && self.host == "localhost" {
-            self.host = DEFAULT_CLOUD_WEBAPI_HOST.into();
-        }
-        if implicit_port {
-            self.port = Some(443);
-        }
-        if implicit_tls {
-            self.args.remove("sslmode");
-        }
-    }
-
     pub fn validate_cloud_options(&self, enable_ui: bool) -> Result<()> {
-        if !self.args.contains_key("cloud_api_token") {
+        if !self.args.contains_key("org") {
+            if self.args.contains_key("cloud_api_token") {
+                return Err(anyhow!("cloud_api_token requires org"));
+            }
             return Ok(());
+        }
+        if !is_cloud_webapi_host(&self.host) || self.port.is_some_and(|port| port != 443) {
+            return Err(anyhow!(
+                "Cloud WebAPI requires an official HTTPS API host on port 443"
+            ));
+        }
+        if self
+            .args
+            .get("sslmode")
+            .is_some_and(|mode| mode == "disable")
+        {
+            return Err(anyhow!(
+                "Cloud WebAPI requires HTTPS; sslmode=disable is not supported"
+            ));
+        }
+        if self.args.contains_key("org_slug") {
+            return Err(anyhow!(
+                "org_slug is not supported; use org (Organization ID)"
+            ));
         }
         if self.args.keys().any(|key| Self::is_native_auth_option(key)) {
             return Err(anyhow!(
@@ -134,7 +122,7 @@ impl ConnectionArgs {
         }
         if self.args.contains_key("tenant") {
             return Err(anyhow!(
-                "cloud_api_token uses org_slug, not a separate tenant parameter"
+                "cloud_api_token uses org, not a separate tenant parameter"
             ));
         }
         if enable_ui {
@@ -192,27 +180,36 @@ impl ConnectionArgs {
         let mut args = BTreeMap::new();
         if let Some(query) = u.query() {
             for (k, v) in url::form_urlencoded::parse(query.as_bytes()) {
-                if matches!(k.as_ref(), "cloud_api_token" | "org_slug")
-                    && args.contains_key(k.as_ref())
+                if matches!(k.as_ref(), "cloud_api_token" | "org") && args.contains_key(k.as_ref())
                 {
                     return Err(anyhow!(
-                        "cloud_api_token and org_slug must each be specified only once"
+                        "cloud_api_token and org must each be specified only once"
                     ));
                 }
                 args.insert(k.to_string(), v.to_string());
             }
         }
-        if args.contains_key("cloud_api_token") && u.scheme().ends_with("+grpc") {
+        if args.contains_key("org") && u.scheme().ends_with("+grpc") {
             return Err(anyhow!(
                 "cloud_api_token authentication is not supported with FlightSQL"
             ));
         }
         let flight = u.scheme().ends_with("+flight");
-        let host = u.host_str().ok_or(anyhow!("missing host"))?.to_string();
+        let host = u
+            .host_str()
+            .or_else(|| {
+                args.contains_key("org")
+                    .then_some(DEFAULT_CLOUD_WEBAPI_HOST)
+            })
+            .ok_or(anyhow!("missing host"))?
+            .to_string();
         let port = u.port();
         let user = u.username().to_string();
         let password = u.password().unwrap_or_default();
-        let password = if args.contains_key("cloud_api_token") || is_cloud_webapi_host(&host) {
+        let password = if args.contains_key("org")
+            || args.contains_key("cloud_api_token")
+            || is_cloud_webapi_host(&host)
+        {
             String::new()
         } else {
             percent_decode_str(password).decode_utf8()?.to_string()

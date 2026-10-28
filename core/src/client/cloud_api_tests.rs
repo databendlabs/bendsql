@@ -510,7 +510,7 @@ async fn cloud_drop_during_final_request_releases_tracking_without_duplicate_cle
 
 #[tokio::test]
 async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
-    let dsn = format!("databend://ignored:%FF@api.databend.com/default?cloud_api_token={TOKEN}&org_slug={ORG}&warehouse=wh");
+    let dsn = format!("databend://ignored:%FF@api.databend.com/default?cloud_api_token={TOKEN}&org={ORG}&warehouse=wh");
     let client = APIClient::from_dsn(&dsn).await.unwrap();
     assert!(client.is_cloud_webapi);
     assert_eq!(client.username(), "cloud_account");
@@ -520,12 +520,10 @@ async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
             .await
             .err()
             .unwrap();
-        assert!(error
-            .to_string()
-            .contains("Cloud WebAPI endpoint requires cloud_api_token"));
+        assert!(error.to_string().contains("requires org"));
     }
     assert!(!format!("{:?}", client.session_state()).contains(TOKEN));
-    assert!(!format!("{:?}", client.session_state()).contains("org_slug"));
+    assert!(!format!("{:?}", client.session_state()).contains("org"));
     assert!(matches!(client.get_presign_mode(), PresignMode::Off));
     let req = client
         .auth
@@ -565,7 +563,7 @@ async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
         "private_key_file=missing",
         "private_key_passphrase_file=missing",
         "cloud_api_token=second",
-        "org_slug=second",
+        "org=second",
         "tenant=tn-other",
         "query_result_format=arrow",
         "max_rows_per_page=10",
@@ -578,22 +576,22 @@ async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
         assert!(!format!("{err:?}").contains(TOKEN));
     }
     for dsn in [
-        "databend://api.databend.cn/default?cloud_api_token=fake&org_slug=org-example",
-        "databend:///?cloud_api_token=fake&org_slug=org-example",
+        "databend://api.databend.cn/default?cloud_api_token=fake&org=org-example",
+        "databend:///?cloud_api_token=fake&org=org-example",
     ] {
         assert!(APIClient::from_dsn(dsn).await.is_ok(), "{dsn}");
     }
     for dsn in [
         "databend://api.databend.com?cloud_api_token=fake",
-        "databend://api.databend.com?org_slug=org-example",
-        "databend://api.databend.com?cloud_api_token=&org_slug=org-example",
-        "databend://api.databend.com?cloud_api_token=fake&org_slug=",
-        "databend://api.databend.com?cloud_api_token=fake&org_slug=%0D%0Ainjected",
-        "databend://api.databend.com.evil.test?cloud_api_token=fake&org_slug=org-example",
-        "databend://tnexample.gw.aws-us-east-2.default.databend.com?cloud_api_token=fake&org_slug=org-example",
-        "databend://localhost?cloud_api_token=fake&org_slug=org-example",
-        "databend://api.databend.com:8443?cloud_api_token=fake&org_slug=org-example",
-        "databend+http://api.databend.com?cloud_api_token=fake&org_slug=org-example",
+        "databend://api.databend.com?org=org-example",
+        "databend://api.databend.com?cloud_api_token=&org=org-example",
+        "databend://api.databend.com?cloud_api_token=fake&org=",
+        "databend://api.databend.com?cloud_api_token=fake&org=%0D%0Ainjected",
+        "databend://api.databend.com.evil.test?cloud_api_token=fake&org=org-example",
+        "databend://tnexample.gw.aws-us-east-2.default.databend.com?cloud_api_token=fake&org=org-example",
+        "databend://localhost?cloud_api_token=fake&org=org-example",
+        "databend://api.databend.com:8443?cloud_api_token=fake&org=org-example",
+        "databend+http://api.databend.com?cloud_api_token=fake&org=org-example",
     ] { assert!(APIClient::from_dsn(dsn).await.is_err(), "{dsn}"); }
 }
 
@@ -668,7 +666,7 @@ async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
         "stage_attachment",
         "arrow_result_version_max",
         "cloud_api_token",
-        "org_slug",
+        "org",
     ] {
         assert!(body.get(key).is_none(), "{key}");
     }
@@ -927,6 +925,32 @@ async fn cloud_redirect_and_foreign_page_never_forward_credentials() {
     assert!(!format!("{err:?}").contains(TOKEN));
     assert!(other.requests.lock().is_empty());
     assert_eq!(server.requests.lock().len(), 1);
+}
+
+#[tokio::test]
+async fn cloud_org_not_found_is_actionable_without_hiding_other_failures() {
+    let server = MockServer::new(|_| MockReply {
+        status: 404,
+        body: format!("{{\"error\":\"OrgNotFound\",\"message\":\"{TOKEN}\"}}"),
+        headers: vec![],
+    })
+    .await;
+    let mut cloud = client(&server).await;
+    let error = cloud.login().await.unwrap_err().to_string();
+    assert!(error.contains("Organization ID does not exist or has been changed"));
+    assert!(!error.contains(TOKEN));
+    let error = cloud
+        .start_query_inner("SELECT 1", None, false, None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Organization ID does not exist or has been changed"));
+    let body = br#"{"error":"OrgNotFound","message":"Org not found"}"#;
+    assert!(!cloud.is_cloud_org_not_found(StatusCode::FORBIDDEN, body));
+    assert!(!cloud.is_cloud_org_not_found(StatusCode::NOT_FOUND, br#"{"error":"QueryNotFound"}"#));
+    assert!(!cloud.is_cloud_org_not_found(StatusCode::NOT_FOUND, b"not found"));
+    let native = APIClient::default();
+    assert!(!native.is_cloud_org_not_found(StatusCode::NOT_FOUND, body));
 }
 
 #[tokio::test]

@@ -236,7 +236,18 @@ impl APIClient {
         }
     }
 
+    fn is_cloud_org_not_found(&self, status: StatusCode, body: &[u8]) -> bool {
+        self.is_cloud_webapi
+            && status == StatusCode::NOT_FOUND
+            && serde_json::from_slice::<Value>(body).is_ok_and(|value| {
+                value.get("error").and_then(Value::as_str) == Some("OrgNotFound")
+            })
+    }
+
     fn status_body_to_error(&self, status: StatusCode, body: &[u8]) -> Error {
+        if self.is_cloud_org_not_found(status, body) {
+            return Error::Response { status, msg: "Organization ID does not exist or has been changed; check org in your DSN/config or --org <ORG>".into() };
+        }
         let error = match serde_json::from_slice::<ResponseWithErrorCode>(body) {
             Ok(resp) if status == StatusCode::UNAUTHORIZED => Error::AuthFailure(resp.error),
             Ok(resp) => Error::Logic(status, resp.error),
@@ -283,12 +294,12 @@ impl APIClient {
         }
 
         let mut cloud_token = None;
-        let mut org_slug = None;
+        let mut org = None;
         let mut conflicting_auth = false;
         for (key, value) in u.query_pairs() {
             let slot = match key.as_ref() {
                 "cloud_api_token" => &mut cloud_token,
-                "org_slug" => &mut org_slug,
+                "org" => &mut org,
                 "access_token"
                 | "access_token_file"
                 | "private_key_file"
@@ -300,29 +311,44 @@ impl APIClient {
             };
             if slot.replace(value.into_owned()).is_some() {
                 return Err(Error::BadArgument(
-                    "cloud_api_token and org_slug must each be specified only once".into(),
+                    "cloud_api_token and org must each be specified only once".into(),
                 ));
             }
         }
-        if cloud_token.is_some() && conflicting_auth {
+        if org.is_some() && conflicting_auth {
             return Err(Error::BadArgument(
                 "cloud_api_token cannot be combined with Access Token or Key Pair credentials"
                     .into(),
             ));
         }
-        if cloud_token.is_none() && u.host_str().is_some_and(is_cloud_webapi_host) {
-            return Err(Error::BadArgument("Cloud WebAPI endpoint requires cloud_api_token; SQL username/password are not account authentication".into()));
-        }
-        if cloud_token.is_none() && org_slug.is_some() {
+        if org.is_none()
+            && (cloud_token.is_some() || u.host_str().is_some_and(is_cloud_webapi_host))
+        {
             return Err(Error::BadArgument(
-                "org_slug requires cloud_api_token".into(),
+                "Cloud WebAPI requires org (Organization ID); cloud_api_token alone does not select Cloud mode".into(),
             ));
         }
-        if cloud_token.is_some() && u.host_str().is_none() {
+        if org
+            .as_deref()
+            .is_some_and(|org| org.is_empty() || org.trim() != org)
+        {
+            return Err(Error::BadArgument(
+                "org requires a valid Organization ID".into(),
+            ));
+        }
+        if org.is_some() && matches!(u.scheme(), "databend+flight" | "databend+grpc") {
+            return Err(Error::BadArgument(
+                "Cloud WebAPI is not supported with FlightSQL".into(),
+            ));
+        }
+        if org.is_some() && cloud_token.is_none() {
+            return Err(Error::BadArgument("org requires cloud_api_token".into()));
+        }
+        if org.is_some() && u.host_str().is_none() {
             client.host = DEFAULT_CLOUD_WEBAPI_HOST.into();
         }
         let username = u.username().to_string();
-        if cloud_token.is_none() && !username.is_empty() {
+        if org.is_none() && !username.is_empty() {
             let password = u.password().unwrap_or_default();
             let password = percent_decode_str(password).decode_utf8()?;
             client.auth = Arc::new(BasicAuth::new(&username, password));
@@ -392,7 +418,12 @@ impl APIClient {
                 "tls_ca_file" => {
                     client.tls_ca_file = Some(v.to_string());
                 }
-                "cloud_api_token" | "org_slug" => {}
+                "cloud_api_token" | "org" => {}
+                "org_slug" if cloud_token.is_some() => {
+                    return Err(Error::BadArgument(
+                        "org_slug is not supported; use org (Organization ID)".into(),
+                    ));
+                }
                 "access_token" => {
                     client.auth = Arc::new(AccessTokenAuth::new(v));
                 }
@@ -475,13 +506,13 @@ impl APIClient {
             if u.scheme() == "databend+http" {
                 return Err(Error::BadArgument("cloud_api_token requires HTTPS".into()));
             }
-            let org = org_slug
-                .ok_or_else(|| Error::BadArgument("cloud_api_token requires org_slug".into()))?;
+            let org =
+                org.ok_or_else(|| Error::BadArgument("cloud_api_token requires org".into()))?;
             client.auth = Arc::new(CloudApiAuth::new(client.endpoint.clone(), token, org)?);
             client.is_cloud_webapi = true;
             if client.tenant.is_some() {
                 return Err(Error::BadArgument(
-                    "Cloud WebAPI selects its tenant using org_slug, not tenant".into(),
+                    "Cloud WebAPI selects its tenant using org, not tenant".into(),
                 ));
             }
             if client.query_result_format != "json"
@@ -1207,7 +1238,9 @@ impl APIClient {
         let response = self
             .query_request_helper(request, true, false, true, RequestKind::Login)
             .await?;
-        if response.status == StatusCode::NOT_FOUND {
+        if response.status == StatusCode::NOT_FOUND
+            && !self.is_cloud_org_not_found(response.status, &response.body)
+        {
             info!("login return 404, skip login on the old version server");
             return Ok(());
         }

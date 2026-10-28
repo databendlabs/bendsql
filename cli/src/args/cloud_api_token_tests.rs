@@ -16,7 +16,7 @@ use super::*;
 
 #[test]
 fn cloud_token_precedence_and_ignored_password() {
-    let mut args = ConnectionArgs::from_dsn("databend://cloudapp:%FF@api.databend.com/default?warehouse=wh&cloud_api_token=dsn-secret&org_slug=org-example").unwrap();
+    let mut args = ConnectionArgs::from_dsn("databend://cloudapp:%FF@api.databend.com/default?warehouse=wh&cloud_api_token=dsn-secret&org=org-example").unwrap();
     args.apply_cloud_api_token(None, Some("env-secret".into()));
     assert_eq!(args.args["cloud_api_token"], "dsn-secret");
     args.apply_cloud_api_token(Some("cli-secret".into()), Some("env-secret".into()));
@@ -33,8 +33,10 @@ fn cloud_token_precedence_and_ignored_password() {
         "cli-secret"
     );
 
-    let mut args =
-        ConnectionArgs::from_dsn("databend://cloudapp:old-password@host/default").unwrap();
+    let mut args = ConnectionArgs::from_dsn(
+        "databend://cloudapp:old-password@api.databend.com/default?org=org-example",
+    )
+    .unwrap();
     args.apply_cloud_api_token(Some("cli-secret".into()), Some("env-secret".into()));
     let dsn = args.get_dsn().unwrap();
     assert!(!dsn.contains("old-password"));
@@ -54,107 +56,12 @@ fn cloud_token_rejects_duplicate_dsn_credentials() {
 }
 
 #[test]
-fn cloud_webapi_defaults_and_org_precedence() {
-    let mut args = ConnectionArgs {
-        host: "localhost".into(),
-        port: Some(8000),
-        user: "root".into(),
-        password: "old-password".into(),
-        ..Default::default()
-    };
-    args.args.insert("sslmode".into(), "disable".into());
-    args.apply_cloud_api_token(Some("secret".into()), None);
-    args.apply_org(None, Some("env-org".into()));
-    args.apply_org(None, Some("ignored-env-org".into()));
-    assert_eq!(args.args["org_slug"], "env-org");
-    args.apply_org(Some("cli-org".into()), Some("ignored".into()));
-    args.cloud_defaults(true, true, true);
-    let dsn = url::Url::parse(&args.get_dsn().unwrap()).unwrap();
-    assert_eq!(dsn.host_str(), Some("api.databend.com"));
-    assert_eq!(dsn.port(), Some(443));
-    assert!(dsn.username().is_empty());
-    assert!(dsn.password().is_none());
-    let pairs: BTreeMap<_, _> = dsn.query_pairs().collect();
-    assert_eq!(pairs["org_slug"], "cli-org");
-    assert!(!pairs.contains_key("sslmode"));
-
-    let mut args = ConnectionArgs::from_dsn("databend://api.databend.cn:8000/default?cloud_api_token=secret&org_slug=dsn-org&sslmode=disable").unwrap();
-    args.apply_org(None, Some("env-org".into()));
-    args.cloud_defaults(false, false, false);
-    assert_eq!(args.host, "api.databend.cn");
-    assert_eq!(args.port, Some(8000));
-    assert_eq!(args.args["org_slug"], "dsn-org");
-    assert_eq!(args.args["sslmode"], "disable");
-
-    assert!(
-        ConnectionArgs::from_dsn("databend://api.databend.com?org_slug=first&org_slug=second")
-            .is_err()
-    );
-}
-
-#[test]
-fn environment_token_is_optional_and_does_not_override_explicit_connections() {
+fn empty_environment_token_is_unset_but_explicit_empty_token_is_an_error() {
     let mut args = ConnectionArgs::default();
-    assert!(args.accepts_environment_cloud_token(false, false));
-    assert!(!args.accepts_environment_cloud_token(true, false));
-    assert!(!args.accepts_environment_cloud_token(false, true));
     args.apply_cloud_api_token(None, Some("".into()));
     assert!(!args.args.contains_key("cloud_api_token"));
     args.apply_cloud_api_token(Some("".into()), Some("env-token".into()));
     assert_eq!(args.args["cloud_api_token"], "");
-    for key in [
-        "cloud_api_token",
-        "access_token",
-        "access_token_file",
-        "private_key_file",
-        "private_key_passphrase_file",
-    ] {
-        let mut args = ConnectionArgs::default();
-        args.args.insert(key.into(), "value".into());
-        assert!(!args.accepts_environment_cloud_token(false, false), "{key}");
-    }
-}
-
-#[test]
-fn explicit_config_defaults_remain_authoritative_in_cloud_mode() {
-    use crate::config::ConnectionConfig;
-    let implicit: ConnectionConfig = toml::from_str("").unwrap();
-    assert!(implicit.host.is_none() && implicit.port.is_none() && implicit.user.is_none());
-    for config in [
-        "",
-        "host = 'localhost'",
-        "port = 8000",
-        "user = 'root'",
-        "host = 'localhost'\nport = 8000\nuser = 'root'",
-    ] {
-        let connection: ConnectionConfig = toml::from_str(config).unwrap();
-        let mut args = ConnectionArgs {
-            host: connection
-                .host
-                .clone()
-                .unwrap_or_else(|| "localhost".into()),
-            port: connection.port.or(Some(8000)),
-            user: connection.user.clone().unwrap_or_else(|| "root".into()),
-            ..Default::default()
-        };
-        args.apply_cloud_api_token(Some("fake-token".into()), None);
-        args.cloud_defaults(connection.host.is_none(), connection.port.is_none(), true);
-        if connection.host.is_some() {
-            assert_eq!(args.host, "localhost");
-        } else {
-            assert_eq!(args.host, "api.databend.com");
-        }
-        if connection.port.is_some() {
-            assert_eq!(args.port, Some(8000));
-        } else {
-            assert_eq!(args.port, Some(443));
-        }
-        assert_eq!(
-            connection.user.is_some(),
-            config.lines().any(|line| line.starts_with("user"))
-        );
-        assert_eq!(args.user, "root");
-    }
 }
 
 #[test]
@@ -170,9 +77,9 @@ fn explicitly_empty_connection_config_is_not_treated_as_absent() {
 fn cloud_token_rejects_flight_sql() {
     for scheme in ["databend+flight", "databend+grpc"] {
         for source in ["dsn", "cli", "environment"] {
-            let mut dsn = format!("{scheme}://host/default");
+            let mut dsn = format!("{scheme}://api.databend.com/default?org=org-example");
             if source == "dsn" {
-                dsn.push_str("?cloud_api_token=flight-secret");
+                dsn.push_str("&cloud_api_token=flight-secret");
             }
             let err = match ConnectionArgs::from_dsn(&dsn) {
                 Ok(mut args) => {
@@ -197,19 +104,15 @@ fn cloud_token_rejects_flight_sql() {
 #[test]
 fn cloud_ui_rejects_all_token_sources() {
     let dsn = ConnectionArgs::from_dsn(
-        "databend://api.databend.com/default?%63loud_api_token=ui-secret&org_slug=org-example",
+        "databend://api.databend.com/default?%63loud_api_token=ui-secret&org=org-example",
     )
     .unwrap();
-    let mut cli = ConnectionArgs::default();
+    let mut cli = ConnectionArgs::from_dsn("databend://api.databend.com?org=org-example").unwrap();
     cli.apply_cloud_api_token(Some("ui-secret".into()), None);
-    let mut environment = ConnectionArgs::default();
+    let mut environment =
+        ConnectionArgs::from_dsn("databend://api.databend.com?org=org-example").unwrap();
     environment.apply_cloud_api_token(None, Some("ui-secret".into()));
-    // Config and --set populate the same connection argument map.
-    let mut config = ConnectionArgs::default();
-    config
-        .args
-        .insert("cloud_api_token".into(), "ui-secret".into());
-    for args in [dsn, cli, environment, config] {
+    for args in [dsn, cli, environment] {
         assert!(args.validate_cloud_options(false).is_ok());
         let err = args.validate_cloud_options(true).unwrap_err().to_string();
         assert!(err.contains("--ui is not supported with cloud_api_token"));
@@ -222,7 +125,7 @@ fn cloud_http_dsn_is_rejected_for_all_token_sources() {
     for source in ["dsn", "cli", "environment"] {
         for sslmode in ["", "&sslmode=require"] {
             let mut dsn =
-                format!("databend+http://api.databend.com/default?org_slug=org-example{sslmode}");
+                format!("databend+http://api.databend.com/default?org=org-example{sslmode}");
             if source == "dsn" {
                 dsn.push_str("&cloud_api_token=http-secret");
             }
@@ -233,7 +136,6 @@ fn cloud_http_dsn_is_rejected_for_all_token_sources() {
                 args.apply_cloud_api_token(None, Some("http-secret".into()));
             }
             assert_eq!(args.dsn_scheme.as_deref(), Some("databend+http"));
-            args.cloud_defaults(false, false, false);
             let err = args.get_dsn().unwrap_err().to_string();
             assert!(err.contains("requires HTTPS"), "{source}: {err}");
             assert!(!err.contains("http-secret"));

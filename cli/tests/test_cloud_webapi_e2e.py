@@ -21,13 +21,14 @@ import os
 from pathlib import Path
 import subprocess
 import unittest
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import Mock, patch
 
 import cloud_webapi_e2e as e2e
 
 TOKEN = "fake-unit-cloud-token"
 ORG = "org-private-unit-fixture"
-ENV = {"BENDSQL_CLOUD_API_TOKEN": TOKEN, "BENDSQL_ORG": ORG}
+ENV = {"BENDSQL_CLOUD_API_TOKEN": TOKEN, "BENDSQL_DSN": f"databend://api.databend.com/default?org={ORG}"}
 
 
 class CloudE2EHarnessTests(unittest.TestCase):
@@ -50,13 +51,13 @@ class CloudE2EHarnessTests(unittest.TestCase):
 
     def test_missing_or_empty_credentials_fail_without_execution(self):
         for environment in [{}, {"BENDSQL_CLOUD_API_TOKEN": TOKEN},
-                            dict(ENV, BENDSQL_CLOUD_API_TOKEN=""), dict(ENV, BENDSQL_ORG=" ")]:
+                            dict(ENV, BENDSQL_CLOUD_API_TOKEN=""), dict(ENV, BENDSQL_DSN=" ")]:
             with patch.object(e2e.subprocess, "run") as run, self.assertRaises(e2e.E2EFailure):
                 self.runner(environment)
             run.assert_not_called()
 
     def test_child_environment_removes_connection_overrides_and_other_secrets(self):
-        environment = dict(ENV, BENDSQL_DSN="untrusted-dsn", BENDSQL_HOST="evil.example",
+        environment = dict(ENV, BENDSQL_HOST="evil.example",
                            BENDSQL_CONFIG="/untrusted/config", RUST_LOG="trace",
                            AWS_SECRET_ACCESS_KEY="not-inherited", HOME="/existing/config",
                            PATH="/bin", HTTPS_PROXY="http://proxy.example")
@@ -67,6 +68,14 @@ class CloudE2EHarnessTests(unittest.TestCase):
         self.assertNotIn("AWS_SECRET_ACCESS_KEY", child)
         self.assertNotIn("RUST_LOG", child)
 
+    def test_live_target_rejects_private_origins_and_custom_options(self):
+        for dsn in ["not-a-dsn", "databend://localhost?org=test", "databend://api.databend.com:8443?org=test",
+                    "databend+http://api.databend.com?org=test", "databend://api.databend.com?org=test&org=other",
+                    "databend://api.databend.com?org=test&sslmode=disable", "databend://user:pw@api.databend.com?org=test",
+                    "databend://api.databend.com?org_slug=test", "databend://api.databend.com?org=test&cloud_api_token=not-allowed"]:
+            with self.subTest(dsn=dsn), self.assertRaises(e2e.E2EFailure):
+                self.runner(dict(ENV, BENDSQL_DSN=dsn))
+
     def test_credentials_are_environment_only_and_warehouse_is_default(self):
         result = subprocess.CompletedProcess([], 0, "42\tcloud-e2e\n", "")
         with patch.object(e2e.subprocess, "run", return_value=result) as run:
@@ -75,7 +84,8 @@ class CloudE2EHarnessTests(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertNotIn(TOKEN, " ".join(command))
         self.assertNotIn(ORG, " ".join(command))
-        self.assertIn("warehouse=default", command)
+        self.assertEqual(parse_qs(urlsplit(run.call_args.kwargs["env"]["BENDSQL_DSN"]).query),
+                         {"org": [ORG], "warehouse": ["default"], "retry_count": ["3"], "login": ["disable"]})
         self.assertIn("--log-level=off", command)
         self.assertEqual(run.call_args.kwargs["env"]["BENDSQL_CLOUD_API_TOKEN"], TOKEN)
         self.assertFalse(Path(run.call_args.kwargs["env"]["HOME"]).exists())

@@ -77,7 +77,7 @@ def run_suite(executable, binding):
         options = {
             "tls_ca_file": str(directory / "ca.pem"),
             "cloud_api_token": TOKEN,
-            "org_slug": ORG,
+            "org": ORG,
             "warehouse": "default",
             "retry_delay_secs": "0",
         }
@@ -101,7 +101,6 @@ def run_suite(executable, binding):
             NO_PROXY="127.0.0.1,localhost",
             RUST_LOG="off",
             BENDSQL_CLOUD_API_TOKEN="ambient-not-a-driver-token",
-            BENDSQL_ORG="ambient-org",
         )
         private = (
             "databend://root:pw@127.0.0.1:"
@@ -133,10 +132,10 @@ def run_suite(executable, binding):
                 "requires cloud_api_token",
             ),
             (
-                "no implicit org from environment",
-                dsn(omit=("org_slug",)),
+                "missing Organization ID",
+                dsn(omit=("org",)),
                 True,
-                "requires org_slug",
+                "requires org",
             ),
             ("explicit HTTP", dsn(scheme="databend+http"), True, "requires HTTPS"),
             ("TLS disabled", dsn(extra={"sslmode": "disable"}), True, "requires HTTPS"),
@@ -175,7 +174,7 @@ def run_suite(executable, binding):
                 "separate tenant",
                 dsn(extra={"tenant": "private-tenant"}),
                 True,
-                "org_slug, not tenant",
+                "org, not tenant",
             ),
             (
                 "duplicate token",
@@ -183,7 +182,13 @@ def run_suite(executable, binding):
                 True,
                 "specified only once",
             ),
-            ("duplicate org", dsn() + "&org_slug=other", True, "specified only once"),
+            ("duplicate org", dsn() + "&org=other", True, "specified only once"),
+            (
+                "old org parameter rejected",
+                dsn(extra={"org_slug": "old-org"}),
+                True,
+                "use org (Organization ID)",
+            ),
         ]
         try:
             for mode in modes:

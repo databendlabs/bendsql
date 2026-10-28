@@ -15,8 +15,8 @@
 use std::process::Command;
 
 const TOKEN: &str = "fake-cloud-review-secret";
-const CLOUD_DSN: &str = "databend://api.databend.com/default?org_slug=org-example";
-const HTTP_DSN: &str = "databend+http://api.databend.com/default?org_slug=org-example";
+const CLOUD_DSN: &str = "databend://api.databend.com/default?org=org-example";
+const HTTP_DSN: &str = "databend+http://api.databend.com/default?org=org-example";
 
 fn rejects(args: &[&str], environment: &[(&str, &str)], config: Option<&str>, expected: &str) {
     let home = tempfile::tempdir().unwrap();
@@ -55,57 +55,58 @@ fn rejects(args: &[&str], environment: &[(&str, &str)], config: Option<&str>, ex
 }
 
 #[test]
-fn ui_rejects_cloud_tokens_from_every_cli_source() {
-    let dsn = format!("{CLOUD_DSN}&%63loud_api_token={TOKEN}");
-    let token_flag = format!("--cloud-api-token={TOKEN}");
-    let token_setting = format!("cloud_api_token={TOKEN}");
-    let config =
-        format!("[connection.args]\ncloud_api_token = '{TOKEN}'\norg_slug = 'org-example'\n");
-    let expected = "--ui is not supported with cloud_api_token";
-    rejects(&["--ui", "--dsn", &dsn], &[], None, expected);
+fn cloud_ui_rejected_for_flag_dsn_and_environment_credentials() {
+    let dsn = format!("{CLOUD_DSN}&cloud_api_token={TOKEN}");
+    rejects(&["--ui", "--dsn", &dsn], &[], None, "--ui is not supported");
     rejects(
-        &["--ui", &token_flag, "--org=org-example"],
+        &["--ui", "--org", "org-example", "--cloud-api-token", TOKEN],
         &[],
         None,
-        expected,
+        "--ui is not supported",
     );
     rejects(
         &["--ui"],
         &[
+            ("BENDSQL_DSN", CLOUD_DSN),
             ("BENDSQL_CLOUD_API_TOKEN", TOKEN),
-            ("BENDSQL_ORG", "org-example"),
         ],
         None,
-        expected,
+        "--ui is not supported",
     );
-    rejects(
-        &["--ui", "--set", &token_setting, "--org=org-example"],
-        &[],
-        None,
-        expected,
-    );
-    rejects(&["--ui"], &[], Some(&config), expected);
-    rejects(&["--ui"], &[("BENDSQL_DSN", &dsn)], None, expected);
 }
 
 #[test]
-fn explicit_org_rejects_competing_command_line_choices_without_exposing_values() {
+fn org_is_the_only_cloud_selector() {
+    for flags in [
+        vec!["--cloud-api-token", TOKEN],
+        vec!["--host", "api.databend.com"],
+        vec!["--dsn", "databend://api.databend.com"],
+    ] {
+        rejects(
+            &flags,
+            &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
+            None,
+            "requires org",
+        );
+    }
     rejects(
-        &[
-            "--org=org-example",
-            "--dsn",
-            &format!("databend://root:{TOKEN}@localhost:8000"),
-        ],
-        &[],
+        &["--org", ""],
+        &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
         None,
-        "--org conflicts with the Gateway/private target in --dsn",
+        "valid Organization ID",
     );
+}
+
+#[test]
+fn cloud_conflicts_are_errors_not_silent_overrides() {
     for (option, value) in [
-        ("--private-key-file", Some("missing.pem")),
-        ("--private-key-passphrase-file", Some("missing.txt")),
+        ("--user", Some("root")),
+        ("--password", Some(TOKEN)),
+        ("--private-key-file", Some("missing")),
+        ("--private-key-passphrase-file", Some("missing")),
         ("--flight", None),
     ] {
-        let mut flags = vec!["--org=org-example", option];
+        let mut flags = vec!["--org", "org-example", option];
         if let Some(value) = value {
             flags.push(value);
         }
@@ -113,164 +114,75 @@ fn explicit_org_rejects_competing_command_line_choices_without_exposing_values()
             &flags,
             &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
             None,
-            &format!("--org cannot be combined with {option}"),
+            &format!("cannot be combined with {option}"),
         );
     }
-    for key in [
-        "access_token",
-        "access_token_file",
-        "private_key_file",
-        "private_key_passphrase_file",
-    ] {
-        rejects(
-            &["--org=org-example", "--set", &format!("{key}={TOKEN}")],
-            &[],
-            None,
-            &format!("--org cannot be combined with --set {key}"),
-        );
-    }
-}
-
-#[test]
-fn explicit_org_overrides_environment_and_saved_native_credentials() {
-    let config = "[connection]\nhost='localhost'\nport=8000\nuser='root'\ntls=false\n[connection.args]\naccess_token_file='missing'\nprivate_key_file='missing'\nsslmode='disable'\ntenant='tn-private'\n";
-    for dsn in ["databend://root:pw@localhost:8000", "not a DSN"] {
-        rejects(
-            &["--org=org-example", "--ui"],
-            &[
-                ("BENDSQL_DSN", dsn),
-                ("BENDSQL_PASSWORD", "native-password"),
-                ("BENDSQL_CLOUD_API_TOKEN", TOKEN),
-            ],
-            Some(config),
-            "--ui is not supported with cloud_api_token",
-        );
-    }
-}
-
-#[test]
-fn bare_org_reads_environment_without_consuming_another_flag() {
     rejects(
-        &["--org", "--ui"],
-        &[
-            ("BENDSQL_CLOUD_API_TOKEN", TOKEN),
-            ("BENDSQL_ORG", "org-example"),
-            ("BENDSQL_DSN", "not a DSN"),
-            ("BENDSQL_PASSWORD", "native-password"),
-        ],
-        None,
-        "--ui is not supported with cloud_api_token",
-    );
-    rejects(
-        &["--org"],
+        &["--org", "org-example", "--dsn", "databend://localhost:8000"],
         &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
         None,
-        "Cloud WebAPI requires --org=<slug>, org_slug in DSN/config or BENDSQL_ORG",
+        "conflicts with the Gateway/private target",
     );
 }
 
 #[test]
-fn explicit_org_without_a_cloud_token_never_falls_back_to_native_auth() {
-    let config = "[connection]\nuser='root'\n[connection.args]\naccess_token_file='missing'\n";
-    for token in ["", "not-set"] {
-        let environment = if token.is_empty() {
-            vec![("BENDSQL_CLOUD_API_TOKEN", "")]
-        } else {
-            vec![]
-        };
+fn org_requires_a_value() {
+    for flags in [vec!["--org"], vec!["--org", "--ui"]] {
+        rejects(&flags, &[], None, "a value is required for '--org <ORG>'");
+    }
+}
+
+#[test]
+fn cloud_without_token_does_not_fall_back_to_native() {
+    for token in [None, Some("")] {
+        let env = token
+            .map(|value| vec![("BENDSQL_CLOUD_API_TOKEN", value)])
+            .unwrap_or_default();
         rejects(
-            &["--org=org-example"],
-            &environment,
-            Some(config),
-            "Cloud WebAPI requires cloud_api_token in DSN/config, --cloud-api-token or BENDSQL_CLOUD_API_TOKEN",
+            &["--org", "org-example"],
+            &env,
+            None,
+            "Cloud mode requires cloud_api_token",
         );
     }
 }
 
 #[test]
-fn cloud_dsn_selects_account_auth_and_ignores_sql_userinfo() {
-    for host in ["api.databend.com", "api.databend.cn", "API.DATABEND.COM"] {
-        let dsn = format!("databend://root:%FF@{host}/default");
+fn cloud_settings_are_not_private_config_or_set_options() {
+    for key in ["org", "org_slug", "cloud_api_token"] {
+        let config = format!("[connection.args]\n{key}='{TOKEN}'\n");
         rejects(
-            &[
-                "--dsn",
-                &dsn,
-                "--org=org-example",
-                "--ui",
-                "--user=root",
-                "--password",
-                TOKEN,
-            ],
-            &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
-            None,
-            "--ui is not supported with cloud_api_token",
+            &[],
+            &[],
+            Some(&config),
+            "Cloud options are not supported in config [connection]",
         );
         rejects(
-            &["--dsn", &dsn, "--ui"],
-            &[
-                ("BENDSQL_CLOUD_API_TOKEN", TOKEN),
-                ("BENDSQL_ORG", "org-example"),
-            ],
-            None,
-            "--ui is not supported with cloud_api_token",
-        );
-        rejects(
-            &["--dsn", &dsn],
+            &["--set", &format!("{key}={TOKEN}")],
             &[],
             None,
-            "Cloud WebAPI requires cloud_api_token",
-        );
-        for option in [
-            "access_token=other",
-            "access_token_file=missing",
-            "private_key_file=missing",
-        ] {
-            let bad = format!("{dsn}?org_slug=org-example&{option}");
-            rejects(
-                &["--dsn", &bad],
-                &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
-                None,
-                "cloud_api_token cannot be combined with Access Token or Key Pair",
-            );
-        }
-        let bad = format!("{dsn}?org_slug=org-example&tenant=tn-other");
-        rejects(
-            &["--dsn", &bad],
-            &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
-            None,
-            "not a separate tenant parameter",
+            "is not supported; use --org",
         );
     }
+}
+
+#[test]
+fn explicit_http_and_grpc_are_not_normalized_away() {
+    let http = format!("{HTTP_DSN}&cloud_api_token={TOKEN}");
+    rejects(&["--dsn", &http], &[], None, "requires HTTPS");
+    let grpc = format!("databend+grpc://api.databend.com?org=example&cloud_api_token={TOKEN}");
+    rejects(&["--dsn", &grpc], &[], None, "not supported with FlightSQL");
+}
+
+#[test]
+fn official_host_without_org_does_not_use_environment_token() {
     rejects(
-        &[
-            "--org=org-example",
-            "--dsn",
-            "databend://api.databend.com.evil.test/default",
-        ],
         &[],
+        &[
+            ("BENDSQL_DSN", "databend://api.databend.com"),
+            ("BENDSQL_CLOUD_API_TOKEN", TOKEN),
+        ],
         None,
-        "--org conflicts with the Gateway/private target in --dsn",
+        "requires org",
     );
-}
-
-#[test]
-fn http_dsn_cannot_be_normalized_away_before_auth_selection() {
-    let token_flag = format!("--cloud-api-token={TOKEN}");
-    for sslmode in ["", "&sslmode=require"] {
-        let dsn = format!("{HTTP_DSN}{sslmode}");
-        let token_dsn = format!("{dsn}&cloud_api_token={TOKEN}");
-        let expected = "requires HTTPS; databend+http is not supported";
-        rejects(&["--dsn", &token_dsn], &[], None, expected);
-        rejects(&["--dsn", &dsn, &token_flag], &[], None, expected);
-        rejects(&[&token_flag], &[("BENDSQL_DSN", &dsn)], None, expected);
-    }
-}
-
-#[test]
-fn grpc_dsn_cannot_be_normalized_away_before_auth_selection() {
-    let dsn = "databend+grpc://api.databend.com/default?org_slug=org-example";
-    let token_flag = format!("--cloud-api-token={TOKEN}");
-    let expected = "not supported with FlightSQL";
-    rejects(&["--dsn", dsn, &token_flag], &[], None, expected);
-    rejects(&[&token_flag], &[("BENDSQL_DSN", dsn)], None, expected);
 }

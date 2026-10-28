@@ -77,11 +77,13 @@ impl CloudApiAuth {
         }
         if org.is_empty() || org.trim() != org || org.len() > 256 {
             return Err(Error::BadArgument(
-                "Cloud API token authentication requires a valid org_slug".into(),
+                "Cloud API token authentication requires a valid org (Organization ID)".into(),
             ));
         }
         let org_header = HeaderValue::from_str(&org).map_err(|_| {
-            Error::BadArgument("Cloud API token authentication requires a valid org_slug".into())
+            Error::BadArgument(
+                "Cloud API token authentication requires a valid org (Organization ID)".into(),
+            )
         })?;
         token_header.set_sensitive(true);
         Ok(Self {

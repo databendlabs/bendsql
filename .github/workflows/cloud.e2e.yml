@@ -6,7 +6,7 @@ on:
     secrets:
       BENDSQL_CLOUD_API_TOKEN:
         required: true
-      BENDSQL_ORG:
+      BENDSQL_DSN:
         required: true
 
 permissions:
@@ -37,15 +37,15 @@ jobs:
         id: credentials
         env:
           HAS_TOKEN: ${{ secrets.BENDSQL_CLOUD_API_TOKEN != '' }}
-          HAS_ORG: ${{ secrets.BENDSQL_ORG != '' }}
+          HAS_DSN: ${{ secrets.BENDSQL_DSN != '' }}
         run: |
-          if [ "$HAS_TOKEN" = "true" ] && [ "$HAS_ORG" = "true" ]; then
+          if [ "$HAS_TOKEN" = "true" ] && [ "$HAS_DSN" = "true" ]; then
             echo 'available=true' >> "$GITHUB_OUTPUT"
           elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
             echo 'available=false' >> "$GITHUB_OUTPUT"
             echo '::notice::Skipping live Cloud E2E: repository test Secrets are not configured.'
           else
-            echo '::error::Configure BENDSQL_CLOUD_API_TOKEN and BENDSQL_ORG for a dedicated test account.'
+            echo '::error::Configure BENDSQL_CLOUD_API_TOKEN and BENDSQL_DSN for a dedicated test account.'
             exit 1
           fi
       - name: Checkout the exact trusted main commit
@@ -64,5 +64,5 @@ jobs:
         if: steps.credentials.outputs.available == 'true'
         env:
           BENDSQL_CLOUD_API_TOKEN: ${{ secrets.BENDSQL_CLOUD_API_TOKEN }}
-          BENDSQL_ORG: ${{ secrets.BENDSQL_ORG }}
+          BENDSQL_DSN: ${{ secrets.BENDSQL_DSN }}
         run: python3 cli/tests/cloud_webapi_e2e.py target/debug/bendsql
