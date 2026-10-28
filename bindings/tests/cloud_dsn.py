@@ -122,6 +122,12 @@ def run_suite(executable, binding):
                 None,
             ),
             ("China", dsn("api.databend.cn"), True, None),
+            (
+                "backend without session_header",
+                dsn(),
+                True,
+                "requires session_header support",
+            ),
             ("case-insensitive host", dsn("API.DATABEND.COM"), True, None),
             ("default host", dsn(""), True, None),
             ("private auth ignores Cloud environment", private, False, None),
@@ -206,6 +212,8 @@ def run_suite(executable, binding):
             for mode in modes:
                 for name, connection_dsn, cloud, error in cases:
                     label = f"{mode}: {name}"
+                    missing_session = name == "backend without session_header"
+                    server.emit_session_header = not missing_session
                     server.records, server.pages, server.tunnels = [], 0, []
                     (
                         server.cloud,
@@ -242,10 +250,33 @@ def run_suite(executable, binding):
                         label + ": binding worker failed (diagnostics withheld)",
                     )
                     if error:
-                        require(
-                            not server.records and not server.tunnels,
-                            label + ": network before validation",
-                        )
+                        if missing_session:
+                            require(
+                                bool(server.tunnels),
+                                label + ": missing HTTPS connection",
+                            )
+                            require(
+                                len(server.records) == 2
+                                and server.records[0][1].startswith("/v1/session/login")
+                                and server.records[1][0:2] == ("POST", "/v1/query"),
+                                label
+                                + ": unsupported backend must fail on first query without replay/polling",
+                            )
+                            require(
+                                all(
+                                    not any(
+                                        key.lower() in {"cookie", "authorization"}
+                                        for key in headers
+                                    )
+                                    for _, _, headers, _ in server.records
+                                ),
+                                label + ": Cookie/auth fallback",
+                            )
+                        else:
+                            require(
+                                not server.records and not server.tunnels,
+                                label + ": network before validation",
+                            )
                     else:
                         require(len(server.records) > 1, label + ": no query requests")
                         queries = 0

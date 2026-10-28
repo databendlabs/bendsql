@@ -120,9 +120,18 @@ are rejected rather than forwarding credentials.
   Do not expect temporary tables to be visible from another connection, even
   when the account, organization and Warehouse are identical.
 - The backend must support `session_header`; there is no Cookie fallback.
-  Refreshed response headers are saved automatically. Session-token refresh,
-  background heartbeat and logout APIs are not used in Cloud mode; long-idle
-  session and failover behavior are not guaranteed.
+  If no valid `X-DATABEND-SESSION` has been received by the first successful SQL
+  query response, the driver reports an error and makes the connection unusable,
+  including for queries waiting for session bootstrap. No rows are returned and
+  SQL is not automatically replayed. **The query may already have executed:**
+  check its outcome before retrying, especially for writes. Login responses,
+  HTTP failures and SQL errors without a session header retain their original
+  semantics rather than being reported as missing capability support.
+  After a valid session is established, a response without a new header keeps
+  the previous value; refreshed response headers are saved automatically.
+  An invalid initial session header also makes the connection unusable.
+  Session-token refresh, background heartbeat and logout APIs are not used in
+  Cloud mode; long-idle session and failover behavior are not guaranteed.
 - FlightSQL, bound parameters, stage attachments, Arrow, pagination tuning,
   stage upload and streaming load are unsupported. Presign probing is disabled.
 - `--ui` is rejected: its web Python runner could expose the personal token.

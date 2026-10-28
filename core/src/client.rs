@@ -1557,6 +1557,9 @@ impl APIClient {
                 }
             }
 
+            self.transport
+                .validate_query_session(status, &request_kind, &body)
+                .map_err(|error| error.with_context(request_kind.clone()))?;
             return Ok(HttpResponseData {
                 status,
                 headers,

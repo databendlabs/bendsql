@@ -24,6 +24,7 @@ use url::Url;
 use crate::cloud_api::HEADER_CLOUD_WAREHOUSE;
 use crate::error::{Error, RequestKind, Result};
 use crate::global_cookie_store::GlobalCookieStore;
+use crate::response::QueryResponse;
 
 pub(crate) const HEADER_CLIENT_CAPS: &str = "X-DATABEND-CLIENT-CAPS";
 pub(crate) const HEADER_SESSION: &str = "X-DATABEND-SESSION";
@@ -35,9 +36,19 @@ pub(crate) enum Transport {
     #[default]
     Native,
     CloudWebApi {
-        session_header: Mutex<Option<HeaderValue>>,
+        session: Mutex<CloudSession>,
         session_init: AsyncMutex<()>,
     },
+}
+
+pub(crate) enum CloudSession {
+    Pending,
+    Ready(HeaderValue),
+    Unavailable,
+}
+
+fn session_unavailable() -> Error {
+    Error::Decode("Cloud WebAPI requires session_header support: the backend did not provide a valid X-DATABEND-SESSION header; this connection cannot continue. The query may already have executed; check its outcome before retrying".into())
 }
 
 pub(crate) enum UploadKind {
@@ -48,7 +59,7 @@ pub(crate) enum UploadKind {
 impl Transport {
     pub(crate) fn cloud() -> Self {
         Self::CloudWebApi {
-            session_header: Mutex::new(None),
+            session: Mutex::new(CloudSession::Pending),
             session_init: AsyncMutex::new(()),
         }
     }
@@ -170,13 +181,13 @@ impl Transport {
     /// Serialize only bootstrap, until one server-issued session is known.
     pub(crate) async fn bootstrap_guard(&self) -> Option<MutexGuard<'_, ()>> {
         if let Self::CloudWebApi {
-            session_header,
+            session,
             session_init,
         } = self
         {
-            if session_header.lock().is_none() {
+            if matches!(*session.lock(), CloudSession::Pending) {
                 let guard = session_init.lock().await;
-                if session_header.lock().is_none() {
+                if matches!(*session.lock(), CloudSession::Pending) {
                     return Some(guard);
                 }
             }
@@ -185,7 +196,11 @@ impl Transport {
     }
 
     pub(crate) fn prepare_request(&self, request: &mut Request, endpoint: &Url) -> Result<()> {
-        if let Self::CloudWebApi { session_header, .. } = self {
+        if let Self::CloudWebApi { session, .. } = self {
+            let session = session.lock();
+            if matches!(*session, CloudSession::Unavailable) {
+                return Err(session_unavailable());
+            }
             if request.url().origin() != endpoint.origin() {
                 return Err(Error::BadArgument(
                     "refusing to send Cloud session state to another origin".into(),
@@ -197,7 +212,7 @@ impl Transport {
                 HeaderValue::from_static("session_header"),
             );
             request.headers_mut().remove(HEADER_SESSION);
-            if let Some(header) = session_header.lock().as_ref() {
+            if let CloudSession::Ready(header) = &*session {
                 request.headers_mut().insert(HEADER_SESSION, header.clone());
             }
         }
@@ -205,7 +220,11 @@ impl Transport {
     }
 
     pub(crate) fn observe_response(&self, headers: &HeaderMap) -> Result<()> {
-        if let Self::CloudWebApi { session_header, .. } = self {
+        if let Self::CloudWebApi { session, .. } = self {
+            let mut session = session.lock();
+            if matches!(*session, CloudSession::Unavailable) {
+                return Err(session_unavailable());
+            }
             let mut values = headers.get_all(HEADER_SESSION).iter();
             if let Some(header) = values.next() {
                 // Opaque and bounded: never decode or synthesize session IDs.
@@ -214,13 +233,46 @@ impl Transport {
                     || header.to_str().is_err()
                     || values.next().is_some()
                 {
+                    if matches!(*session, CloudSession::Pending) {
+                        *session = CloudSession::Unavailable;
+                    }
                     return Err(Error::Decode(
                         "invalid Cloud session response header".into(),
                     ));
                 }
                 let mut header = header.clone();
                 header.set_sensitive(true);
-                *session_header.lock() = Some(header);
+                *session = CloudSession::Ready(header);
+            }
+        }
+        Ok(())
+    }
+
+    /// Check bootstrap while its guard is still held, before a waiting query can
+    /// submit SQL. Missing headers on login/errors must not mask those responses.
+    pub(crate) fn validate_query_session(
+        &self,
+        status: StatusCode,
+        kind: &RequestKind,
+        body: &[u8],
+    ) -> Result<()> {
+        if status != StatusCode::OK
+            || !matches!(kind, RequestKind::QueryStart | RequestKind::QueryPage)
+        {
+            return Ok(());
+        }
+        if let Self::CloudWebApi { session, .. } = self {
+            let mut session = session.lock();
+            if matches!(*session, CloudSession::Pending) {
+                // Decode only the header-less bootstrap case. Normal responses
+                // are decoded once by APIClient; malformed/SQL errors keep their
+                // original diagnostics rather than becoming capability errors.
+                if let Ok(response) = serde_json::from_slice::<QueryResponse>(body) {
+                    if response.error.is_none() {
+                        *session = CloudSession::Unavailable;
+                        return Err(session_unavailable());
+                    }
+                }
             }
         }
         Ok(())

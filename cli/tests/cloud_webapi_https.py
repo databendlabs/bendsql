@@ -82,7 +82,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.server.state.emit_session_cookies:
             self.send_header("Set-Cookie", "session_id=mock-sql-session; Path=/; Secure; HttpOnly")
             self.send_header("Set-Cookie", "last_refresh_time=123; Path=/; Secure")
-        if self.server.state.cloud and self.headers.get("X-DATABEND-CLIENT-CAPS") == "session_header":
+        if (self.server.state.cloud and getattr(self.server.state, "emit_session_header", True)
+                and self.headers.get("X-DATABEND-CLIENT-CAPS") == "session_header"):
             self.send_header("X-DATABEND-SESSION", f"opaque-https-session-{self.server.state.session_version}")
             self.server.state.session_version += 1
         self.end_headers()
@@ -153,7 +154,8 @@ def main():
             "retry_delay_secs": "0"})
 
         def run(name, args, environment=None, config=None, expected_cloud=False,
-                authorization=None, expected_error=None, query="SELECT 1", emit_session_cookies=True):
+                authorization=None, expected_error=None, query="SELECT 1", emit_session_cookies=True,
+                emit_session_header=True):
             with tempfile.TemporaryDirectory(prefix="bendsql-home-") as home:
                 if config:
                     target = Path(home) / ".bendsql"
@@ -167,14 +169,21 @@ def main():
                 env.update(environment or {})
                 server.records, server.pages, server.cloud, server.tunnels = [], 0, expected_cloud, []
                 server.emit_session_cookies = emit_session_cookies
+                server.emit_session_header = emit_session_header
                 server.session_version = 0
                 result = subprocess.run([binary, "--non-interactive", f"--query={query}", *args],
                                         env=env, capture_output=True, text=True, timeout=15)
                 text = result.stdout + result.stderr
                 assert TOKEN not in text, name + ": token in output"
+                assert "opaque-https-session-" not in text, name + ": session in output"
                 if expected_error:
                     assert result.returncode != 0 and expected_error in text, (name, text)
-                    assert not server.records, name
+                    if expected_cloud and not emit_session_header:
+                        assert [path for _, path, _, _ in server.records] == ["/v1/session/login?disable_session_token=true", "/v1/query"], name
+                        assert "may already have executed" in text, name
+                        assert not result.stdout.strip(), name + ": rows exposed without a valid session"
+                    else:
+                        assert not server.records, name
                 else:
                     assert result.returncode == 0, (name, text)
                     assert "1" in result.stdout.splitlines(), (name, text)
@@ -217,6 +226,8 @@ def main():
             endpoint = "databend://root:%FF@api.databend.com:443/default?" + urlencode({
                 "tls_ca_file": ca, "org": "org-example", "retry_delay_secs": "0"})
             run("Cloud DSN through HTTPS, pagination/session refresh/final", ["--dsn", cloud], expected_cloud=True)
+            run("missing session capability fails instead of Cookie fallback", ["--dsn", cloud],
+                expected_cloud=True, expected_error="requires session_header support", emit_session_header=False)
             run("Cloud DSN with environment token", ["--dsn", endpoint], env_credentials, expected_cloud=True)
             run("Cloud BENDSQL_DSN with environment token", [], dict(env_credentials, BENDSQL_DSN=endpoint), expected_cloud=True)
             run("case-insensitive official host", ["--dsn", endpoint.replace("api.databend.com", "API.DATABEND.COM")], env_credentials, expected_cloud=True)

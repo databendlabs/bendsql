@@ -49,6 +49,11 @@ impl MockReply {
             headers: vec![],
         }
     }
+    fn without_session(mut self) -> Self {
+        self.headers.push(("X-Mock-No-Session", "1".into()));
+        self
+    }
+
     fn error(status: u16) -> Self {
         Self {
             status,
@@ -115,14 +120,23 @@ impl MockServer {
                                     .map(|(key, value)| (key.to_ascii_lowercase(), value.trim().to_string())).collect(),
                                 body: bytes[end..end + length].to_vec(),
                             };
-                            let reply = handler(&request);
+                            let mut reply = handler(&request);
+                            // Model a session-header-capable backend by default;
+                            // tests of unsupported backends opt out explicitly.
+                            if request.headers.get("x-databend-client-caps").map(String::as_str) == Some("session_header")
+                                && reply.status == 200
+                                && !reply.headers.iter().any(|(key, _)| key.eq_ignore_ascii_case(HEADER_SESSION) || *key == "X-Mock-No-Session") {
+                                reply.headers.push((HEADER_SESSION, "opaque-default-session".into()));
+                            }
                             captured.lock().push(request);
                             if let Some((_, delay)) = reply.headers.iter().find(|(name, _)| *name == "X-Mock-Delay") {
                                 tokio::time::sleep(Duration::from_millis(delay.parse().unwrap())).await;
                             }
                             let length = reply.body.len() + if reply.headers.iter().any(|(name, _)| *name == "X-Mock-Truncate") { 100 } else { 0 };
                             let mut response = format!("HTTP/1.1 {} Mock\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n", reply.status, length);
-                            for (key, value) in reply.headers { response.push_str(&format!("{key}: {value}\r\n")); }
+                            for (key, value) in reply.headers {
+                                if key != "X-Mock-No-Session" { response.push_str(&format!("{key}: {value}\r\n")); }
+                            }
                             response.push_str("\r\n"); response.push_str(&reply.body);
                             let _ = stream.write_all(response.as_bytes()).await;
                         });
@@ -157,6 +171,195 @@ async fn client(server: &MockServer) -> APIClient {
     ));
     client.build_client(None).await.unwrap();
     client
+}
+
+#[tokio::test]
+async fn cloud_missing_session_header_fails_closed_without_replaying_sql() {
+    for sql in [
+        "SELECT 1",
+        "BEGIN",
+        "CREATE TEMP TABLE missing_session(n INT)",
+    ] {
+        let server = MockServer::new(|request| {
+            assert_cloud_session_transport(request);
+            let mut reply = MockReply::json(query_reply()).without_session();
+            reply
+                .headers
+                .push(("Set-Cookie", "session_id=not-a-fallback; Path=/".into()));
+            reply
+        })
+        .await;
+        let client = client(&server).await;
+        for _ in 0..2 {
+            let error = client
+                .start_query_inner(sql, None, false, None)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("requires session_header support"), "{error}");
+            assert!(error.contains("may already have executed"));
+            assert!(!error.contains(TOKEN));
+            assert!(!error.contains("not-a-fallback"));
+        }
+        assert_eq!(
+            server.requests.lock().len(),
+            1,
+            "SQL must not be replayed or sent on an unusable connection"
+        );
+    }
+}
+
+#[tokio::test]
+async fn cloud_missing_bootstrap_header_blocks_concurrent_waiters() {
+    let server = MockServer::new(|_| {
+        let mut reply = MockReply::json(query_reply()).without_session();
+        reply.headers.push(("X-Mock-Delay", "25".into()));
+        reply
+    })
+    .await;
+    let client = client(&server).await;
+    let (first, second) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(
+            client.start_query_inner("BEGIN", None, false, None),
+            client.start_query_inner(
+                "CREATE TEMP TABLE missing_session(n INT)",
+                None,
+                false,
+                None
+            ),
+        )
+    })
+    .await
+    .expect("bootstrap waiters must fail rather than hang");
+    for result in [first, second] {
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("requires session_header support"));
+    }
+    assert_eq!(server.requests.lock().len(), 1);
+}
+
+#[tokio::test]
+async fn cloud_login_without_session_header_does_not_establish_sql_session() {
+    for status in [200, 404] {
+        let server = MockServer::new(move |request| {
+            if request.path.starts_with("/v1/session/login") {
+                if status == 404 {
+                    MockReply::error(404)
+                } else {
+                    MockReply::json(json!({"version":"1.2.952"})).without_session()
+                }
+            } else {
+                MockReply::json(query_reply()).without_session()
+            }
+        })
+        .await;
+        let mut client = client(&server).await;
+        client.login().await.unwrap();
+        let error = client
+            .start_query_inner("SELECT 1", None, false, None)
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("requires session_header support"));
+        assert_eq!(server.requests.lock().len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn cloud_missing_header_does_not_mask_http_decode_or_sql_errors() {
+    for failure in ["http", "decode", "sql"] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let server = MockServer::new(move |_| {
+            if seen.fetch_add(1, Ordering::SeqCst) > 0 {
+                return MockReply::json(query_reply());
+            }
+            match failure {
+                "http" => MockReply::error(403),
+                "decode" => MockReply::json(json!({"invalid":"response"})).without_session(),
+                "sql" => {
+                    let mut body = query_reply();
+                    body["error"] = json!({"code":5100, "message":TOKEN});
+                    MockReply::json(body).without_session()
+                }
+                _ => unreachable!(),
+            }
+        })
+        .await;
+        let client = client(&server).await;
+        let error = client
+            .start_query_inner("SELECT 1", None, false, None)
+            .await
+            .unwrap_err();
+        assert!(!error
+            .to_string()
+            .contains("requires session_header support"));
+        assert!(!format!("{error:?}").contains(TOKEN));
+        match failure {
+            "http" => assert_eq!(error.status_code(), Some(StatusCode::FORBIDDEN)),
+            "decode" => assert!(matches!(error, Error::Decode(_))),
+            "sql" => assert!(matches!(error, Error::QueryFailed(_))),
+            _ => unreachable!(),
+        }
+        client
+            .start_query_inner("SELECT 1", None, false, None)
+            .await
+            .unwrap();
+        assert_eq!(server.requests.lock().len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn cloud_established_session_survives_omitted_response_headers() {
+    let server = MockServer::new(|request| {
+        if request.headers.contains_key("x-databend-session") {
+            assert_eq!(
+                request.headers["x-databend-session"],
+                "opaque-default-session"
+            );
+            MockReply::json(query_reply()).without_session()
+        } else {
+            MockReply::json(query_reply())
+        }
+    })
+    .await;
+    let client = client(&server).await;
+    for _ in 0..3 {
+        client
+            .start_query_inner("SELECT 1", None, false, None)
+            .await
+            .unwrap();
+    }
+    assert_eq!(server.requests.lock().len(), 3);
+}
+
+#[tokio::test]
+async fn cloud_invalid_initial_session_header_makes_connection_unusable() {
+    let server = MockServer::new(|_| {
+        let mut reply = MockReply::json(query_reply());
+        reply.headers.push((HEADER_SESSION, String::new()));
+        reply
+    })
+    .await;
+    let client = client(&server).await;
+    let error = client
+        .start_query_inner("SELECT 1", None, false, None)
+        .await
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("invalid Cloud session response header"));
+    let error = client
+        .start_query_inner("SELECT 1", None, false, None)
+        .await
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("requires session_header support"));
+    assert_eq!(server.requests.lock().len(), 1);
 }
 
 #[tokio::test]
