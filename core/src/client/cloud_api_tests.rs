@@ -19,6 +19,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::{JoinHandle, JoinSet};
 
+mod lifecycle;
+
 const TOKEN: &str = "dbc_test_secret";
 const ORG: &str = "org-example";
 
@@ -155,7 +157,7 @@ impl MockServer {
 
 fn query_reply() -> Value {
     json!({"id":"q1","schema":[{"name":"n","type":"Int64"}],"data":[["1"]],"state":"Succeeded",
-        "session":{"database":"default","need_keep_alive":true},
+        "session":{"database":"default"},
         "next_uri":"/v1/query/q1/page/0",
         "stats":{"scan_progress":{"rows":0,"bytes":0},"write_progress":{"rows":0,"bytes":0},
         "result_progress":{"rows":1,"bytes":1},"running_time_ms":0.0}})

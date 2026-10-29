@@ -73,6 +73,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
     def respond(self, status, body):
+        if (status == 200 and self.server.state.cloud
+                and getattr(self.server.state, "keep_alive", False)
+                and self.path.startswith("/v1/query")):
+            body["session"].update(need_keep_alive=True, need_sticky=True)
+            body["node_id"] = "sticky-node"
         body = json.dumps(body).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -111,7 +116,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         state = self.server.state
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         state.records.append((self.command, self.path, dict(self.headers), body))
-        if self.path.startswith("/v1/session/login"):
+        if self.path == "/v1/session/logout":
+            self.respond(200, {"error": None})
+        elif self.path.startswith("/v1/session/login"):
             self.respond(404, {"error": "not found"})
         elif self.command == "POST" and self.path == "/v1/query":
             next_uri = "/v1/query/q1/page/0" if state.cloud else None
@@ -155,7 +162,7 @@ def main():
 
         def run(name, args, environment=None, config=None, expected_cloud=False,
                 authorization=None, expected_error=None, query="SELECT 1", emit_session_cookies=True,
-                emit_session_header=True):
+                emit_session_header=True, keep_alive=False):
             with tempfile.TemporaryDirectory(prefix="bendsql-home-") as home:
                 if config:
                     target = Path(home) / ".bendsql"
@@ -170,6 +177,7 @@ def main():
                 server.records, server.pages, server.cloud, server.tunnels = [], 0, expected_cloud, []
                 server.emit_session_cookies = emit_session_cookies
                 server.emit_session_header = emit_session_header
+                server.keep_alive = keep_alive
                 server.session_version = 0
                 result = subprocess.run([binary, "--non-interactive", f"--query={query}", *args],
                                         env=env, capture_output=True, text=True, timeout=15)
@@ -218,6 +226,15 @@ def main():
                                    for _, _, headers, _ in server.records), name
                         assert "2" in result.stdout.splitlines(), (name, text)
                         assert server.pages == 2, name + ": page 503 not retried"
+                        logouts = [(method, headers, body) for method, path, headers, body in server.records
+                                   if path == "/v1/session/logout"]
+                        assert len(logouts) == int(keep_alive), name + ": conditional logout"
+                        if keep_alive:
+                            method, headers, body = logouts[0]
+                            headers = {key.lower(): value for key, value in headers.items()}
+                            assert method == "POST" and body == b"", name
+                            assert headers.get("x-databend-sticky-node") == "sticky-node", name
+                            assert server.records[-1][1] == "/v1/session/logout", name
                         assert any(method == "GET" and path.endswith("/final")
                                    for method, path, _, _ in server.records), name
                 print("PASS:", name)
@@ -228,6 +245,7 @@ def main():
                 "tls_ca_file": ca, "org": "org-example", "retry_delay_secs": "0"})
             run("Cloud DSN through HTTPS, pagination/session refresh/final", ["--dsn", cloud], expected_cloud=True)
             run("Cloud forces login disabled", ["--dsn", cloud + "&login=enable"], expected_cloud=True)
+            run("Cloud sticky session logs out with latest header", ["--dsn", cloud], expected_cloud=True, keep_alive=True)
             run("missing session capability fails instead of Cookie fallback", ["--dsn", cloud],
                 expected_cloud=True, expected_error="requires session_header support", emit_session_header=False)
             run("Cloud DSN with environment token", ["--dsn", endpoint], env_credentials, expected_cloud=True)

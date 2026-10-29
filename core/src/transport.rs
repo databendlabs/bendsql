@@ -94,10 +94,17 @@ impl Transport {
         }
     }
 
-    pub(crate) fn uses_native_session_apis(&self) -> bool {
+    pub(crate) fn uses_native_session_tokens(&self) -> bool {
         match self {
             Self::Native => true,
             Self::CloudWebApi { .. } => false,
+        }
+    }
+
+    pub(crate) fn can_use_session_lifecycle(&self) -> bool {
+        match self {
+            Self::Native => true,
+            Self::CloudWebApi { session } => matches!(*session.lock(), CloudSession::Ready(_)),
         }
     }
 
@@ -281,7 +288,8 @@ mod tests {
             assert!(mode.allow_replay(&RequestKind::QueryPage));
             assert!(mode.allow_replay(&RequestKind::QueryFinal));
             assert_eq!(mode.supports_presign(), !cloud);
-            assert_eq!(mode.uses_native_session_apis(), !cloud);
+            assert_eq!(mode.uses_native_session_tokens(), !cloud);
+            assert_eq!(mode.can_use_session_lifecycle(), !cloud);
             assert!(mode.validate_query_payload(false, false).is_ok());
             assert_eq!(mode.validate_query_payload(true, false).is_err(), cloud);
             assert_eq!(mode.validate_query_payload(false, true).is_err(), cloud);

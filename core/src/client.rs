@@ -713,7 +713,7 @@ impl APIClient {
     }
 
     fn wrap_auth_or_session_token(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
-        if !self.transport.uses_native_session_apis() {
+        if !self.transport.uses_native_session_tokens() {
             return self.auth.wrap(builder);
         }
         if let Some(info) = &self.session_token_info {
@@ -1234,7 +1234,7 @@ impl APIClient {
                 let session_id = self.session_id.as_str();
                 if let Some(tokens) = info
                     .tokens
-                    .filter(|_| self.transport.uses_native_session_apis())
+                    .filter(|_| self.transport.uses_native_session_tokens())
                 {
                     info!(
                         "[session {session_id}] login success with session token version = {server_version}",
@@ -1249,7 +1249,7 @@ impl APIClient {
     }
 
     pub(crate) async fn try_heartbeat(&self) -> Result<()> {
-        if !self.transport.uses_native_session_apis() {
+        if !self.transport.can_use_session_lifecycle() {
             return Ok(());
         }
         let endpoint = self.endpoint.join("/v1/session/heartbeat")?;
@@ -1277,8 +1277,22 @@ impl APIClient {
         let body = json!({
            "node_to_queries": node_to_queries
         });
-        let headers = self.make_headers(None)?;
+        let mut headers = self.make_headers(None)?;
+        // Sticky Cloud sessions (temporary tables) must reach their warehouse
+        // node even when there are no active queries in the heartbeat body.
+        if self.transport.is_cloud_webapi()
+            && self.session_state.lock().need_sticky.unwrap_or(false)
+        {
+            if let Some(node_id) = self.last_node_id() {
+                headers.insert(HEADER_STICKY_NODE, node_id.parse()?);
+            }
+        }
         let builder = self.cli.post(endpoint.clone()).json(&body).headers(headers);
+        let builder = if self.transport.is_cloud_webapi() {
+            builder.timeout(self.page_request_timeout)
+        } else {
+            builder
+        };
         let request = self.wrap_auth_or_session_token(builder)?.build()?;
         let response = self
             .query_request_helper(request, true, false, true, RequestKind::Heartbeat)
@@ -1289,8 +1303,13 @@ impl APIClient {
                 .with_context(RequestKind::Heartbeat));
         }
         let json: Value = self.decode_response(&response.body)?;
-        let session_id = self.session_id.as_str();
-        info!("[session {session_id}] heartbeat request={body}, response={json}");
+        if self.transport.is_cloud_webapi() {
+            // Do not log arbitrary Cloud response fields or session values.
+            info!("Cloud heartbeat success");
+        } else {
+            let session_id = self.session_id.as_str();
+            info!("[session {session_id}] heartbeat request={body}, response={json}");
+        }
         if let Some(queries_to_remove) = json.get("queries_to_remove") {
             if let Some(arr) = queries_to_remove.as_array() {
                 if !arr.is_empty() {
@@ -1325,14 +1344,21 @@ impl APIClient {
             }
         }
         let builder = self.cli.post(endpoint.clone()).headers(headers.clone());
-
+        let builder = if self.transport.is_cloud_webapi() {
+            builder.timeout(self.page_request_timeout)
+        } else {
+            builder
+        };
         let builder = self.wrap_auth_or_session_token(builder)?;
-        let req = builder.build()?;
+        let mut req = builder.build()?;
+        // Logout uses the existing direct-send close path rather than the query
+        // helper, so attach the current opaque Cloud session explicitly.
+        self.transport.prepare_request(&mut req, &self.endpoint)?;
         Ok(req)
     }
 
     pub(crate) fn need_logout(&self) -> bool {
-        if !self.transport.uses_native_session_apis() {
+        if !self.transport.can_use_session_lifecycle() {
             return false;
         }
         self.session_token_info.is_some()
@@ -1581,6 +1607,16 @@ impl APIClient {
         };
     }
 
+    async fn logout_cloud(http_client: HttpClient, request: Request) {
+        // Like native close, logout is best effort and sent once. Do not log a
+        // Cloud response body, credentials, or opaque session state on failure.
+        match http_client.execute(request).await {
+            Ok(response) if response.status().is_success() => info!("Cloud logout success"),
+            Ok(response) => error!("Cloud logout failed (HTTP {})", response.status()),
+            Err(_) => error!("Cloud logout request failed"),
+        }
+    }
+
     pub async fn close(&self) {
         let session_id = &self.session_id;
         info!("[session {session_id}] try closing now");
@@ -1595,7 +1631,11 @@ impl APIClient {
                 let req = self
                     .build_log_out_request()
                     .expect("failed to build logout request");
-                Self::logout(cli, req, &self.session_id).await;
+                if self.transport.is_cloud_webapi() {
+                    Self::logout_cloud(cli, req).await;
+                } else {
+                    Self::logout(cli, req, &self.session_id).await;
+                }
             }
         }
     }
@@ -1614,8 +1654,13 @@ impl APIClient {
                     .build_log_out_request()
                     .expect("failed to build logout request");
                 let session_id = self.session_id.clone();
+                let cloud = self.transport.is_cloud_webapi();
                 GLOBAL_RUNTIME.spawn(async move {
-                    Self::logout(cli, req, session_id.as_str()).await;
+                    if cloud {
+                        Self::logout_cloud(cli, req).await;
+                    } else {
+                        Self::logout(cli, req, session_id.as_str()).await;
+                    }
                 });
             }
         }

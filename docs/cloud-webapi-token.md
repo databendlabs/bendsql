@@ -133,8 +133,20 @@ are rejected rather than forwarding credentials.
   Requests are not serialized to establish a session: use one connection
   sequentially for transactions and temporary tables. Concurrent session-state
   conflicts are a separate issue shared with native mode.
-  Session-token refresh, background heartbeat and logout APIs are not used in
-  Cloud mode; long-idle session and failover behavior are not guaranteed.
+- Cloud uses `POST /v1/session/heartbeat` for tracked unread results and sticky
+  sessions, after the first SQL response establishes a session header. Heartbeats
+  retain bounded safe retries and use the latest header; sticky session heartbeats
+  include node routing even without active queries. Idle stateless connections do
+  not heartbeat. This requires the deployed WebAPI session routes.
+- Closing a Cloud connection with server-reported `need_keep_alive` sends one
+  best-effort `POST /v1/session/logout`, including its latest session header and
+  sticky-node routing. Both explicit and spawned close paths are supported.
+  Logout has a bounded request timeout, does not retry or follow redirects, and
+  does not expose response bodies in logs. A process forcibly killed before
+  cleanup completes still relies on normal server expiry.
+- Cloud login and Databend session-token refresh remain disabled; every lifecycle
+  request still uses the Cloud API token. Long-idle recovery and failover are not
+  guaranteed. Native login, heartbeat, logout and retry behavior are unchanged.
 - FlightSQL, bound parameters, stage attachments, Arrow, pagination tuning,
   stage upload and streaming load are unsupported. Presign probing is disabled.
 - `--ui` is rejected: its web Python runner could expose the personal token.
