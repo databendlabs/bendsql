@@ -14,6 +14,9 @@
 
 use std::process::Command;
 
+// Resolver unit tests cover option matrices. These check real process/env/UI
+// boundaries and ensure rejection precedes logging or connection setup.
+
 const TOKEN: &str = "fake-cloud-review-secret";
 const CLOUD_DSN: &str = "databend://api.databend.com/default?org=org-example";
 const HTTP_DSN: &str = "databend+http://api.databend.com/default?org=org-example";
@@ -72,56 +75,6 @@ fn cloud_ui_rejected_for_flag_dsn_and_environment_credentials() {
         ],
         None,
         "--ui is not supported",
-    );
-}
-
-#[test]
-fn org_is_the_only_cloud_selector() {
-    for flags in [
-        vec!["--cloud-api-token", TOKEN],
-        vec!["--host", "api.databend.com"],
-        vec!["--dsn", "databend://api.databend.com"],
-    ] {
-        rejects(
-            &flags,
-            &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
-            None,
-            "requires org",
-        );
-    }
-    rejects(
-        &["--org", ""],
-        &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
-        None,
-        "valid Organization ID",
-    );
-}
-
-#[test]
-fn cloud_conflicts_are_errors_not_silent_overrides() {
-    for (option, value) in [
-        ("--user", Some("root")),
-        ("--password", Some(TOKEN)),
-        ("--private-key-file", Some("missing")),
-        ("--private-key-passphrase-file", Some("missing")),
-        ("--flight", None),
-    ] {
-        let mut flags = vec!["--org", "org-example", option];
-        if let Some(value) = value {
-            flags.push(value);
-        }
-        rejects(
-            &flags,
-            &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
-            None,
-            &format!("cannot be combined with {option}"),
-        );
-    }
-    rejects(
-        &["--org", "org-example", "--dsn", "databend://localhost:8000"],
-        &[("BENDSQL_CLOUD_API_TOKEN", TOKEN)],
-        None,
-        "conflicts with the Gateway/private target",
     );
 }
 

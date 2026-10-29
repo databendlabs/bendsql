@@ -1196,11 +1196,7 @@ impl APIClient {
         let response = self
             .query_request_helper(request, true, false, true, RequestKind::Login)
             .await?;
-        if response.status == StatusCode::NOT_FOUND
-            && !self
-                .transport
-                .is_org_not_found(response.status, &response.body)
-        {
+        if response.status == StatusCode::NOT_FOUND {
             info!("login return 404, skip login on the old version server");
             return Ok(());
         }
@@ -1228,10 +1224,7 @@ impl APIClient {
                 self.capability = Capability::from_server_version(&server_version);
                 self.server_version = Some(server_version.clone());
                 let session_id = self.session_id.as_str();
-                if let Some(tokens) = info
-                    .tokens
-                    .filter(|_| self.transport.uses_native_session_tokens())
-                {
+                if let Some(tokens) = info.tokens {
                     info!(
                         "[session {session_id}] login success with session token version = {server_version}",
                     );

@@ -467,58 +467,6 @@ async fn gateway_pagination_without_stats_preserves_all_metadata_and_rows() {
 }
 
 #[tokio::test]
-async fn cloud_completed_queries_release_tracking_without_heartbeat() {
-    for paginated in [false, true] {
-        for need_progress in [false, true] {
-            let queries = Arc::new(AtomicUsize::new(0));
-            let seen = queries.clone();
-            let server = MockServer::new(move |request| {
-                let mut body = query_reply();
-                let id = if request.method == "POST" {
-                    format!("q{}", seen.fetch_add(1, Ordering::SeqCst))
-                } else {
-                    assert!(request.path.contains("/page/"));
-                    assert_eq!(request.headers["x-databend-sticky-node"], "node-1");
-                    request.path.split('/').nth(3).unwrap().to_owned()
-                };
-                body["id"] = json!(id);
-                body["node_id"] = json!("node-1");
-                body["next_uri"] = if paginated && request.method == "POST" {
-                    json!(format!("/v1/query/{id}/page/0"))
-                } else {
-                    Value::Null
-                };
-                MockReply::json(body)
-            })
-            .await;
-            let client = Arc::new(client(&server).await);
-            for _ in 0..2 {
-                let pages = client
-                    .start_query("SELECT 1", need_progress, None)
-                    .await
-                    .unwrap();
-                let (mut pages, _, _) = pages.wait_for_schema(need_progress).await.unwrap();
-                assert_eq!(
-                    client.queries_need_heartbeat.lock().len(),
-                    usize::from(paginated)
-                );
-                pages.next().await.unwrap().unwrap();
-                if paginated {
-                    pages.next().await.unwrap().unwrap();
-                }
-                // Cleanup happens on the terminal response, not only on Drop
-                // or on a subsequent poll returning None.
-                assert!(client.queries_need_heartbeat.lock().is_empty());
-                assert!(pages.next().await.is_none());
-            }
-            client.try_heartbeat().await.unwrap();
-            assert!(client.queries_need_heartbeat.lock().is_empty());
-            assert_eq!(server.requests.lock().len(), if paginated { 4 } else { 2 });
-        }
-    }
-}
-
-#[tokio::test]
 async fn cloud_transactions_preserve_session_and_sticky_routing_with_session_headers() {
     let server = MockServer::new(|request| {
         let body: Value = serde_json::from_slice(&request.body).unwrap();
@@ -571,46 +519,18 @@ async fn cloud_transactions_preserve_session_and_sticky_routing_with_session_hea
 }
 
 #[tokio::test]
-async fn cloud_page_errors_release_query_tracking() {
-    for failure in ["http", "decode", "query"] {
-        let server = MockServer::new(move |request| {
-            if request.method == "POST" {
-                let mut body = query_reply();
-                body["node_id"] = json!("node-1");
-                return MockReply::json(body);
-            }
-            match failure {
-                "http" => MockReply::error(404),
-                "decode" => MockReply::json(json!({"invalid":"response"})),
-                "query" => {
-                    let mut body = query_reply();
-                    body["error"] = json!({"code":5100, "message":"query failed"});
-                    MockReply::json(body)
-                }
-                _ => unreachable!(),
-            }
-        })
-        .await;
-        let client = Arc::new(client(&server).await);
-        let pages = client.start_query("SELECT 1", false, None).await.unwrap();
-        let (mut pages, _, _) = pages.wait_for_schema(false).await.unwrap();
-        assert_eq!(client.queries_need_heartbeat.lock().len(), 1);
-        pages.next().await.unwrap().unwrap();
-        assert!(pages.next().await.unwrap().is_err());
-        assert!(client.queries_need_heartbeat.lock().is_empty());
-        assert!(pages.next().await.is_none());
-        drop(pages);
-        client.try_heartbeat().await.unwrap();
-        assert_eq!(server.requests.lock().len(), 2);
-    }
-}
-
-#[tokio::test]
 async fn cloud_early_drop_still_finalizes_on_the_tracked_node() {
+    // Generic completion/error/cancellation matrices live in tracking_tests.rs;
+    // here assert only Cloud's final method, node routing and session transport.
     let finalized = Arc::new(tokio::sync::Notify::new());
     let notification = finalized.clone();
     let server = MockServer::new(move |request| {
         if request.path.ends_with("/final") {
+            assert_cloud_session_transport(request);
+            assert_eq!(
+                request.headers["x-databend-session"],
+                "opaque-default-session"
+            );
             assert_eq!(request.method, "GET");
             assert_eq!(request.headers["x-databend-sticky-node"], "node-1");
             notification.notify_one();
@@ -631,41 +551,6 @@ async fn cloud_early_drop_still_finalizes_on_the_tracked_node() {
     tokio::time::timeout(Duration::from_secs(5), finalized.notified())
         .await
         .unwrap();
-}
-
-#[tokio::test]
-async fn cloud_drop_during_final_request_releases_tracking_without_duplicate_cleanup() {
-    let started = Arc::new(tokio::sync::Notify::new());
-    let notification = started.clone();
-    let server = MockServer::new(move |request| {
-        let mut body = query_reply();
-        body["node_id"] = json!("node-1");
-        body["next_uri"] = json!("/v1/query/q1/final");
-        let mut reply = MockReply::json(body);
-        if request.method == "GET" {
-            assert_eq!(request.path, "/v1/query/q1/final");
-            notification.notify_one();
-            reply.headers.push(("X-Mock-Delay", "200".into()));
-        }
-        reply
-    })
-    .await;
-    let client = Arc::new(client(&server).await);
-    let pages = client.start_query("SELECT 1", false, None).await.unwrap();
-    let (mut pages, _, _) = pages.wait_for_schema(false).await.unwrap();
-    pages.next().await.unwrap().unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        tokio::select! {
-            _ = pages.next() => panic!("expected the final request to remain in flight"),
-            _ = started.notified() => {},
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(client.queries_need_heartbeat.lock().len(), 1);
-    drop(pages);
-    assert!(client.queries_need_heartbeat.lock().is_empty());
-    assert_eq!(server.requests.lock().len(), 2);
 }
 
 #[tokio::test]

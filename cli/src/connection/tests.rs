@@ -80,6 +80,16 @@ fn conflict_table() {
             "",
             "--private-key-file",
         ),
+        (
+            vec![
+                "--org",
+                "example",
+                "--private-key-passphrase-file",
+                "missing",
+            ],
+            "",
+            "--private-key-passphrase-file",
+        ),
         (vec!["--org", "example", "--flight"], "", "--flight"),
         (
             vec!["--org", "example", "--host", "private.example"],
@@ -103,6 +113,19 @@ fn conflict_table() {
             vec!["--dsn", "databend+http://api.databend.com?org=example"],
             "",
             "requires HTTPS",
+        ),
+        (
+            vec![
+                "--dsn",
+                "databend+http://api.databend.com?org=example&sslmode=require",
+            ],
+            "",
+            "requires HTTPS",
+        ),
+        (
+            vec!["--dsn", "databend+flight://api.databend.com?org=example"],
+            "",
+            "not supported with FlightSQL",
         ),
         (
             vec!["--dsn", "databend://api.databend.com:8443?org=example"],

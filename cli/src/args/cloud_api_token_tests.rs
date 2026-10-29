@@ -14,6 +14,8 @@
 
 use super::*;
 
+// Resolver tests own credential/option matrices; keep DSN serialization here.
+
 #[test]
 fn cloud_token_precedence_and_ignored_password() {
     let mut args = ConnectionArgs::from_dsn("databend://cloudapp:%FF@api.databend.com/default?warehouse=wh&cloud_api_token=dsn-secret&org=org-example").unwrap();
@@ -71,76 +73,6 @@ fn explicitly_empty_connection_config_is_not_treated_as_absent() {
     assert_eq!(connection.host.as_deref(), Some(""));
     assert_eq!(connection.port, Some(0));
     assert_eq!(connection.user.as_deref(), Some(""));
-}
-
-#[test]
-fn cloud_token_rejects_flight_sql() {
-    for scheme in ["databend+flight", "databend+grpc"] {
-        for source in ["dsn", "cli", "environment"] {
-            let mut dsn = format!("{scheme}://api.databend.com/default?org=org-example");
-            if source == "dsn" {
-                dsn.push_str("&cloud_api_token=flight-secret");
-            }
-            let err = match ConnectionArgs::from_dsn(&dsn) {
-                Ok(mut args) => {
-                    if source == "cli" {
-                        args.apply_cloud_api_token(Some("flight-secret".into()), None);
-                    } else if source == "environment" {
-                        args.apply_cloud_api_token(None, Some("flight-secret".into()));
-                    }
-                    args.get_dsn().unwrap_err()
-                }
-                Err(err) => err,
-            };
-            assert!(
-                err.to_string().contains("not supported with FlightSQL"),
-                "{scheme}, {source}: {err}"
-            );
-            assert!(!err.to_string().contains("flight-secret"));
-        }
-    }
-}
-
-#[test]
-fn cloud_ui_rejects_all_token_sources() {
-    let dsn = ConnectionArgs::from_dsn(
-        "databend://api.databend.com/default?%63loud_api_token=ui-secret&org=org-example",
-    )
-    .unwrap();
-    let mut cli = ConnectionArgs::from_dsn("databend://api.databend.com?org=org-example").unwrap();
-    cli.apply_cloud_api_token(Some("ui-secret".into()), None);
-    let mut environment =
-        ConnectionArgs::from_dsn("databend://api.databend.com?org=org-example").unwrap();
-    environment.apply_cloud_api_token(None, Some("ui-secret".into()));
-    for args in [dsn, cli, environment] {
-        assert!(args.validate_cloud_options(false).is_ok());
-        let err = args.validate_cloud_options(true).unwrap_err().to_string();
-        assert!(err.contains("--ui is not supported with cloud_api_token"));
-        assert!(!err.contains("ui-secret"));
-    }
-}
-
-#[test]
-fn cloud_http_dsn_is_rejected_for_all_token_sources() {
-    for source in ["dsn", "cli", "environment"] {
-        for sslmode in ["", "&sslmode=require"] {
-            let mut dsn =
-                format!("databend+http://api.databend.com/default?org=org-example{sslmode}");
-            if source == "dsn" {
-                dsn.push_str("&cloud_api_token=http-secret");
-            }
-            let mut args = ConnectionArgs::from_dsn(&dsn).unwrap();
-            if source == "cli" {
-                args.apply_cloud_api_token(Some("http-secret".into()), None);
-            } else if source == "environment" {
-                args.apply_cloud_api_token(None, Some("http-secret".into()));
-            }
-            assert_eq!(args.dsn_scheme.as_deref(), Some("databend+http"));
-            let err = args.get_dsn().unwrap_err().to_string();
-            assert!(err.contains("requires HTTPS"), "{source}: {err}");
-            assert!(!err.contains("http-secret"));
-        }
-    }
 }
 
 #[test]

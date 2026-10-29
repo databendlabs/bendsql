@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Test freshly built bindings through a local HTTPS mock, without Docker/secrets.
+"""Exercise fresh binding artifacts against local HTTPS, without Docker/secrets.
 
-Only current wheel/addon artifacts run this suite, not the old-driver BDD matrix.
-Workers receive DSNs via stdin. All proxy traffic stays on loopback; the mock
-never forwards traffic, changes DNS/hosts, or bypasses the production allowlist.
+Core owns the full DSN validation matrix; this suite checks public binding APIs,
+credential/session isolation, pagination, and error propagation. Old-driver BDD
+compatibility tests remain separate. Worker DSNs are passed through stdin.
 """
 
 import argparse
@@ -32,7 +32,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.dont_write_bytecode = True
@@ -68,8 +68,7 @@ def run_suite(executable, binding):
         proxy.context, proxy.state = context, server
         services = (server, proxy)
         threads = [
-            threading.Thread(target=service.serve_forever, daemon=True)
-            for service in services
+            threading.Thread(target=s.serve_forever, daemon=True) for s in services
         ]
         for thread in threads:
             thread.start()
@@ -87,7 +86,6 @@ def run_suite(executable, binding):
             query.update(extra or {})
             return f"{scheme}://{host}/default?" + urlencode(query)
 
-        # Explicit BENDSQL_* credentials must not become Driver defaults.
         environment = {
             key: value
             for key, value in os.environ.items()
@@ -103,9 +101,7 @@ def run_suite(executable, binding):
             BENDSQL_CLOUD_API_TOKEN="ambient-not-a-driver-token",
         )
         private = (
-            "databend://root:pw@127.0.0.1:"
-            + str(server.server_port)
-            + "/default?"
+            f"databend://root:pw@127.0.0.1:{server.server_port}/default?"
             + urlencode(
                 {
                     "tls_ca_file": options["tls_ca_file"],
@@ -114,47 +110,28 @@ def run_suite(executable, binding):
                 }
             )
         )
+        pagination = {
+            "wait_time_secs": 0,
+            "max_rows_in_buffer": 1000,
+            "max_rows_per_page": 1,
+        }
         cases = [
             (
-                "global and ignored SQL userinfo",
-                dsn("ignored:%FF@api.databend.com"),
-                True,
-                None,
-            ),
-            ("China", dsn("api.databend.cn"), True, None),
-            ("Cloud forces login disabled", dsn(extra={"login": "enable"}), True, None),
-            (
-                "Cloud forwards pagination",
+                "global, ignored SQL userinfo and forwarded pagination",
                 dsn(
-                    extra={
-                        "wait_time_secs": "1",
-                        "max_rows_in_buffer": "1000",
-                        "max_rows_per_page": "1",
-                    }
+                    "ignored:%FF@api.databend.com",
+                    extra={"login": "enable", **pagination},
                 ),
                 True,
                 None,
             ),
-            (
-                "Cloud forwards partial pagination",
-                dsn(extra={"wait_time_secs": "0"}),
-                True,
-                None,
-            ),
-            (
-                "Cloud Arrow remains unsupported with pagination",
-                dsn(extra={"query_result_format": "arrow", "max_rows_per_page": "1"}),
-                True,
-                "does not support Arrow",
-            ),
+            ("China", dsn("api.databend.cn"), True, None),
             (
                 "backend without session_header",
                 dsn(),
                 True,
                 "requires session_header support",
             ),
-            ("case-insensitive host", dsn("API.DATABEND.COM"), True, None),
-            ("default host", dsn(""), True, None),
             ("private auth ignores Cloud environment", private, False, None),
             (
                 "no implicit token from environment",
@@ -163,81 +140,23 @@ def run_suite(executable, binding):
                 "requires cloud_api_token",
             ),
             (
-                "missing Organization ID",
-                dsn(omit=("org",)),
-                True,
-                "requires org",
-            ),
-            (
-                "empty Organization ID",
-                dsn(extra={"org": ""}),
-                True,
-                "valid Organization ID",
-            ),
-            (
-                "whitespace Organization ID",
-                dsn(extra={"org": " "}),
-                True,
-                "valid Organization ID",
-            ),
-            ("explicit HTTP", dsn(scheme="databend+http"), True, "requires HTTPS"),
-            ("TLS disabled", dsn(extra={"sslmode": "disable"}), True, "requires HTTPS"),
-            (
-                "FlightSQL",
+                "FlightSQL dispatch rejects Cloud",
                 dsn(scheme="databend+flight"),
                 True,
                 "not supported with FlightSQL",
             ),
-            ("gRPC", dsn(scheme="databend+grpc"), True, "not supported with FlightSQL"),
             (
-                "foreign host",
+                "foreign origin",
                 dsn("api.databend.com.evil.example"),
                 True,
                 "not a Gateway or private server",
-            ),
-            (
-                "nonstandard port",
-                dsn("api.databend.com:8443"),
-                True,
-                "not a Gateway or private server",
-            ),
-            (
-                "competing Access Token",
-                dsn(extra={"access_token": "native-fake"}),
-                True,
-                "cannot be combined",
-            ),
-            (
-                "competing Key Pair",
-                dsn(extra={"private_key_file": "missing-key"}),
-                True,
-                "cannot be combined",
-            ),
-            (
-                "separate tenant",
-                dsn(extra={"tenant": "private-tenant"}),
-                True,
-                "org, not tenant",
-            ),
-            (
-                "duplicate token",
-                dsn() + "&cloud_api_token=other",
-                True,
-                "specified only once",
-            ),
-            ("duplicate org", dsn() + "&org=other", True, "specified only once"),
-            (
-                "old org parameter rejected",
-                dsn(extra={"org_slug": "old-org"}),
-                True,
-                "use org (Organization ID)",
             ),
         ]
         try:
             for mode in modes:
                 for name, connection_dsn, cloud, error in cases:
                     label = f"{mode}: {name}"
-                    missing_session = name == "backend without session_header"
+                    missing_session = error == "requires session_header support"
                     server.emit_session_header = not missing_session
                     server.records, server.pages, server.tunnels = [], 0, []
                     (
@@ -259,16 +178,17 @@ def run_suite(executable, binding):
                         text=True,
                         timeout=30,
                     )
+                    text = result.stdout + result.stderr
                     require(
                         all(
-                            value not in result.stdout + result.stderr
-                            for value in (TOKEN, json.dumps(TOKEN)[1:-1])
+                            value not in text
+                            for value in (
+                                TOKEN,
+                                json.dumps(TOKEN)[1:-1],
+                                "opaque-https-session-",
+                            )
                         ),
-                        label + ": token in child output",
-                    )
-                    require(
-                        "opaque-https-session-" not in result.stdout + result.stderr,
-                        label + ": session in child output",
+                        label + ": credentials/session in child output",
                     )
                     require(
                         result.returncode == 0 and result.stdout.strip() == "PASS",
@@ -277,22 +197,16 @@ def run_suite(executable, binding):
                     if error:
                         if missing_session:
                             require(
-                                bool(server.tunnels),
-                                label + ": missing HTTPS connection",
-                            )
-                            require(
-                                len(server.records) == 1
+                                server.tunnels
+                                and len(server.records) == 1
                                 and server.records[0][0:2] == ("POST", "/v1/query"),
                                 label
-                                + ": unsupported backend must fail on first query without replay/polling",
+                                + ": unsupported backend must fail before replay/polling",
                             )
                             require(
-                                all(
-                                    not any(
-                                        key.lower() in {"cookie", "authorization"}
-                                        for key in headers
-                                    )
-                                    for _, _, headers, _ in server.records
+                                not any(
+                                    key.lower() in {"cookie", "authorization"}
+                                    for key in server.records[0][2]
                                 ),
                                 label + ": Cookie/auth fallback",
                             )
@@ -302,7 +216,12 @@ def run_suite(executable, binding):
                                 label + ": network before validation",
                             )
                     else:
-                        require(len(server.records) > 1, label + ": no query requests")
+                        parameters = parse_qs(urlsplit(connection_dsn).query)
+                        expected_pagination = {
+                            key: int(parameters[key][0])
+                            for key in pagination
+                            if key in parameters
+                        } or None
                         queries = 0
                         for index, (method, path, headers, body) in enumerate(
                             server.records
@@ -318,100 +237,65 @@ def run_suite(executable, binding):
                             if cloud:
                                 require(
                                     not path.startswith("/v1/session/login"),
-                                    label + ": Cloud login must be disabled",
+                                    label + ": Cloud login",
                                 )
+                                for key, value in {
+                                    "x-databendcloud-token": TOKEN,
+                                    "x-databendcloud-org": ORG,
+                                    "x-databendcloud-warehouse": "default",
+                                    "x-databend-client-caps": "session_header",
+                                    "x-databend-session": None
+                                    if path == "/v1/query" and queries % 2 == 0
+                                    else f"opaque-https-session-{index - 1}",
+                                }.items():
+                                    require(
+                                        headers.get(key) == value, label + ": " + key
+                                    )
                                 require(
-                                    headers.get("x-databendcloud-token") == TOKEN,
-                                    label + ": token DSN decoding",
-                                )
-                                require(
-                                    headers.get("x-databendcloud-org") == ORG,
-                                    label + ": org from DSN",
-                                )
-                                require(
-                                    headers.get("x-databendcloud-warehouse")
-                                    == "default",
-                                    label + ": warehouse",
-                                )
-                                require(
-                                    "authorization" not in headers
-                                    and "cookie" not in headers,
-                                    label + ": competing credentials sent",
-                                )
-                                require(
-                                    headers.get("x-databend-client-caps")
-                                    == "session_header",
-                                    label + ": capability",
-                                )
-                                require(
-                                    headers.get("x-databend-session")
-                                    == (
-                                        None
-                                        if path == "/v1/query" and queries % 2 == 0
-                                        else f"opaque-https-session-{index - 1}"
+                                    not {"authorization", "cookie"}.intersection(
+                                        headers
                                     ),
-                                    label + ": session round-trip/refresh",
+                                    label + ": competing credentials",
                                 )
                             else:
                                 basic = "Basic " + base64.b64encode(b"root:pw").decode()
                                 require(
-                                    headers.get("authorization") == basic,
-                                    label + ": private auth changed",
+                                    headers.get("authorization") == basic
+                                    and "cookie_enabled=true"
+                                    in headers.get("cookie", ""),
+                                    label + ": native auth changed",
                                 )
                                 require(
-                                    "cookie_enabled=true" in headers.get("cookie", ""),
-                                    label + ": native Cookie missing",
-                                )
-                                require(
-                                    not any(
-                                        key in headers
-                                        for key in (
-                                            "x-databendcloud-token",
-                                            "x-databendcloud-org",
-                                            "x-databend-client-caps",
-                                            "x-databend-session",
-                                        )
-                                    ),
+                                    not {
+                                        "x-databendcloud-token",
+                                        "x-databendcloud-org",
+                                        "x-databend-client-caps",
+                                        "x-databend-session",
+                                    }.intersection(headers),
                                     label + ": Cloud state in native request",
                                 )
                             if path == "/v1/query":
-                                expected_pagination = (
-                                    {
-                                        "wait_time_secs": 1,
-                                        "max_rows_in_buffer": 1000,
-                                        "max_rows_per_page": 1,
-                                    }
-                                    if name == "Cloud forwards pagination"
-                                    else {"wait_time_secs": 0}
-                                    if name == "Cloud forwards partial pagination"
-                                    else None
-                                )
-                                require(
-                                    json.loads(body).get("pagination")
-                                    == expected_pagination,
-                                    label + ": pagination body",
-                                )
                                 queries += 1
+                                body = json.loads(body)
                                 require(
                                     method == "POST"
-                                    and json.loads(body)["sql"] == "SELECT 1",
-                                    label + ": query body",
+                                    and body["sql"] == "SELECT 1"
+                                    and body.get("pagination") == expected_pagination,
+                                    label + ": query body/pagination",
                                 )
                         require(
                             queries == 4, label + ": two queries on each connection"
                         )
                         if cloud:
                             require(
-                                server.tunnels and server.pages == 5,
-                                label + ": pagination/retry missing",
-                            )
-                            require(
-                                sum(
+                                server.tunnels
+                                and server.pages == 5
+                                and sum(
                                     method == "GET" and path.endswith("/final")
                                     for method, path, _, _ in server.records
                                 )
                                 == 4,
-                                label + ": GET final missing",
+                                label + ": pagination/retry/GET final missing",
                             )
                     print("PASS:", label, flush=True)
         finally:

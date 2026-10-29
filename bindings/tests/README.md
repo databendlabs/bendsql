@@ -20,11 +20,11 @@ The shared harness runs the actual Python blocking/asyncio/cursor APIs and Node
 fixture through a loopback-only, non-forwarding CONNECT proxy for the official
 hosts. It does not change DNS/hosts or disable TLS/origin checks.
 
-Coverage includes global/China/default/case-insensitive endpoints, DSN token and
-org decoding, ignored SQL userinfo, two isolated connections per client with two
-queries each, page retries, GET final, session-header rotation, unchanged private
-authentication, and errors for missing/duplicate/competing credentials or
-unsupported transports/origins.
+Coverage focuses on binding boundaries: global/China routing, encoded tokens,
+ignored SQL userinfo and forced-off login, pagination forwarding, two isolated
+connections with two queries each, page retries/GET final, session rotation,
+native authentication, and representative credential/dispatch/origin errors.
+The complete DSN validation matrix stays in Rust core/driver tests.
 Ambient `BENDSQL_*` credentials must not affect either Driver. Worker inputs go
 through stdin and failures withhold credential/session-bearing diagnostics.
 
