@@ -122,6 +122,7 @@ def run_suite(executable, binding):
                 None,
             ),
             ("China", dsn("api.databend.cn"), True, None),
+            ("Cloud forces login disabled", dsn(extra={"login": "enable"}), True, None),
             (
                 "backend without session_header",
                 dsn(),
@@ -256,9 +257,8 @@ def run_suite(executable, binding):
                                 label + ": missing HTTPS connection",
                             )
                             require(
-                                len(server.records) == 2
-                                and server.records[0][1].startswith("/v1/session/login")
-                                and server.records[1][0:2] == ("POST", "/v1/query"),
+                                len(server.records) == 1
+                                and server.records[0][0:2] == ("POST", "/v1/query"),
                                 label
                                 + ": unsupported backend must fail on first query without replay/polling",
                             )
@@ -293,6 +293,10 @@ def run_suite(executable, binding):
                             )
                             if cloud:
                                 require(
+                                    not path.startswith("/v1/session/login"),
+                                    label + ": Cloud login must be disabled",
+                                )
+                                require(
                                     headers.get("x-databendcloud-token") == TOKEN,
                                     label + ": token DSN decoding",
                                 )
@@ -319,7 +323,7 @@ def run_suite(executable, binding):
                                     headers.get("x-databend-session")
                                     == (
                                         None
-                                        if path.startswith("/v1/session/login")
+                                        if path == "/v1/query" and queries % 2 == 0
                                         else f"opaque-https-session-{index - 1}"
                                     ),
                                     label + ": session round-trip/refresh",

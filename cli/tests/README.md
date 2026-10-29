@@ -31,7 +31,8 @@ Configure repository Actions Secrets in `databendlabs/bendsql`:
   `api.databend.cn`. Do not put credentials or custom options in this DSN.
 
 The test validates the official target and pins Warehouse `default`, retry count
-and disabled optional login in the child DSN. The account must have permission to query that Warehouse. Do not use a
+and disabled login in the child DSN. Cloud mode also enforces disabled login
+itself. The account must have permission to query that Warehouse. Do not use a
 personal administrator or production account; Cloud API tokens may reach every
 organization to which their account belongs. Keep the account out of production
 organizations and rotate the token regularly.
@@ -76,8 +77,8 @@ The suite uses bounded queries and one randomly named temporary table:
 - Complete, ordered retrieval of 5,000 generated rows. This checks the result
   stream but does not assume a particular server page size.
 - `BEGIN`/read-only query/`ROLLBACK` and `BEGIN`/read-only query/`COMMIT` on one
-  connection, without transaction warnings. The optional login probe is disabled
-  because this suite targets the query API, not a future WebAPI login endpoint.
+  connection, without transaction warnings. Cloud mode always skips login,
+  whose manage service version does not describe the query Warehouse.
 - Create, insert, read and drop one temporary table across requests, proving
   SQL session header continuity without creating persistent objects.
 - Propagation of an intentional unknown-column SQL error.

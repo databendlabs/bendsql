@@ -105,12 +105,13 @@ are rejected rather than forwarding credentials.
   without a session header; no local session ID or Cookie is pre-generated.
   No Cookie or Basic/Bearer credentials are sent. API Token authentication is
   required on every request; the session header never replaces it.
-- Login 404 is compatible with servers without `/v1/session/login`;
-  `login=disable` skips that probe. Other login/auth failures are returned.
+- Cloud mode always disables login, even with `login=enable`: the WebAPI login
+  endpoint reports the manage service version, not the query Warehouse version.
+  Authentication and database/role validation happen on the first SQL request.
 - SQL uses `POST /v1/query`, GET polling/page/final, and POST kill. Results use
   the server's default string-field format; no explicit `string_fields` override
   is needed. There is no generic management REST command interface.
-- Login, page and final requests retain normal bounded retries. Query submission
+- Page and final requests retain normal bounded retries. Query submission
   retries only connect errors before any bytes are sent, not timeout/503 or
   ambiguous request/body failures. Check a write's outcome before retrying it.
 - Transactions use the returned session state and sticky-node routing.
@@ -121,15 +122,17 @@ are rejected rather than forwarding credentials.
   when the account, organization and Warehouse are identical.
 - The backend must support `session_header`; there is no Cookie fallback.
   If no valid `X-DATABEND-SESSION` has been received by the first successful SQL
-  query response, the driver reports an error and makes the connection unusable,
-  including for queries waiting for session bootstrap. No rows are returned and
-  SQL is not automatically replayed. **The query may already have executed:**
-  check its outcome before retrying, especially for writes. Login responses,
-  HTTP failures and SQL errors without a session header retain their original
-  semantics rather than being reported as missing capability support.
+  query response, the driver reports an error and makes the connection unusable.
+  No rows are returned and SQL is not automatically replayed.
+  **The query may already have executed:** check its outcome before retrying,
+  especially for writes. HTTP failures and SQL errors without a session header
+  retain their original semantics rather than being reported as missing capability support.
   After a valid session is established, a response without a new header keeps
   the previous value; refreshed response headers are saved automatically.
   An invalid initial session header also makes the connection unusable.
+  Requests are not serialized to establish a session: use one connection
+  sequentially for transactions and temporary tables. Concurrent session-state
+  conflicts are a separate issue shared with native mode.
   Session-token refresh, background heartbeat and logout APIs are not used in
   Cloud mode; long-idle session and failover behavior are not guaranteed.
 - FlightSQL, bound parameters, stage attachments, Arrow, pagination tuning,

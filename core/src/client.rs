@@ -493,6 +493,9 @@ impl APIClient {
                 org.ok_or_else(|| Error::BadArgument("cloud_api_token requires org".into()))?;
             client.auth = Arc::new(CloudApiAuth::new(client.endpoint.clone(), token, org)?);
             client.transport = Transport::cloud();
+            // Cloud login reaches manage service, whose version does not describe
+            // the query warehouse. Ignore even an explicit login=enable.
+            client.disable_login = true;
             if client.tenant.is_some() {
                 return Err(Error::BadArgument(
                     "Cloud WebAPI selects its tenant using org, not tenant".into(),
@@ -1179,6 +1182,9 @@ impl APIClient {
     }
 
     async fn login(&mut self) -> Result<()> {
+        if self.transport.is_cloud_webapi() {
+            return Ok(());
+        }
         let endpoint = self.endpoint.join("/v1/session/login")?;
         let headers = self.make_headers(None)?;
         let body = LoginRequest::from(&*self.session_state.lock());
@@ -1397,7 +1403,6 @@ impl APIClient {
         reload_auth_if_401: bool,
         request_kind: RequestKind,
     ) -> Result<HttpResponseData> {
-        let _session_init = self.transport.bootstrap_guard().await;
         let mut refreshed = false;
         let mut retries = 0;
         // Only query submission can have ambiguous SQL side effects. Connect

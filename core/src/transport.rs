@@ -18,7 +18,6 @@ use parking_lot::Mutex;
 use reqwest::cookie::CookieStore;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE};
 use reqwest::{ClientBuilder, Method, Request, StatusCode};
-use tokio::sync::{Mutex as AsyncMutex, MutexGuard};
 use url::Url;
 
 use crate::cloud_api::HEADER_CLOUD_WAREHOUSE;
@@ -37,7 +36,6 @@ pub(crate) enum Transport {
     Native,
     CloudWebApi {
         session: Mutex<CloudSession>,
-        session_init: AsyncMutex<()>,
     },
 }
 
@@ -60,7 +58,6 @@ impl Transport {
     pub(crate) fn cloud() -> Self {
         Self::CloudWebApi {
             session: Mutex::new(CloudSession::Pending),
-            session_init: AsyncMutex::new(()),
         }
     }
 
@@ -181,23 +178,6 @@ impl Transport {
         }
     }
 
-    /// Serialize only bootstrap, until one server-issued session is known.
-    pub(crate) async fn bootstrap_guard(&self) -> Option<MutexGuard<'_, ()>> {
-        if let Self::CloudWebApi {
-            session,
-            session_init,
-        } = self
-        {
-            if matches!(*session.lock(), CloudSession::Pending) {
-                let guard = session_init.lock().await;
-                if matches!(*session.lock(), CloudSession::Pending) {
-                    return Some(guard);
-                }
-            }
-        }
-        None
-    }
-
     pub(crate) fn prepare_request(&self, request: &mut Request, endpoint: &Url) -> Result<()> {
         if let Self::CloudWebApi { session, .. } = self {
             let session = session.lock();
@@ -251,8 +231,8 @@ impl Transport {
         Ok(())
     }
 
-    /// Check bootstrap while its guard is still held, before a waiting query can
-    /// submit SQL. Missing headers on login/errors must not mask those responses.
+    /// Reject a successful SQL response that cannot establish a Cloud session.
+    /// HTTP/decode/SQL errors must retain their original diagnostics.
     pub(crate) fn validate_query_session(
         &self,
         status: StatusCode,

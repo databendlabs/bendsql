@@ -210,62 +210,16 @@ async fn cloud_missing_session_header_fails_closed_without_replaying_sql() {
 }
 
 #[tokio::test]
-async fn cloud_missing_bootstrap_header_blocks_concurrent_waiters() {
-    let server = MockServer::new(|_| {
-        let mut reply = MockReply::json(query_reply()).without_session();
-        reply.headers.push(("X-Mock-Delay", "25".into()));
-        reply
-    })
-    .await;
-    let client = client(&server).await;
-    let (first, second) = tokio::time::timeout(Duration::from_secs(5), async {
-        tokio::join!(
-            client.start_query_inner("BEGIN", None, false, None),
-            client.start_query_inner(
-                "CREATE TEMP TABLE missing_session(n INT)",
-                None,
-                false,
-                None
-            ),
-        )
-    })
-    .await
-    .expect("bootstrap waiters must fail rather than hang");
-    for result in [first, second] {
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("requires session_header support"));
-    }
-    assert_eq!(server.requests.lock().len(), 1);
-}
-
-#[tokio::test]
-async fn cloud_login_without_session_header_does_not_establish_sql_session() {
-    for status in [200, 404] {
-        let server = MockServer::new(move |request| {
-            if request.path.starts_with("/v1/session/login") {
-                if status == 404 {
-                    MockReply::error(404)
-                } else {
-                    MockReply::json(json!({"version":"1.2.952"})).without_session()
-                }
-            } else {
-                MockReply::json(query_reply()).without_session()
-            }
-        })
-        .await;
-        let mut client = client(&server).await;
-        client.login().await.unwrap();
-        let error = client
-            .start_query_inner("SELECT 1", None, false, None)
-            .await
-            .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("requires session_header support"));
-        assert_eq!(server.requests.lock().len(), 2);
-    }
+async fn cloud_login_is_skipped_without_importing_manage_capabilities() {
+    let server = MockServer::new(|_| panic!("Cloud login must not send a request")).await;
+    let mut client = client(&server).await;
+    client.login().await.unwrap();
+    assert!(client.server_version.is_none());
+    assert!(client.session_token_info.is_none());
+    assert!(!client.capability.arrow_data);
+    assert!(!client.capability.server_side_params);
+    assert!(!client.capability.streaming_load);
+    assert!(server.requests.lock().is_empty());
 }
 
 #[tokio::test]
@@ -800,25 +754,15 @@ async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
 }
 
 #[tokio::test]
-async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
+async fn cloud_query_lifecycle_stays_on_webapi_without_login() {
     let responses = Arc::new(AtomicUsize::new(0));
     let count = responses.clone();
     let server = MockServer::new(move |request| {
-        let mut reply = if request.path.starts_with("/v1/session/login") {
-            let mut reply = MockReply::error(404);
-            reply
-                .headers
-                .push(("Set-Cookie", "console-cookie=not-for-api; Path=/".into()));
-            reply
-                .headers
-                .push(("Set-Cookie", "session_id=sql-session; Path=/".into()));
-            reply
-                .headers
-                .push(("Set-Cookie", "last_refresh_time=123; Path=/".into()));
-            reply
-        } else {
-            MockReply::json(query_reply())
-        };
+        assert!(!request.path.starts_with("/v1/session/"));
+        let mut reply = MockReply::json(query_reply());
+        reply
+            .headers
+            .push(("Set-Cookie", "session_id=not-used; Path=/".into()));
         reply.headers.push((
             HEADER_SESSION,
             format!("opaque-session-{}", count.fetch_add(1, Ordering::SeqCst)),
@@ -844,7 +788,7 @@ async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
     client.try_heartbeat().await.unwrap();
     client.close().await;
     let requests = server.requests.lock();
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 4);
     for (index, request) in requests.iter().enumerate() {
         assert_eq!(request.headers["x-databendcloud-token"], TOKEN);
         assert_eq!(request.headers["x-databendcloud-org"], ORG);
@@ -861,8 +805,8 @@ async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
         }
         assert!(!request.headers.contains_key("x-databend-warehouse"));
     }
-    assert_eq!(requests[1].method, "POST");
-    let body: Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert_eq!(requests[0].method, "POST");
+    let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
     assert!(body.get("string_fields").is_none());
     for key in [
         "pagination",
@@ -875,34 +819,43 @@ async fn cloud_login_404_and_query_lifecycle_stay_on_webapi() {
         assert!(body.get(key).is_none(), "{key}");
     }
     assert_eq!(
-        (requests[2].method.as_str(), requests[2].path.as_str()),
+        (requests[1].method.as_str(), requests[1].path.as_str()),
         ("GET", "/v1/query/q1/page/0")
     );
     assert_eq!(
-        (requests[3].method.as_str(), requests[3].path.as_str()),
+        (requests[2].method.as_str(), requests[2].path.as_str()),
         ("POST", "/v1/query/q1/kill")
     );
     assert_eq!(
-        (requests[4].method.as_str(), requests[4].path.as_str()),
+        (requests[3].method.as_str(), requests[3].path.as_str()),
         ("GET", "/v1/query/q1/final")
     );
 }
 
 #[tokio::test]
-async fn cloud_login_does_not_hide_auth_failures_or_switch_credentials() {
-    for status in [401, 403, 500] {
-        let server = MockServer::new(move |_| MockReply::error(status)).await;
-        let mut client = client(&server).await;
-        let err = client.login().await.unwrap_err();
-        assert_eq!(err.status_code().unwrap().as_u16(), status);
-        assert!(!format!("{err:?}").contains(TOKEN));
-        assert_eq!(server.requests.lock().len(), 1);
+async fn cloud_dsn_forces_login_disabled_even_when_explicitly_enabled() {
+    for option in [
+        "",
+        "&login=enable",
+        "&login=disable",
+        "&login=enable&session_token=enable",
+    ] {
+        let client = APIClient::from_dsn(&format!(
+            "databend://api.databend.com/default?org={ORG}&cloud_api_token={TOKEN}{option}"
+        ))
+        .await
+        .unwrap();
+        assert!(client.disable_login);
+        assert!(client.server_version.is_none());
+        assert!(client.session_token_info.is_none());
+        assert!(client.is_cloud_webapi());
     }
-    let server = MockServer::new(|_| MockReply::json(json!({"version":"1.2.952", "tokens":{"session_token":"do-not-send","refresh_token":"do-not-send"}}))).await;
-    let mut client = client(&server).await;
-    client.login().await.unwrap();
-    assert!(client.session_token_info.is_none());
-    assert!(client.is_cloud_webapi());
+    for (option, disabled) in [("enable", false), ("disable", true)] {
+        let native = APIClient::from_dsn(&format!("databend://localhost?login={option}"))
+            .await
+            .unwrap();
+        assert_eq!(native.disable_login, disabled);
+    }
 }
 
 #[tokio::test]
@@ -977,30 +930,39 @@ async fn cloud_session_headers_are_not_shared_by_clients_with_the_same_origin() 
 }
 
 #[tokio::test]
-async fn cloud_concurrent_first_queries_share_one_server_issued_session() {
+async fn cloud_concurrent_first_queries_are_not_serialized() {
     let server = MockServer::new(|_| {
         let mut reply = MockReply::json(query_reply());
         reply
             .headers
             .push((HEADER_SESSION, "shared-bootstrap-session".into()));
-        reply.headers.push(("X-Mock-Delay", "25".into()));
+        reply.headers.push(("X-Mock-Delay", "1000".into()));
         reply
     })
     .await;
     let client = Arc::new(client(&server).await);
-    let (first, second) = tokio::join!(
-        client.start_query_inner("SELECT 1", None, false, None),
-        client.start_query_inner("SELECT 2", None, false, None),
-    );
+    let queries = async {
+        tokio::join!(
+            client.start_query_inner("SELECT 1", None, false, None),
+            client.start_query_inner("SELECT 2", None, false, None),
+        )
+    };
+    let in_flight = async {
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while server.requests.lock().len() < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both SQL requests must be sent before either response arrives");
+    };
+    let ((first, second), ()) = tokio::join!(queries, in_flight);
     first.unwrap();
     second.unwrap();
     let requests = server.requests.lock();
     assert_eq!(requests.len(), 2);
     assert!(!requests[0].headers.contains_key("x-databend-session"));
-    assert_eq!(
-        requests[1].headers["x-databend-session"],
-        "shared-bootstrap-session"
-    );
+    assert!(!requests[1].headers.contains_key("x-databend-session"));
     for request in requests.iter() {
         assert_cloud_session_transport(request);
     }
@@ -1156,16 +1118,14 @@ async fn cloud_org_not_found_is_actionable_without_hiding_other_failures() {
         headers: vec![],
     })
     .await;
-    let mut cloud = client(&server).await;
-    let error = cloud.login().await.unwrap_err().to_string();
-    assert!(error.contains("Organization ID does not exist or has been changed"));
-    assert!(!error.contains(TOKEN));
+    let cloud = client(&server).await;
     let error = cloud
         .start_query_inner("SELECT 1", None, false, None)
         .await
         .unwrap_err()
         .to_string();
     assert!(error.contains("Organization ID does not exist or has been changed"));
+    assert!(!error.contains(TOKEN));
     let body = br#"{"error":"OrgNotFound","message":"Org not found"}"#;
     assert!(!cloud
         .transport
@@ -1222,11 +1182,7 @@ async fn cloud_query_auth_errors_are_not_retried_and_are_redacted() {
 
 #[tokio::test]
 async fn cloud_safe_requests_retry_503() {
-    for kind in [
-        RequestKind::Login,
-        RequestKind::QueryPage,
-        RequestKind::QueryFinal,
-    ] {
+    for kind in [RequestKind::QueryPage, RequestKind::QueryFinal] {
         let calls = Arc::new(AtomicUsize::new(0));
         let seen = calls.clone();
         let server = MockServer::new(move |request| {
@@ -1239,8 +1195,6 @@ async fn cloud_safe_requests_retry_503() {
             }
             let mut reply = if attempt == 0 {
                 MockReply::error(503)
-            } else if request.path.starts_with("/v1/session/login") {
-                MockReply::json(json!({"version":"1.2.952"}))
             } else {
                 MockReply::json(query_reply())
             };
@@ -1250,9 +1204,8 @@ async fn cloud_safe_requests_retry_503() {
             reply
         })
         .await;
-        let mut client = client(&server).await;
+        let client = client(&server).await;
         match kind {
-            RequestKind::Login => client.login().await.unwrap(),
             RequestKind::QueryPage => {
                 client
                     .query_page("q1", "/v1/query/q1/page/0", &None)

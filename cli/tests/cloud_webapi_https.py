@@ -179,7 +179,7 @@ def main():
                 if expected_error:
                     assert result.returncode != 0 and expected_error in text, (name, text)
                     if expected_cloud and not emit_session_header:
-                        assert [path for _, path, _, _ in server.records] == ["/v1/session/login?disable_session_token=true", "/v1/query"], name
+                        assert [path for _, path, _, _ in server.records] == ["/v1/query"], name
                         assert "may already have executed" in text, name
                         assert not result.stdout.strip(), name + ": rows exposed without a valid session"
                     else:
@@ -209,6 +209,7 @@ def main():
                         if path == "/v1/query":
                             assert "string_fields" not in json.loads(body), name
                     if expected_cloud:
+                        assert not any(path.startswith("/v1/session/login") for _, path, _, _ in server.records), name
                         assert server.tunnels, name + ": CLI did not use local CONNECT proxy"
                         assert all(target in {"api.databend.com:443", "api.databend.cn:443"}
                                    for target in server.tunnels), name
@@ -226,6 +227,7 @@ def main():
             endpoint = "databend://root:%FF@api.databend.com:443/default?" + urlencode({
                 "tls_ca_file": ca, "org": "org-example", "retry_delay_secs": "0"})
             run("Cloud DSN through HTTPS, pagination/session refresh/final", ["--dsn", cloud], expected_cloud=True)
+            run("Cloud forces login disabled", ["--dsn", cloud + "&login=enable"], expected_cloud=True)
             run("missing session capability fails instead of Cookie fallback", ["--dsn", cloud],
                 expected_cloud=True, expected_error="requires session_header support", emit_session_header=False)
             run("Cloud DSN with environment token", ["--dsn", endpoint], env_credentials, expected_cloud=True)
