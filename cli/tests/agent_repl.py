@@ -1018,7 +1018,7 @@ def exercise_evot_builtin(executable, env, port):
                 assert b"Answered without the tool." in b"".join(terminal.transcript)[before:], b"".join(terminal.transcript)[before:][-600:]
                 assert b"AI error:" not in b"".join(terminal.transcript)[before:]
                 reply = acp_records(path, "client_reply")[-1]["reply"]
-                assert reply["result"] == {"outcome": {"outcome": "cancelled"}}, reply
+                assert reply["result"] == {"outcome": {"outcome": "selected", "optionId": "reject"}}, reply
                 terminal.send("!ask After tool use")
                 history = acp_records(path, "prompt")[-1]["messages"]
                 assert len(history) == 8, "Only the refused-tool turn joins history"

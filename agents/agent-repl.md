@@ -363,11 +363,12 @@ The adapters use distinct structured-output protocols:
   `--model` when configured), driven by the generic ACP client below with all of
   its limits, capability denial and cancellation. The model is offered evot's
   read-only tools (read/grep/glob/search), but `--permission ask` makes evot send
-  `session/request_permission` before executing any call, and BendSQL always
-  answers `cancelled`, so no tool runs. Because that gate is verified (`--permission`
-  in the help probe, fixed argv), a refused call does not taint the turn: a
-  `tool_call` with status `pending`, a permission request for it (status absent
-  or `pending`, this session) and later updates with status `pending`, or
+  `session/request_permission` before executing any call, and BendSQL selects an
+  offered `reject_once` / `reject_always` option (falling back to `cancelled` if none
+  is available or the request is malformed), so no tool runs. Because that gate is
+  verified (`--permission` in the help probe, fixed argv), a refused call does not
+  taint the turn: a `tool_call` with status `pending`, a permission request for it
+  (status absent or `pending`, this session) and later updates with status `pending`, or
   `failed` after the refusal, are tolerated, and the model's answer without the
   tool is kept. Anything else still taints: `in_progress`/`completed` (or a
   status-less update) for any call, a call announced but never refused, `failed`
@@ -574,11 +575,13 @@ For each question it:
    other metadata are not displayed. Only `end_turn` or `max_tokens` completion
    permits an answer; model/output truncation is marked explicitly.
 
-Permission requests always receive the ACP `cancelled` outcome; filesystem,
-terminal, elicitation and extension requests receive `Method not found`. Any such
-request or reported tool use taints the turn: its answer is suppressed and is not
-saved in conversation history (built-in evot's refused, never-run calls are the
-one exception; see Local CLI backends). Unexpected session IDs, non-text answer content,
+Generic ACP permission requests receive the `cancelled` outcome; built-in evot
+instead selects an offered rejection option, falling back to `cancelled` as
+described above. Filesystem, terminal, elicitation and extension requests receive
+`Method not found`. Any such request or reported tool use taints the turn: its
+answer is suppressed and is not saved in conversation history (built-in evot's
+refused, never-run calls are the one exception; see Local CLI backends).
+Unexpected session IDs, non-text answer content,
 malformed frames, errors or unsuccessful completion also fail without fallback.
 Authenticate and configure the adapter outside BendSQL if necessary.
 

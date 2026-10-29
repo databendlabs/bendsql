@@ -449,6 +449,38 @@ impl Answer {
     }
 }
 
+/// Refuse a gated tool call without cancelling its whole turn when the adapter
+/// offers a rejection option. Generic ACP adapters keep cancellation semantics.
+#[cfg(unix)]
+fn permission_outcome(
+    request: &agent_client_protocol::UntypedMessage,
+    gated_tools: bool,
+) -> agent_client_protocol::schema::v1::RequestPermissionOutcome {
+    use agent_client_protocol::schema::v1::{
+        PermissionOptionKind, RequestPermissionOutcome, RequestPermissionRequest,
+        SelectedPermissionOutcome,
+    };
+    if gated_tools {
+        if let Some(option) =
+            serde_json::from_value::<RequestPermissionRequest>(request.params.clone())
+                .ok()
+                .and_then(|permission| {
+                    permission.options.into_iter().find(|option| {
+                        matches!(
+                            option.kind,
+                            PermissionOptionKind::RejectOnce | PermissionOptionKind::RejectAlways
+                        )
+                    })
+                })
+        {
+            return RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                option.option_id,
+            ));
+        }
+    }
+    RequestPermissionOutcome::Cancelled
+}
+
 #[cfg(unix)]
 async fn run(
     executable: PathBuf,
@@ -461,8 +493,8 @@ async fn run(
 ) -> Result<String> {
     use agent_client_protocol::schema::v1::{
         CancelNotification, ClientCapabilities, ContentBlock, Implementation, InitializeRequest,
-        NewSessionRequest, PromptRequest, RequestPermissionOutcome, RequestPermissionResponse,
-        SessionNotification, StopReason, TextContent,
+        NewSessionRequest, PromptRequest, RequestPermissionResponse, SessionNotification,
+        StopReason, TextContent,
     };
     use agent_client_protocol::schema::ProtocolVersion;
     use agent_client_protocol::{Agent, Client, ConnectionTo, Lines, UntypedMessage};
@@ -539,7 +571,7 @@ async fn run(
         .on_receive_request(async move |request: UntypedMessage, responder, _cx| {
             requests.lock().unwrap().request(&request);
             if request.method == "session/request_permission" {
-                responder.respond(serde_json::to_value(RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled))?)
+                responder.respond(serde_json::to_value(RequestPermissionResponse::new(permission_outcome(&request, gated_tools)))?)
             } else {
                 // Includes all fs/*, terminal/*, elicitation and extension requests.
                 responder.respond_with_error(agent_client_protocol::Error::method_not_found())
@@ -843,6 +875,65 @@ mod tests {
             .update(notification("wrong", "private-secret".into()))
             .is_err());
         assert!(answer.finish(StopReason::EndTurn).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gated_permission_selects_only_rejection_options() {
+        use agent_client_protocol::schema::v1::{
+            PermissionOption, PermissionOptionKind, RequestPermissionOutcome,
+            RequestPermissionRequest, SelectedPermissionOutcome, ToolCallUpdate,
+            ToolCallUpdateFields,
+        };
+        use agent_client_protocol::UntypedMessage;
+        let request = |kinds: &[PermissionOptionKind]| {
+            UntypedMessage::new(
+                "session/request_permission",
+                RequestPermissionRequest::new(
+                    "session".to_owned(),
+                    ToolCallUpdate::new("read", ToolCallUpdateFields::new()),
+                    kinds
+                        .iter()
+                        .enumerate()
+                        .map(|(index, kind)| {
+                            PermissionOption::new(index.to_string(), "Option", *kind)
+                        })
+                        .collect(),
+                ),
+            )
+            .unwrap()
+        };
+        for reject in [
+            PermissionOptionKind::RejectOnce,
+            PermissionOptionKind::RejectAlways,
+        ] {
+            let request = request(&[
+                PermissionOptionKind::AllowOnce,
+                PermissionOptionKind::AllowAlways,
+                reject,
+            ]);
+            assert_eq!(
+                permission_outcome(&request, true),
+                RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new("2"))
+            );
+            assert_eq!(
+                permission_outcome(&request, false),
+                RequestPermissionOutcome::Cancelled
+            );
+        }
+        for request in [
+            request(&[
+                PermissionOptionKind::AllowOnce,
+                PermissionOptionKind::AllowAlways,
+            ]),
+            request(&[]),
+            UntypedMessage::new("session/request_permission", serde_json::json!({})).unwrap(),
+        ] {
+            assert_eq!(
+                permission_outcome(&request, true),
+                RequestPermissionOutcome::Cancelled
+            );
+        }
     }
 
     #[cfg(unix)]

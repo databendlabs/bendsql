@@ -65,7 +65,7 @@ def receive_reply(expected_id):
         message = json.loads(line)
         if message.get("id") == expected_id and "method" not in message:
             record("client_reply", reply=message)
-            return
+            return message
         if message.get("method") == "session/cancel":
             record("cancel", params=message["params"])
 
@@ -163,7 +163,11 @@ def main():
                     "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
                                 {"optionId": "reject", "name": "Reject", "kind": "reject_once"}],
                 }})
-                receive_reply("server-request")
+                reply = receive_reply("server-request")
+                if reply["result"]["outcome"]["outcome"] == "cancelled":
+                    # ACP cancellation ends the turn, unlike selecting a reject option.
+                    result(prompt_id, "cancelled")
+                    continue
                 if question == "refused-tool":
                     update("tool_call_update", toolCallId="read-1", status="failed",
                            rawOutput={"error": "private-acp-secret denied"})
