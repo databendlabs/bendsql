@@ -111,6 +111,12 @@ are rejected rather than forwarding credentials.
 - SQL uses `POST /v1/query`, GET polling/page/final, and POST kill. Results use
   the server's default string-field format; no explicit `string_fields` override
   is needed. There is no generic management REST command interface.
+- Pagination options `wait_time_secs`, `max_rows_in_buffer` and
+  `max_rows_per_page` are forwarded in the query request's `pagination` object.
+  The current WebAPI ignores them and uses server defaults; a later WebAPI
+  release will honor them without requiring a client update. Unset options
+  remain omitted. Do not assume requested page sizes or wait times take effect
+  until the server supports them.
 - Page and final requests retain normal bounded retries. Query submission
   retries only connect errors before any bytes are sent, not timeout/503 or
   ambiguous request/body failures. Check a write's outcome before retrying it.
@@ -147,8 +153,8 @@ are rejected rather than forwarding credentials.
 - Cloud login and Databend session-token refresh remain disabled; every lifecycle
   request still uses the Cloud API token. Long-idle recovery and failover are not
   guaranteed. Native login, heartbeat, logout and retry behavior are unchanged.
-- FlightSQL, bound parameters, stage attachments, Arrow, pagination tuning,
-  stage upload and streaming load are unsupported. Presign probing is disabled.
+- FlightSQL, bound parameters, stage attachments, Arrow, stage upload and
+  streaming load are unsupported. Presign probing is disabled.
 - `--ui` is rejected: its web Python runner could expose the personal token.
 - Worksheet query history, result retention and other server side effects apply.
 

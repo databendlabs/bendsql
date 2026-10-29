@@ -726,7 +726,7 @@ async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
         "org=second",
         "tenant=tn-other",
         "query_result_format=arrow",
-        "max_rows_per_page=10",
+        "query_result_format=arrow&max_rows_per_page=10",
         "sslmode=disable",
     ] {
         let err = APIClient::from_dsn(&format!("{dsn}&{option}"))
@@ -753,6 +753,64 @@ async fn cloud_dsn_is_webapi_only_and_consumes_credentials() {
         "databend://api.databend.com:8443?cloud_api_token=fake&org=org-example",
         "databend+http://api.databend.com?cloud_api_token=fake&org=org-example",
     ] { assert!(APIClient::from_dsn(dsn).await.is_err(), "{dsn}"); }
+}
+
+#[tokio::test]
+async fn cloud_pagination_options_are_forwarded_even_when_server_ignores_them() {
+    for (options, expected) in [
+        ("", None),
+        ("wait_time_secs=0", Some(json!({"wait_time_secs": 0}))),
+        (
+            "max_rows_in_buffer=1000",
+            Some(json!({"max_rows_in_buffer": 1000})),
+        ),
+        ("max_rows_per_page=1", Some(json!({"max_rows_per_page": 1}))),
+        (
+            "wait_time_secs=1&max_rows_in_buffer=1000&max_rows_per_page=1",
+            Some(json!({"wait_time_secs": 1, "max_rows_in_buffer": 1000, "max_rows_per_page": 1})),
+        ),
+    ] {
+        let server = MockServer::new(move |request| {
+            assert_cloud_session_transport(request);
+            assert_eq!(request.path, "/v1/query");
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(body.get("pagination"), expected.as_ref());
+            for key in ["wait_time_secs", "max_rows_in_buffer", "max_rows_per_page"] {
+                assert!(body["session"]["settings"].get(key).is_none());
+            }
+            // Model the current WebAPI ignoring the requested one-row page size.
+            let mut reply = query_reply();
+            reply["data"] = json!([["1"], ["2"]]);
+            reply["next_uri"] = Value::Null;
+            MockReply::json(reply)
+        })
+        .await;
+        let mut client = APIClient::from_dsn(&format!(
+            "databend://api.databend.com/default?org={ORG}&cloud_api_token={TOKEN}&{options}"
+        ))
+        .await
+        .unwrap();
+        client.endpoint = server.url.clone();
+        client.auth = Arc::new(CloudApiAuth::for_test(
+            server.url.clone(),
+            TOKEN.into(),
+            ORG.into(),
+        ));
+        client.build_client(None).await.unwrap();
+        let client = Arc::new(client);
+        let reply = client.query_all("SELECT 1", None).await.unwrap();
+        assert_eq!(
+            reply.data,
+            vec![vec![Some("1".into())], vec![Some("2".into())]]
+        );
+        assert_eq!(server.requests.lock().len(), 1);
+    }
+    for key in ["wait_time_secs", "max_rows_in_buffer", "max_rows_per_page"] {
+        let result = APIClient::from_dsn(&format!(
+            "databend://api.databend.com/default?org={ORG}&cloud_api_token={TOKEN}&{key}=not-an-integer"
+        )).await;
+        assert!(result.is_err(), "pagination options still require integers");
+    }
 }
 
 #[tokio::test]

@@ -162,7 +162,7 @@ def main():
 
         def run(name, args, environment=None, config=None, expected_cloud=False,
                 authorization=None, expected_error=None, query="SELECT 1", emit_session_cookies=True,
-                emit_session_header=True, keep_alive=False):
+                emit_session_header=True, keep_alive=False, expected_pagination=None):
             with tempfile.TemporaryDirectory(prefix="bendsql-home-") as home:
                 if config:
                     target = Path(home) / ".bendsql"
@@ -215,7 +215,9 @@ def main():
                             assert "x-databend-client-caps" not in headers, name
                             assert "x-databend-session" not in headers, name
                         if path == "/v1/query":
-                            assert "string_fields" not in json.loads(body), name
+                            payload = json.loads(body)
+                            assert "string_fields" not in payload, name
+                            assert payload.get("pagination") == expected_pagination, name
                     if expected_cloud:
                         assert not any(path.startswith("/v1/session/login") for _, path, _, _ in server.records), name
                         assert server.tunnels, name + ": CLI did not use local CONNECT proxy"
@@ -245,6 +247,14 @@ def main():
                 "tls_ca_file": ca, "org": "org-example", "retry_delay_secs": "0"})
             run("Cloud DSN through HTTPS, pagination/session refresh/final", ["--dsn", cloud], expected_cloud=True)
             run("Cloud forces login disabled", ["--dsn", cloud + "&login=enable"], expected_cloud=True)
+            pagination = {"wait_time_secs": 1, "max_rows_in_buffer": 1000, "max_rows_per_page": 1}
+            pagination_query = urlencode(pagination)
+            run("Cloud DSN forwards pagination ignored by current WebAPI", ["--dsn", cloud + "&" + pagination_query],
+                expected_cloud=True, expected_pagination=pagination)
+            run("Cloud forwards partial pagination including zero", ["--dsn", cloud + "&wait_time_secs=0"],
+                expected_cloud=True, expected_pagination={"wait_time_secs": 0})
+            run("Cloud Arrow remains unsupported with pagination", ["--dsn", cloud + "&" + pagination_query + "&query_result_format=arrow"],
+                expected_error="does not support Arrow")
             run("Cloud sticky session logs out with latest header", ["--dsn", cloud], expected_cloud=True, keep_alive=True)
             run("missing session capability fails instead of Cookie fallback", ["--dsn", cloud],
                 expected_cloud=True, expected_error="requires session_header support", emit_session_header=False)
@@ -257,6 +267,9 @@ def main():
             run("transaction pass-through", ["--dsn", cloud], expected_cloud=True, query="/* session */ BEGIN")
             cloud_flags = ["--org", "org-example", "--set", f"tls_ca_file={ca}", "--set", "retry_delay_secs=0"]
             run("org selects Cloud default target", cloud_flags, env_credentials, expected_cloud=True)
+            pagination_flags = [value for key, number in pagination.items() for value in ("--set", f"{key}={number}")]
+            run("Cloud --set forwards pagination", [*cloud_flags, *pagination_flags], env_credentials,
+                expected_cloud=True, expected_pagination=pagination)
             run("org region override", [*cloud_flags, "--host", "api.databend.cn"], env_credentials, expected_cloud=True)
             run("explicit SQL user conflicts with Cloud", [*cloud_flags, "--user=root"], env_credentials, expected_error="cannot be combined with --user")
             run("explicit SQL password conflicts with Cloud", [*cloud_flags, "--password=ignored"], env_credentials, expected_error="cannot be combined with --password")
@@ -269,6 +282,8 @@ def main():
                 run("untrusted origin rejected: " + host, ["--dsn", cloud.replace("api.databend.com:443", host)], expected_error="official HTTPS API host")
             basic = "Basic " + base64.b64encode(b"root:pw").decode()
             run("native DSN ignores ambient Cloud token", ["--dsn", private], env_credentials, authorization=basic)
+            run("native pagination is unchanged", ["--dsn", private + "&" + pagination_query], env_credentials,
+                authorization=basic, expected_pagination=pagination)
             run("native BENDSQL_DSN ignores ambient Cloud token", [], dict(env_credentials, BENDSQL_DSN=private), authorization=basic)
             run("native transactions unchanged", ["--dsn", private], authorization=basic, query="BEGIN")
             flags = ["--host=127.0.0.1", f"--port={server.server_port}", "--tls=true", "--set", f"tls_ca_file={ca}", "--set", "presign=off"]

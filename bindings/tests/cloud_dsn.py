@@ -124,6 +124,30 @@ def run_suite(executable, binding):
             ("China", dsn("api.databend.cn"), True, None),
             ("Cloud forces login disabled", dsn(extra={"login": "enable"}), True, None),
             (
+                "Cloud forwards pagination",
+                dsn(
+                    extra={
+                        "wait_time_secs": "1",
+                        "max_rows_in_buffer": "1000",
+                        "max_rows_per_page": "1",
+                    }
+                ),
+                True,
+                None,
+            ),
+            (
+                "Cloud forwards partial pagination",
+                dsn(extra={"wait_time_secs": "0"}),
+                True,
+                None,
+            ),
+            (
+                "Cloud Arrow remains unsupported with pagination",
+                dsn(extra={"query_result_format": "arrow", "max_rows_per_page": "1"}),
+                True,
+                "does not support Arrow",
+            ),
+            (
                 "backend without session_header",
                 dsn(),
                 True,
@@ -351,6 +375,22 @@ def run_suite(executable, binding):
                                     label + ": Cloud state in native request",
                                 )
                             if path == "/v1/query":
+                                expected_pagination = (
+                                    {
+                                        "wait_time_secs": 1,
+                                        "max_rows_in_buffer": 1000,
+                                        "max_rows_per_page": 1,
+                                    }
+                                    if name == "Cloud forwards pagination"
+                                    else {"wait_time_secs": 0}
+                                    if name == "Cloud forwards partial pagination"
+                                    else None
+                                )
+                                require(
+                                    json.loads(body).get("pagination")
+                                    == expected_pagination,
+                                    label + ": pagination body",
+                                )
                                 queries += 1
                                 require(
                                     method == "POST"

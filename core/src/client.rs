@@ -501,13 +501,9 @@ impl APIClient {
                     "Cloud WebAPI selects its tenant using org, not tenant".into(),
                 ));
             }
-            if client.query_result_format != "json"
-                || client.wait_time_secs.is_some()
-                || client.max_rows_in_buffer.is_some()
-                || client.max_rows_per_page.is_some()
-            {
+            if client.query_result_format != "json" {
                 return Err(Error::BadArgument(
-                    "Cloud WebAPI does not support Arrow or pagination tuning".into(),
+                    "Cloud WebAPI does not support Arrow".into(),
                 ));
             }
             client.set_presign_mode(PresignMode::Off);
