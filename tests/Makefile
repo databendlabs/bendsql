@@ -54,6 +54,19 @@ prepare-bindings-python:
 		cd ../bindings/python && uv sync && uv run maturin develop --uv; \
 	fi
 
+# Local HTTPS mocks only; unlike test-bindings-* these targets do not start Docker.
+test-cloud-bindings-python: prepare-bindings-python
+	cd ../bindings/python && \
+	if [ -n "$$CI" ]; then \
+		python_bin="$(PYTHON)"; \
+	else \
+		python_bin=".venv/bin/python"; \
+	fi; \
+	"$$python_bin" ../tests/cloud_dsn.py --python "$$python_bin"
+
+test-cloud-bindings-nodejs:
+	cd ../bindings/nodejs && pnpm run test:cloud
+
 test-bindings-python: up prepare-bindings-python
 	cd ../bindings/python && \
 	if [ -n "$$CI" ]; then \

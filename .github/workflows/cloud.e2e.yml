@@ -1,0 +1,68 @@
+name: Cloud WebAPI E2E
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      BENDSQL_CLOUD_API_TOKEN:
+        required: true
+      BENDSQL_DSN:
+        required: true
+
+permissions:
+  contents: read
+
+# Do not race multiple live suites against the same small test Warehouse.
+concurrency:
+  group: cloud-webapi-e2e-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  cloud-e2e:
+    # Reusable workflows inherit the caller's event/ref. Never run PR code with
+    # these Secrets, including same-repo PRs and pull_request_target events.
+    if: >-
+      github.repository == 'databendlabs/bendsql' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: stable
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - name: Check test Secrets availability (values are not injected)
+        id: credentials
+        env:
+          HAS_TOKEN: ${{ secrets.BENDSQL_CLOUD_API_TOKEN != '' }}
+          HAS_DSN: ${{ secrets.BENDSQL_DSN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" = "true" ] && [ "$HAS_DSN" = "true" ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Skipping live Cloud E2E: repository test Secrets are not configured.'
+          else
+            echo '::error::Configure BENDSQL_CLOUD_API_TOKEN and BENDSQL_DSN for a dedicated test account.'
+            exit 1
+          fi
+      - name: Checkout the exact trusted main commit
+        if: steps.credentials.outputs.available == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install Rust (without Cloud credentials)
+        if: steps.credentials.outputs.available == 'true'
+        run: rustup toolchain install stable --profile minimal
+      - name: Build CLI (without Cloud credentials or PR artifacts)
+        if: steps.credentials.outputs.available == 'true'
+        run: cargo build -p bendsql --bin bendsql
+      - name: Test queries and isolated temporary state on default Warehouse
+        if: steps.credentials.outputs.available == 'true'
+        env:
+          BENDSQL_CLOUD_API_TOKEN: ${{ secrets.BENDSQL_CLOUD_API_TOKEN }}
+          BENDSQL_DSN: ${{ secrets.BENDSQL_DSN }}
+        run: python3 cli/tests/cloud_webapi_e2e.py target/debug/bendsql

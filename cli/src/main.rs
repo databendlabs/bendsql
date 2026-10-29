@@ -20,6 +20,7 @@ mod args;
 mod argv_mask;
 mod ast;
 mod config;
+mod connection;
 mod display;
 mod gendata;
 mod helper;
@@ -38,8 +39,8 @@ use once_cell::sync::Lazy;
 
 use crate::config::ClapLoadMethod;
 use crate::{
-    args::ConnectionArgs,
     config::{Config, OutputFormat, OutputQuoteStyle, Settings, TimeOption},
+    connection::{resolve_connection, ConnectionEnvironment, Target},
 };
 
 static VERSION: Lazy<String> = Lazy::new(|| {
@@ -60,7 +61,10 @@ struct Args {
     #[clap(long, help = "Print help information")]
     help: bool,
 
-    #[clap(long, help = "Using flight sql protocol, ignored when --dsn is set")]
+    #[clap(
+        long,
+        help = "Using FlightSQL, ignored by native DSNs and unsupported with Cloud WebAPI"
+    )]
     flight: bool,
 
     #[clap(long, help = "Enable TLS, ignored when --dsn is set")]
@@ -80,15 +84,18 @@ struct Args {
     )]
     port: Option<u16>,
 
-    #[clap(short = 'u', long, help = "Default: root, overrides username in DSN")]
+    #[clap(
+        short = 'u',
+        long,
+        help = "Default: root, overrides SQL username in DSN; conflicts with Cloud mode"
+    )]
     user: Option<String>,
 
     #[clap(
         short = 'p',
         long,
-        env = "BENDSQL_PASSWORD",
         hide_env_values = true,
-        help = "Password, overrides password in DSN"
+        help = "SQL password (or BENDSQL_PASSWORD); conflicts with Cloud mode when explicitly passed"
     )]
     password: Option<SensitiveString>,
 
@@ -97,6 +104,19 @@ struct Args {
         help = "Private key file for key-pair authentication, overrides password in DSN"
     )]
     private_key_file: Option<String>,
+
+    #[clap(
+        long,
+        help = "Personal Cloud API token (or BENDSQL_CLOUD_API_TOKEN); requires --org or DSN org"
+    )]
+    cloud_api_token: Option<SensitiveString>,
+
+    #[clap(
+        long,
+        value_name = "ORG",
+        help = "Select Cloud WebAPI with the Organization ID from console organization settings"
+    )]
+    org: Option<String>,
 
     #[clap(long, help = "Passphrase file for encrypted PKCS#8 private key")]
     private_key_passphrase_file: Option<String>,
@@ -112,9 +132,8 @@ struct Args {
 
     #[clap(
         long,
-        env = "BENDSQL_DSN",
         hide_env_values = true,
-        help = "Data source name"
+        help = "Data source name (or BENDSQL_DSN); org selects Cloud WebAPI"
     )]
     dsn: Option<SensitiveString>,
 
@@ -226,7 +245,6 @@ where
 #[tokio::main]
 pub async fn main() -> Result<()> {
     let config = Config::load();
-
     let args = Args::parse();
     // Hide command-line credentials from `ps` / `/proc/<pid>/cmdline`.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -244,128 +262,14 @@ pub async fn main() -> Result<()> {
         ));
     }
 
-    let mut conn_args = match args.dsn {
-        Some(ref dsn) => {
-            if args.host.is_some() {
-                eprintln!("warning: --host is ignored when --dsn is set");
-            }
-            if args.port.is_some() {
-                eprintln!("warning: --port is ignored when --dsn is set");
-            }
-            if !args.set.is_empty() {
-                eprintln!("warning: --set is ignored when --dsn is set");
-            }
-            if let Some(tls) = args.tls {
-                if tls {
-                    eprintln!("warning: --tls is ignored when --dsn is set");
-                }
-            } else if let Some(tls) = config.connection.tls {
-                if tls {
-                    eprintln!("warning: --tls is ignored when --dsn is set")
-                }
-            }
-
-            if args.flight {
-                eprintln!("warning: --flight is ignored when --dsn is set");
-            }
-            ConnectionArgs::from_dsn(dsn.inner())?
-        }
-        None => {
-            let host = args
-                .host
-                .clone()
-                .unwrap_or_else(|| config.connection.host.clone());
-            let mut port = config.connection.port;
-            if args.port.is_some() {
-                port = args.port;
-            }
-
-            let user = args
-                .user
-                .clone()
-                .unwrap_or_else(|| config.connection.user.clone());
-            let password = args
-                .password
-                .clone()
-                .unwrap_or_else(|| SensitiveString::from(""));
-
-            ConnectionArgs {
-                host,
-                port,
-                user,
-                password,
-                database: config.connection.database.clone(),
-                flight: args.flight,
-                args: config.connection.args.clone(),
-            }
-        }
-    };
-
-    // Override connection args with command line options
-    {
-        if args.database.is_some() {
-            conn_args.database.clone_from(&args.database);
-        }
-
-        // override only if args.dsn is none
-        if args.dsn.is_none() {
-            if let Some(tls) = args.tls {
-                if !tls {
-                    conn_args
-                        .args
-                        .insert("sslmode".to_string(), "disable".to_string());
-                }
-            } else if let Some(tls) = config.connection.tls {
-                if !tls {
-                    conn_args
-                        .args
-                        .insert("sslmode".to_string(), "disable".to_string());
-                }
-            } else if config.connection.tls.is_none() {
-                // means arg.tls is none and not config in config.toml
-                conn_args
-                    .args
-                    .insert("sslmode".to_string(), "disable".to_string());
-            }
-
-            // override args if specified in command line
-            for (k, v) in args.set {
-                conn_args.args.insert(k, v);
-            }
-        }
-
-        // override user if specified in command line
-        if let Some(user) = args.user {
-            conn_args.user = user;
-        }
-        if let Some(password) = args.password {
-            conn_args.password = password;
-        }
-
-        // override role if specified in command line
-        if let Some(role) = args.role {
-            conn_args.args.insert("role".to_string(), role);
-        }
-
-        // override private key file if specified in command line
-        if let Some(private_key_file) = args.private_key_file {
-            conn_args
-                .args
-                .insert("private_key_file".to_string(), private_key_file);
-            if args.private_key_passphrase_file.is_none() {
-                conn_args.args.remove("private_key_passphrase_file");
-            }
-        }
-        if let Some(private_key_passphrase_file) = args.private_key_passphrase_file {
-            conn_args.args.insert(
-                "private_key_passphrase_file".to_string(),
-                private_key_passphrase_file,
-            );
-        }
+    let resolved =
+        resolve_connection(&args, &ConnectionEnvironment::capture(), &config.connection)?;
+    for warning in &resolved.warnings {
+        eprintln!("warning: {warning}");
     }
-
-    let user = conn_args.user.clone();
-    let dsn = conn_args.get_dsn()?;
+    let uses_cloud_api_token = matches!(resolved.target, Target::Cloud { .. });
+    let user = resolved.args.user.clone();
+    let dsn = resolved.args.get_dsn()?;
     let mut settings = Settings::default();
     let is_terminal = stdin().is_terminal();
     let is_repl = is_terminal
@@ -432,6 +336,9 @@ pub async fn main() -> Result<()> {
         Ok(session) => session,
         Err(err) => {
             // Exit client if user login failed.
+            if uses_cloud_api_token {
+                return Err(err);
+            }
             if let Some(error) = err.downcast_ref::<databend_driver::Error>() {
                 match error {
                     databend_driver::Error::Api(databend_client::Error::AuthFailure(_)) => {

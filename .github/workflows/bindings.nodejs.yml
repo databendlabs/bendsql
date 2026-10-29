@@ -124,6 +124,8 @@ jobs:
         with:
           name: bindings-nodejs-x86_64-unknown-linux-gnu
           path: bindings/nodejs
+      - name: Test Cloud DSNs (local HTTPS, no credentials or Docker)
+        run: make -C tests test-cloud-bindings-nodejs
       - name: Resolve Databend version
         id: databend-version
         env:

@@ -15,6 +15,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  cloud-e2e:
+    name: Cloud WebAPI E2E
+    # This workflow also has a PR trigger for YAML changes. Do not pass live
+    # credentials on that path, even for organization members or same-repo PRs.
+    if: >-
+      github.repository == 'databendlabs/bendsql' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cloud.e2e.yml
+    secrets:
+      BENDSQL_CLOUD_API_TOKEN: ${{ secrets.BENDSQL_CLOUD_API_TOKEN }}
+      BENDSQL_DSN: ${{ secrets.BENDSQL_DSN }}
+
   version:
     runs-on: ubuntu-latest
     outputs:
@@ -195,7 +210,7 @@ jobs:
 
   notify:
     if: failure()
-    needs: [integration, integration-python, integration-nodejs]
+    needs: [integration, integration-python, integration-nodejs, cloud-e2e]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

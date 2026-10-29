@@ -56,6 +56,7 @@
     "docs": "typedoc",
     "format": "prettier --write .",
     "test": "cucumber-js",
+    "test:cloud": "python3 ../tests/cloud_dsn.py --node node",
     "prepublishOnly": "napi prepublish -t npm --skip-gh-release"
   },
   "prettier": {
