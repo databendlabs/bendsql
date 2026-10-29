@@ -123,7 +123,12 @@ impl RestAPIConnection {
 impl IConnection for RestAPIConnection {
     async fn info(&self) -> ConnectionInfo {
         ConnectionInfo {
-            handler: "RestAPI".to_string(),
+            handler: if self.client.is_cloud_webapi() {
+                "CloudWebAPI"
+            } else {
+                "RestAPI"
+            }
+            .to_string(),
             host: self.client.host().to_string(),
             port: self.client.port(),
             user: self.client.username(),

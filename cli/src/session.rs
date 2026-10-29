@@ -178,6 +178,7 @@ pub struct Session {
     client: Client,
     pub conn: Connection,
     is_repl: bool,
+    cloud_org: Option<String>,
 
     settings: Settings,
     query: String,
@@ -201,22 +202,33 @@ impl Session {
             Client::new(dsn.clone()).with_name(format!("bendsql/{}", VERSION_SHORT.as_str()));
         let conn = client.get_conn().await?;
         let info = conn.info().await;
+        let cloud_org = url::Url::parse(&dsn)?
+            .query_pairs()
+            .find(|(key, _)| key == "org")
+            .map(|(_, value)| value.into_owned());
         let mut keywords: Option<Arc<sled::Db>> = None;
 
         if is_repl {
             println!("Welcome to BendSQL {}.", VERSION.as_str());
-            match info.warehouse {
-                Some(ref warehouse) => {
-                    println!(
-                        "Connecting to {}:{} with warehouse {} as user {}",
-                        info.host, info.port, warehouse, info.user
-                    );
-                }
-                None => {
-                    println!(
-                        "Connecting to {}:{} as user {}.",
-                        info.host, info.port, info.user
-                    );
+            if let Some(org) = &cloud_org {
+                println!(
+                    "Connecting {}",
+                    cloud_connection_message(&info.host, info.port, org)
+                );
+            } else {
+                match info.warehouse {
+                    Some(ref warehouse) => {
+                        println!(
+                            "Connecting to {}:{} with warehouse {} as user {}",
+                            info.host, info.port, warehouse, info.user
+                        );
+                    }
+                    None => {
+                        println!(
+                            "Connecting to {}:{} as user {}.",
+                            info.host, info.port, info.user
+                        );
+                    }
                 }
             }
             let version = match conn.version().await {
@@ -293,6 +305,7 @@ impl Session {
             client,
             conn,
             is_repl,
+            cloud_org,
             settings,
             query: String::new(),
             agent: None,
@@ -1181,16 +1194,27 @@ impl Session {
         self.conn = self.client.get_conn().await?;
         if self.is_repl {
             let info = self.conn.info().await;
-            eprintln!(
-                "reconnecting to {}:{} as user {}.",
-                info.host, info.port, info.user
-            );
+            if let Some(org) = &self.cloud_org {
+                eprintln!(
+                    "Reconnecting {}",
+                    cloud_connection_message(&info.host, info.port, org)
+                );
+            } else {
+                eprintln!(
+                    "reconnecting to {}:{} as user {}.",
+                    info.host, info.port, info.user
+                );
+            }
             let version = self.conn.version().await.unwrap_or_default();
             eprintln!("connected to {version}");
             eprintln!();
         }
         Ok(())
     }
+}
+
+fn cloud_connection_message(host: &str, port: u16, org: &str) -> String {
+    format!("to {host}:{port} (org: {org}) with Cloud API token")
 }
 
 impl Drop for Session {
@@ -1204,6 +1228,14 @@ impl Drop for Session {
 #[cfg(test)]
 mod agent_boundary_tests {
     use super::*;
+
+    #[test]
+    fn cloud_connection_message_names_actual_mode_without_credentials() {
+        assert_eq!(
+            cloud_connection_message("api.databend.com", 443, "org-example"),
+            "to api.databend.com:443 (org: org-example) with Cloud API token"
+        );
+    }
 
     #[test]
     fn pending_sql_keeps_operator_continuations() {

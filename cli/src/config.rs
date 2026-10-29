@@ -277,12 +277,14 @@ impl Settings {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct ConnectionConfig {
-    pub host: String,
+    // Keep absence distinct from an explicitly configured default value.
+    // Apply connection defaults only after CLI/config sources are merged.
+    pub host: Option<String>,
     pub port: Option<u16>,
-    pub user: String,
+    pub user: Option<String>,
     pub database: Option<String>,
     pub tls: Option<bool>,
     pub args: BTreeMap<String, String>,
@@ -373,19 +375,6 @@ impl Default for Settings {
     }
 }
 
-impl Default for ConnectionConfig {
-    fn default() -> Self {
-        Self {
-            host: "localhost".to_string(),
-            port: Some(8000),
-            user: "root".to_string(),
-            database: None,
-            tls: None,
-            args: BTreeMap::new(),
-        }
-    }
-}
-
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -406,7 +395,7 @@ mod agent_config_tests {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         write!(file, "[connection]\nhost='database.example'\n[settings]\nmax_display_rows=12\n[agent]\ntimeout_secs='bad'").unwrap();
         let config = Config::load_from_file(file.path().to_str().unwrap());
-        assert_eq!(config.connection.host, "database.example");
+        assert_eq!(config.connection.host.as_deref(), Some("database.example"));
         assert_eq!(config.settings.max_display_rows, Some(12));
         assert!(config.agent.settings().is_err());
     }

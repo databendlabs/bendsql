@@ -81,6 +81,14 @@ Check for latest version on [GitHub Release](https://github.com/databendlabs/ben
 
 ## Usage
 
+To use a personal Databend Cloud API token, set `BENDSQL_CLOUD_API_TOKEN` and
+select `--org <ORG>` (the Organization ID in console organization settings), or
+set `BENDSQL_DSN=databend://api.databend.com/?org=<ORG>`.
+Only `--org <ORG>` or DSN `org=` selects Cloud; config Cloud parameters are not supported.
+Cloud defaults to HTTPS/443 at `api.databend.com`,
+without a Gateway address or JWT exchange. See [Cloud WebAPI token connections](docs/cloud-webapi-token.md)
+for DSN examples, credential precedence, login compatibility and supported operations.
+
 ```
 ❯ bendsql --help
 Databend Native Command Line Tool

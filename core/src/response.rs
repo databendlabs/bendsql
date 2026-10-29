@@ -82,6 +82,8 @@ pub struct QueryResponse {
     pub error: Option<ErrorCode>,
     // make it optional for backward compatibility
     pub warnings: Option<Vec<String>>,
+    // Gateway management responses may omit engine progress statistics.
+    #[serde(default)]
     pub stats: QueryStats,
     pub result_timeout_secs: Option<u64>,
     // pub affect: Option<QueryAffect>,

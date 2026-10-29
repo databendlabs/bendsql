@@ -28,7 +28,7 @@ use crate::placeholder::PlaceholderVisitor;
 use crate::ConnectionInfo;
 use crate::Params;
 
-use databend_client::PresignedResponse;
+use databend_client::{is_cloud_webapi_host, PresignedResponse};
 use databend_common_ast::ast::Statement;
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::raw_rows::{RawRow, RawRowIterator};
@@ -102,6 +102,20 @@ impl Client {
 
     pub async fn get_conn(&self) -> Result<Connection> {
         let u = Url::parse(&self.dsn)?;
+        let has_org = u.query_pairs().any(|(key, _)| key == "org");
+        if !has_org
+            && (u.query_pairs().any(|(key, _)| key == "cloud_api_token")
+                || u.host_str().is_some_and(is_cloud_webapi_host))
+        {
+            return Err(Error::BadArgument(
+                "Cloud WebAPI requires org (Organization ID); cloud_api_token alone does not select Cloud mode".into(),
+            ));
+        }
+        if has_org && matches!(u.scheme(), "databend+flight" | "databend+grpc") {
+            return Err(Error::BadArgument(
+                "Cloud WebAPI is not supported with FlightSQL".into(),
+            ));
+        }
         match u.scheme() {
             "databend" | "databend+http" | "databend+https" => {
                 let conn = RestAPIConnection::try_create(&self.dsn, self.name.clone()).await?;
@@ -659,6 +673,31 @@ pub trait RowORM: TryFrom<Row> + Clone {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cloud_api_token_rejects_flight_before_connecting() {
+        for scheme in ["databend+flight", "databend+grpc"] {
+            let client = Client::new(format!(
+                "{scheme}://localhost/default?org=example&cloud_api_token=secret"
+            ));
+            let err = client
+                .get_conn()
+                .await
+                .err()
+                .expect("Cloud token must reject FlightSQL");
+            assert!(err.to_string().contains("not supported with FlightSQL"));
+            assert!(!err.to_string().contains("secret"));
+            for host in ["api.databend.com", "api.databend.cn", "API.DATABEND.COM"] {
+                let error = Client::new(format!("{scheme}://root:secret@{host}/default"))
+                    .get_conn()
+                    .await
+                    .err()
+                    .expect("API host must select Cloud before connecting");
+                assert!(error.to_string().contains("requires org"));
+                assert!(!error.to_string().contains("secret"));
+            }
+        }
+    }
 
     #[test]
     fn test_statement_is_dml() {
