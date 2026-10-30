@@ -45,7 +45,7 @@ def codex_app_server():
         elif method == "turn/start":
             messages = json.loads(params["input"][0]["text"].split("\n", 1)[1])
             question = json.loads(messages[-1]["content"])["question"]
-            if question == "block-cli":
+            if question in ["block-cli", "stream-cancel", "stream-timeout"]:
                 child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
             try:
                 terminal = os.open("/dev/tty", os.O_RDWR)
@@ -63,6 +63,76 @@ def codex_app_server():
             event("turn/started", threadId=thread, turn={"id": turn, "status": "inProgress"})
             send({"id": frame["id"], "result": {"turn": {"id": turn, "status": "inProgress"}}})
             if child:
+                if question != "block-cli":
+                    event("item/started", threadId=thread, turnId=turn,
+                          item={"type": "agentMessage", "id": "message", "text": "", "phase": "final_answer"})
+                    event("item/agentMessage/delta", threadId=thread, turnId=turn,
+                          itemId="message", delta="Codex cancellable partial")
+                continue
+            if question.startswith("stream-"):
+                # Commentary/reasoning and unannounced/unrelated message deltas
+                # must never enter the live answer, even before its first frame.
+                event("item/agentMessage/delta", threadId=thread, turnId=turn,
+                      itemId="unannounced", delta="private-codex-unannounced")
+                commentary = {"type": "agentMessage", "id": "commentary", "text": "", "phase": "commentary"}
+                event("item/started", threadId=thread, turnId=turn, item=commentary)
+                event("item/agentMessage/delta", threadId=thread, turnId=turn,
+                      itemId="commentary", delta="private-codex-commentary")
+                event("item/completed", threadId=thread, turnId=turn,
+                      item=dict(commentary, text="private-codex-commentary"))
+                event("item/reasoning/textDelta", threadId=thread, turnId=turn,
+                      itemId="thinking", delta="private-codex-thinking")
+                item = {"type": "agentMessage", "id": "message", "text": "",
+                        "phase": None if question == "stream-legacy" else "final_answer"}
+                if question != "stream-unannounced":
+                    event("item/started", threadId=thread, turnId=turn, item=item)
+                event("item/agentMessage/delta", threadId=thread, turnId=turn,
+                      itemId="other-message", delta="private-codex-unrelated")
+                first = "Codex provisional text" if question == "stream-authoritative" else "Codex first part."
+                if question in ["stream-failed", "stream-disconnect", "stream-no-answer", "stream-tool-item",
+                                "stream-tool-request", "stream-wrong-thread", "stream-wrong-turn"]:
+                    first = "Codex discarded partial"
+                if question != "stream-no-deltas":
+                    event("item/agentMessage/delta", threadId=thread, turnId=turn,
+                          itemId="message", delta=first)
+                if question in ["stream-codex", "stream-authoritative"]:
+                    # The PTY test releases this only after inspecting a live frame.
+                    while not os.path.exists(record_path + ".release"):
+                        time.sleep(0.02)
+                else:
+                    time.sleep(0.2)
+                if question in ["stream-tool-item", "stream-tool-request"]:
+                    if question == "stream-tool-item":
+                        event("item/started", threadId=thread, turnId=turn,
+                              item={"type": "newProviderToolCall", "id": "tool"})
+                    else:
+                        send({"id": "approval", "method": "item/commandExecution/requestApproval", "params": {}})
+                    event("item/agentMessage/delta", threadId=thread, turnId=turn,
+                          itemId="message", delta="private-codex-after-denial")
+                    time.sleep(0.2)
+                if question in ["stream-wrong-thread", "stream-wrong-turn"]:
+                    event("item/agentMessage/delta", threadId="wrong" if question == "stream-wrong-thread" else thread,
+                          turnId="wrong" if question == "stream-wrong-turn" else turn,
+                          itemId="message", delta="private-codex-wrong-scope")
+                    continue
+                if question == "stream-failed":
+                    event("turn/completed", threadId=thread,
+                          turn={"id": turn, "status": "failed", "error": {"message": "private-cli-secret"}, "items": []})
+                    continue
+                if question == "stream-disconnect":
+                    sys.exit(0)
+                if question == "stream-no-answer":
+                    event("turn/completed", threadId=thread,
+                          turn={"id": turn, "status": "completed", "error": None, "items": []})
+                    continue
+                if question not in ["stream-no-deltas", "stream-authoritative"]:
+                    event("item/agentMessage/delta", threadId=thread, turnId=turn,
+                          itemId="message", delta=" Codex second part.")
+                    time.sleep(0.1)
+                item["text"] = "Codex authoritative answer." if question == "stream-authoritative" else first + " Codex second part."
+                event("item/completed", threadId=thread, turnId=turn, item=item)
+                event("turn/completed", threadId=thread,
+                      turn={"id": turn, "status": "completed", "error": None, "items": [item]})
                 continue
             if question == "exit-error":
                 print("private-cli-secret", file=sys.stderr)
@@ -93,6 +163,7 @@ def codex_app_server():
             if question == "long-answer":
                 answer = "中" * 8000
             item = {"type": "agentMessage", "id": "message", "text": answer, "phase": "final_answer"}
+            event("item/started", threadId=thread, turnId=turn, item=dict(item, text=""))
             event("item/agentMessage/delta", threadId=thread, turnId=turn, itemId="message", delta=answer)
             event("item/completed", threadId=thread, turnId=turn, item=item)
             event("turn/completed", threadId=thread, turn={"id": turn, "status": "completed", "error": None, "items": [item]})

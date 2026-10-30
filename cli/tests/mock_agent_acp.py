@@ -12,20 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mock ACP v1 adapter for agent_repl.py; no model calls or client-side tools."""
+"""Mock ACP v1 adapter for agent_repl.py; no model calls or client-side tools.
+
+Installed as `evot`, it also answers `--help` like `evot` with ACP support
+(or an older release with EVOT_LLM_TEST_OLD) for the local-evot built-in.
+"""
 
 import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
 
 SESSION = "mock-session"
 
 
+def record_path():
+    # local-evot forwards only evot's EVOT_LLM_* namespace, not ACP_TEST_*.
+    return os.environ.get("ACP_TEST_RECORD") or os.environ["EVOT_LLM_TEST_RECORD"]
+
+
 def record(phase, **fields):
-    with open(os.environ["ACP_TEST_RECORD"], "a") as file:
+    with open(record_path(), "a") as file:
         file.write(json.dumps({"phase": phase, "pid": os.getpid(), "cwd": os.getcwd(), **fields}) + "\n")
 
 
@@ -33,9 +43,9 @@ def send(value):
     print(json.dumps({"jsonrpc": "2.0", **value}), flush=True)
 
 
-def update(kind, **fields):
+def update(session_update, /, **fields):
     send({"method": "session/update", "params": {
-        "sessionId": SESSION, "update": {"sessionUpdate": kind, **fields},
+        "sessionId": SESSION, "update": {"sessionUpdate": session_update, **fields},
     }})
 
 
@@ -55,12 +65,33 @@ def receive_reply(expected_id):
         message = json.loads(line)
         if message.get("id") == expected_id and "method" not in message:
             record("client_reply", reply=message)
-            return
+            return message
         if message.get("method") == "session/cancel":
             record("cancel", params=message["params"])
 
 
+EVOT_HELP = """evot v0.0.0-mock
+
+Commands:
+  acp                    Serve the Agent Client Protocol (ACP) on stdio
+
+Options:
+  --model <name>         Override the model
+  --tools <policy>       acp only: full | readonly | none (default: full)
+  --permission <policy>  acp only: ask | allow — ask the client before each tool call (default: ask)
+  --ephemeral            acp only: keep sessions in memory, write nothing to disk
+"""
+
+
 def main():
+    if sys.argv[1:] == ["--help"]:
+        record("help", argv=sys.argv[1:], stdin=sys.stdin.read())
+        help_text = EVOT_HELP
+        if os.environ.get("EVOT_LLM_TEST_OLD"):
+            # The first ACP release: `acp`, `--tools`, `--ephemeral`, no `--permission`.
+            help_text = help_text.replace("--permission", "")
+        print(help_text)
+        return
     sys.stderr.write("adapter diagnostics " * 500)
     sys.stderr.flush()
     prompt_id = None
@@ -114,13 +145,38 @@ def main():
             if question == "overflow-frame":
                 answer("x" * (128 * 1024 + 1))
             if question == "overflow-wire":
-                for _ in range(20):
+                for _ in range(250):
                     update("agent_thought_chunk", content={"type": "text", "text": "x" * 70000})
             if question == "overflow-stderr":
                 sys.stderr.write("private-acp-secret" * 3000)
                 sys.stderr.flush()
             if question == "tool-call":
                 update("tool_call", toolCallId="tool", title="private-acp-secret", kind="execute", status="completed")
+            if question in ["refused-tool", "ran-after-refusal"]:
+                # evot --permission ask: announce pending, ask, then report the
+                # refused call failed (or, for a broken adapter, run it anyway).
+                update("tool_call", toolCallId="read-1", title="private-acp-secret",
+                       status="pending", rawInput={"path": "/private/secret"}, kind="read")
+                send({"id": "server-request", "method": "session/request_permission", "params": {
+                    "sessionId": SESSION,
+                    "toolCall": {"toolCallId": "read-1", "title": "private-acp-secret", "status": "pending"},
+                    "options": [{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                                {"optionId": "reject", "name": "Reject", "kind": "reject_once"}],
+                }})
+                reply = receive_reply("server-request")
+                if reply["result"]["outcome"]["outcome"] == "cancelled":
+                    # ACP cancellation ends the turn, unlike selecting a reject option.
+                    result(prompt_id, "cancelled")
+                    continue
+                if question == "refused-tool":
+                    update("tool_call_update", toolCallId="read-1", status="failed",
+                           rawOutput={"error": "private-acp-secret denied"})
+                    answer("Answered without the tool.")
+                    result(prompt_id)
+                    continue
+                update("tool_call_update", toolCallId="read-1", status="in_progress")
+                update("tool_call_update", toolCallId="read-1", status="completed",
+                       content=[{"type": "content", "content": {"type": "text", "text": "private-acp-secret"}}])
             if question in ["permission", "read-file", "write-file", "terminal", "extension"]:
                 methods = {"permission": "session/request_permission", "read-file": "fs/read_text_file",
                            "write-file": "fs/write_text_file", "terminal": "terminal/create", "extension": "_private/execute_sql"}
@@ -130,7 +186,7 @@ def main():
                     "options": [{"optionId": "allow", "name": "Approve", "kind": "allow_always"}],
                 }})
                 receive_reply("server-request")
-            if question in ["tool-call", "permission", "read-file", "write-file", "terminal", "extension"]:
+            if question in ["tool-call", "ran-after-refusal", "permission", "read-file", "write-file", "terminal", "extension"]:
                 answer("private-acp-secret after capability denial")
                 # Leave enough time for a live frame if the client incorrectly
                 # continues publishing text after the turn is invalidated.
@@ -140,6 +196,23 @@ def main():
             if question == "no-answer":
                 result(prompt_id)
                 continue
+            if question == "endless-answer":
+                # Token-sized frames that would outlast the frame budget and the
+                # request timeout; the client must stop at its answer limit.
+                def watch_cancel():
+                    for line in sys.stdin:
+                        if json.loads(line).get("method") == "session/cancel":
+                            record("cancel", params=json.loads(line)["params"])
+                threading.Thread(target=watch_cancel, daemon=True).start()
+                deadline = time.monotonic() + 60
+                frames = 0
+                while time.monotonic() < deadline:
+                    answer("中")
+                    frames += 1
+                    if frames % 64 == 0:
+                        time.sleep(0.01)
+                result(prompt_id)
+                return
             if question == "long-answer":
                 for _ in range(20):
                     answer("中" * 1000)

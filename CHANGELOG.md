@@ -18,12 +18,42 @@
 
 ### Streaming AI answers
 
-- On an interactive terminal, OpenAI-compatible and ACP answers now stream by
-  default. Only the last screenful is shown while generating; the full answer is
-  printed when the turn completes, and failed/interrupted turns erase partial text.
+- On an interactive terminal, OpenAI-compatible, ACP and local Codex answers now
+  stream by default. Only the last screenful is shown while generating; the full
+  answer is printed when the turn completes, and failed/interrupted turns erase
+  partial text.
   Disable with `settings.ai_stream = false` or `!set ai_stream false`.
+- Local Codex streams assistant answer text, not commentary, thinking or tool
+  output. Completed assistant-message text from a successful turn remains the
+  authoritative answer saved in conversation history. Claude Code and Pi continue
+  to show a spinner followed by the final answer.
 - OpenAI-compatible backends receive `"stream": true` in that case. Gateways that
   ignore it and return JSON keep working; gateways that reject it need `ai_stream = false`.
+
+### evot backend
+
+- New zero-config built-in backend `local-evot` (alias `evot`), discovered after
+  Pi. BendSQL starts `evot acp --tools readonly --permission ask --ephemeral` per
+  question through its ACP client: evot asks before every tool call and BendSQL
+  always refuses, so no tool runs, and evot keeps no session on disk. Answers
+  stream live. A tool call evot asked about and BendSQL refused never ran, so the
+  model's answer without it is kept; a tool reported as running or completed (or
+  any call that skipped the permission request) still discards the turn. Generic
+  `type = "acp"` adapters keep the strict rule. `evot --help`
+  must advertise `acp`, `--tools`, `--permission`, `--ephemeral` and `--model`;
+  older evot releases receive no context.
+- Like other built-ins it accepts `command`, `model` (passed as `--model`),
+  `env_allowlist` and `allow_external_agent` overrides. `EVOT_LLM_*` variables
+  are forwarded so environment-based evot provider settings keep working.
+- Built-in overrides now accept the short alias as section name for every
+  built-in: `[agent.backends.codex]` is the same as `[agent.backends.local-codex]`
+  and applies under both names and to discovery. Configuring one built-in under
+  both names is rejected as an invalid AI config.
+- ACP answers (evot and `type = "acp"`) stop at the 8 KiB answer limit: BendSQL
+  cancels the adapter and keeps the truncated answer instead of waiting for, or
+  timing out on, the rest of a long generation. The per-turn ACP transport budget
+  rises from 1 MiB / 4096 frames to 16 MiB / 65536 frames for token-sized and
+  thought frames, which are parsed and dropped.
 
 ### Interactive SQL and AI modes
 

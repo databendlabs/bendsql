@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 
-use super::backend::ChatBackend;
+use super::backend::{AnswerStream, ChatBackend};
 use super::config::CliAdapter;
 use super::llm::Message;
 
@@ -51,21 +51,11 @@ impl CliBackend {
         if !allow_external_agent {
             bail!("CLI backends require allow_external_agent = true. They are trusted external programs, may access local files and have their own retention policies; Codex may use tools in its read-only sandbox.");
         }
-        if model.is_some_and(|m| {
-            m.trim().is_empty()
-                || m.starts_with('-')
-                || m.len() > 256
-                || m.chars().any(char::is_control)
-        }) {
-            bail!(
-                "CLI model must be nonempty, at most 256 bytes and contain no control characters"
-            );
+        if adapter == CliAdapter::Evot {
+            bail!("The evot adapter uses the ACP transport; build it through AcpBackend::evot");
         }
-        let executable = resolve_executable(command.unwrap_or(match adapter {
-            CliAdapter::Codex => "codex",
-            CliAdapter::ClaudeCode => "claude",
-            CliAdapter::Pi => "pi",
-        }))?;
+        validate_model(model)?;
+        let executable = resolve_executable(command.unwrap_or(default_command(adapter)))?;
         let env = child_environment(Some(adapter), env_allowlist)?;
         let codex = (adapter == CliAdapter::Codex).then(|| {
             super::codex::CodexServer::new(
@@ -122,6 +112,7 @@ impl CliBackend {
         let stdout = self.invoke(directory.path(), &args, &input).await?;
         match self.adapter {
             CliAdapter::Codex => unreachable!("Codex uses the app-server transport"),
+            CliAdapter::Evot => unreachable!("evot uses the ACP transport"),
             CliAdapter::ClaudeCode => parse_claude(&stdout),
             CliAdapter::Pi => parse_pi(&stdout),
         }
@@ -129,60 +120,93 @@ impl CliBackend {
 
     #[cfg(unix)]
     async fn invoke(&self, directory: &Path, args: &[OsString], input: &str) -> Result<Vec<u8>> {
-        use std::os::unix::process::CommandExt;
-        use std::process::Stdio;
-        use tokio::io::AsyncWriteExt;
-        let mut command = tokio::process::Command::new(&self.executable);
-        command.args(args);
-        command
-            .current_dir(directory)
-            .env_clear()
-            .envs(&self.env)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        // Cancellation kills the whole process group, not only the CLI parent.
-        command.as_std_mut().process_group(0);
-        let child = command.spawn().map_err(|_| {
-            anyhow!("Cannot start selected CLI backend; check its executable and installation")
-        })?;
-        let mut guard = ProcessGuard::new(child);
-        let mut stdin = guard.child.stdin.take().expect("piped stdin");
-        let stdout = guard.child.stdout.take().expect("piped stdout");
-        let stderr = guard.child.stderr.take().expect("piped stderr");
-        let write = async {
-            stdin
-                .write_all(input.as_bytes())
-                .await
-                .map_err(|_| anyhow!("Cannot send context to CLI backend"))?;
-            stdin
-                .shutdown()
-                .await
-                .map_err(|_| anyhow!("Cannot close CLI input"))?;
-            drop(stdin);
-            Ok::<_, anyhow::Error>(())
-        };
-        // Drain both pipes concurrently with input, preventing pipe deadlocks.
-        // Keep the leader unreaped while a descendant could be holding a pipe:
-        // this prevents PID/group reuse during a long timeout or cancellation.
-        let (_, stdout, _) = tokio::try_join!(
-            write,
-            read_bounded(stdout, MAX_STDOUT_BYTES),
-            drain_stderr(stderr),
-        )?;
-        let status = guard
-            .child
-            .wait()
-            .await
-            .map_err(|_| anyhow!("Cannot wait for CLI backend"))?;
-        guard.kill_group();
-        if !status.success() {
-            // CLI diagnostics can contain credentials, SQL and private paths.
-            bail!("CLI backend exited unsuccessfully (code {:?}); output suppressed. Check authentication/version outside BendSQL. SQL remains available.", status.code());
-        }
-        Ok(stdout)
+        invoke_once(&self.executable, &self.env, directory, args, input).await
     }
+}
+
+pub(super) fn default_command(adapter: CliAdapter) -> &'static str {
+    match adapter {
+        CliAdapter::Codex => "codex",
+        CliAdapter::ClaudeCode => "claude",
+        CliAdapter::Pi => "pi",
+        CliAdapter::Evot => "evot",
+    }
+}
+
+pub(super) fn validate_model(model: Option<&str>) -> Result<()> {
+    if model.is_some_and(|m| {
+        m.trim().is_empty()
+            || m.starts_with('-')
+            || m.len() > 256
+            || m.chars().any(char::is_control)
+    }) {
+        bail!("CLI model must be nonempty, at most 256 bytes and contain no control characters");
+    }
+    Ok(())
+}
+
+/// Run one bounded CLI invocation to completion in its own process group.
+#[cfg(unix)]
+pub(super) async fn invoke_once(
+    executable: &Path,
+    env: &BTreeMap<OsString, OsString>,
+    directory: &Path,
+    args: &[OsString],
+    input: &str,
+) -> Result<Vec<u8>> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+    let mut command = tokio::process::Command::new(executable);
+    command.args(args);
+    command
+        .current_dir(directory)
+        .env_clear()
+        .envs(env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    // Cancellation kills the whole process group, not only the CLI parent.
+    command.as_std_mut().process_group(0);
+    let child = command.spawn().map_err(|_| {
+        anyhow!("Cannot start selected CLI backend; check its executable and installation")
+    })?;
+    let mut guard = ProcessGuard::new(child);
+    let mut stdin = guard.child.stdin.take().expect("piped stdin");
+    let stdout = guard.child.stdout.take().expect("piped stdout");
+    let stderr = guard.child.stderr.take().expect("piped stderr");
+    let write = async {
+        stdin
+            .write_all(input.as_bytes())
+            .await
+            .map_err(|_| anyhow!("Cannot send context to CLI backend"))?;
+        stdin
+            .shutdown()
+            .await
+            .map_err(|_| anyhow!("Cannot close CLI input"))?;
+        drop(stdin);
+        Ok::<_, anyhow::Error>(())
+    };
+    // Drain both pipes concurrently with input, preventing pipe deadlocks.
+    // Keep the leader unreaped while a descendant could be holding a pipe:
+    // this prevents PID/group reuse during a long timeout or cancellation.
+    let (_, stdout, _) = tokio::try_join!(
+        write,
+        read_bounded(stdout, MAX_STDOUT_BYTES),
+        drain_stderr(stderr),
+    )?;
+    let status = guard
+        .child
+        .wait()
+        .await
+        .map_err(|_| anyhow!("Cannot wait for CLI backend"))?;
+    guard.kill_group();
+    if !status.success() {
+        // CLI diagnostics can contain credentials, SQL and private paths.
+        bail!("CLI backend exited unsuccessfully (code {:?}); output suppressed. Check authentication/version outside BendSQL. SQL remains available.", status.code());
+    }
+    Ok(stdout)
 }
 
 #[async_trait]
@@ -191,7 +215,7 @@ impl ChatBackend for CliBackend {
         #[cfg(unix)]
         {
             if let Some(codex) = &self.codex {
-                codex.complete(messages).await
+                codex.request(messages, None).await
             } else {
                 self.run(messages).await
             }
@@ -209,6 +233,16 @@ impl ChatBackend for CliBackend {
             );
             bail!("Local CLI backends are not supported on this platform")
         }
+    }
+
+    async fn stream(&self, messages: &[Message], output: &AnswerStream) -> Result<String> {
+        #[cfg(unix)]
+        if let Some(codex) = &self.codex {
+            return codex.request(messages, Some(output)).await;
+        }
+        // Claude Code and Pi retain their final-answer-only transports.
+        let _ = output;
+        self.complete(messages).await
     }
 
     fn diagnostic_context(&self) -> Option<&'static str> {
@@ -327,11 +361,25 @@ pub(super) fn child_environment(
             "RADIUS_API_KEY",
             "HF_TOKEN",
         ],
-        None => &[],
+        // evot reads ~/.evotai/evot.env through HOME; EVOT_LLM_* below
+        // covers the same provider settings when they come from the environment.
+        Some(CliAdapter::Evot) | None => &[],
     };
     for name in auth {
         if let Some(value) = std::env::var_os(name) {
             env.insert((*name).into(), value);
+        }
+    }
+    if adapter == Some(CliAdapter::Evot) {
+        // Provider names are user-defined (EVOT_LLM_<PROVIDER>_API_KEY), so
+        // evot's model namespace is forwarded by prefix, and nothing else.
+        for (name, value) in std::env::vars_os() {
+            if name
+                .to_str()
+                .is_some_and(|name| name.starts_with("EVOT_LLM_"))
+            {
+                env.insert(name, value);
+            }
         }
     }
     for name in extra {
@@ -390,6 +438,7 @@ const MAX_EVENT_BYTES: usize = 128 * 1024;
 fn arguments(adapter: CliAdapter) -> Vec<&'static str> {
     match adapter {
         CliAdapter::Codex => unreachable!("Codex uses the app-server transport"),
+        CliAdapter::Evot => unreachable!("evot uses the ACP transport"),
         CliAdapter::ClaudeCode => vec![
             "--print",
             "--input-format",
@@ -435,7 +484,7 @@ fn arguments(adapter: CliAdapter) -> Vec<&'static str> {
 }
 
 #[cfg(unix)]
-fn validate_capabilities(adapter: CliAdapter, help: &[u8]) -> Result<()> {
+pub(super) fn validate_capabilities(adapter: CliAdapter, help: &[u8]) -> Result<()> {
     let text = std::str::from_utf8(help)
         .map_err(|_| anyhow!("CLI help is not valid UTF-8; context was not sent"))?;
     let required: &[&str] = match adapter {
@@ -470,7 +519,8 @@ fn validate_capabilities(adapter: CliAdapter, help: &[u8]) -> Result<()> {
             "--strict-mcp-config",
             "--mcp-config",
         ],
-        _ => &[],
+        CliAdapter::Evot => &["acp", "--tools", "--permission", "--ephemeral", "--model"],
+        CliAdapter::Codex => &[],
     };
     let advertised: std::collections::BTreeSet<_> = text
         .split_ascii_whitespace()
@@ -719,6 +769,7 @@ mod tests {
             Some(CliAdapter::Codex),
             Some(CliAdapter::ClaudeCode),
             Some(CliAdapter::Pi),
+            Some(CliAdapter::Evot),
         ] {
             let env = child_environment(adapter, &[]).unwrap();
             assert_eq!(
@@ -798,6 +849,49 @@ mod tests {
                 Some(&OsString::from(expected))
             );
             assert!(child_environment(Some(adapter), &[key.into()]).is_err());
+        }
+    }
+
+    #[test]
+    fn evot_receives_only_its_model_namespace() {
+        // Unique names: not read by the Rust test process or other tests.
+        std::env::set_var("EVOT_LLM_BENDSQL_TEST_API_KEY", "provider-key");
+        std::env::set_var("EVOT_BENDSQL_TEST_OTHER", "not-forwarded");
+        let env = child_environment(Some(CliAdapter::Evot), &[]).unwrap();
+        assert_eq!(
+            env.get(&OsString::from("EVOT_LLM_BENDSQL_TEST_API_KEY")),
+            Some(&OsString::from("provider-key"))
+        );
+        assert!(!env.contains_key(&OsString::from("EVOT_BENDSQL_TEST_OTHER")));
+        for adapter in [
+            None,
+            Some(CliAdapter::Codex),
+            Some(CliAdapter::ClaudeCode),
+            Some(CliAdapter::Pi),
+        ] {
+            let env = child_environment(adapter, &[]).unwrap();
+            assert!(!env.contains_key(&OsString::from("EVOT_LLM_BENDSQL_TEST_API_KEY")));
+        }
+        assert!(CliBackend::new(CliAdapter::Evot, None, None, &[], true).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn evot_requires_its_acp_profile_options() {
+        // Option lines as printed by `evot --help`.
+        let help =
+            "Commands:\n  acp                    Serve the Agent Client Protocol (ACP) on stdio\n\
+                    Options:\n  --model <name>         Override the model\n\
+                    --tools <policy>       acp only: full | readonly | none\n\
+                    --permission <policy>  acp only: ask | allow\n\
+                    --ephemeral            acp only: keep sessions in memory";
+        assert!(validate_capabilities(CliAdapter::Evot, help.as_bytes()).is_ok());
+        // `--permission` arrived after `--tools`/`--ephemeral`; without it
+        // read-only tools would run unasked.
+        for missing in ["acp ", "--tools", "--permission", "--ephemeral"] {
+            let old = help.replace(missing, "");
+            let error = validate_capabilities(CliAdapter::Evot, old.as_bytes()).unwrap_err();
+            assert!(error.to_string().contains("Context was not sent"));
         }
     }
 

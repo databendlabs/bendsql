@@ -171,7 +171,7 @@ impl AgentSession {
         } else {
             ""
         };
-        Ok(format!("Current backend: {current}\nAvailable backends: {names}\nDefault discovery: codex, then claude, then pi. Explicit --backend/agent.backend selection takes precedence; runtime failures never switch services.\nBuilt-in aliases: claude, claude-code, codex, pi. env explicitly uses BENDSQL_AGENT_BASE_URL, BENDSQL_AGENT_MODEL and optional BENDSQL_AGENT_API_KEY.{notice}"))
+        Ok(format!("Current backend: {current}\nAvailable backends: {names}\nDefault discovery: codex, then claude, then pi, then evot. Explicit --backend/agent.backend selection takes precedence; runtime failures never switch services.\nBuilt-in aliases: claude, claude-code, codex, evot, pi. env explicitly uses BENDSQL_AGENT_BASE_URL, BENDSQL_AGENT_MODEL and optional BENDSQL_AGENT_API_KEY.{notice}"))
     }
 
     pub fn select_backend(&mut self, name: &str) -> Result<()> {
