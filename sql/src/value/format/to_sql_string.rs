@@ -54,7 +54,8 @@ impl Value {
                 serde_json::Value::String(dt.format(TIMESTAMP_TIMEZONE_FORMAT).to_string())
             }
             Value::Date(d) => {
-                let date = NaiveDate::from_num_days_from_ce_opt(*d + DAYS_FROM_CE).unwrap();
+                let date = NaiveDate::from_num_days_from_ce_opt(d.saturating_add(DAYS_FROM_CE))
+                    .unwrap_or_default();
                 serde_json::Value::String(date.format("%Y-%m-%d").to_string())
             }
             Value::Binary(b) => serde_json::Value::String(hex::encode(b)),
@@ -110,7 +111,8 @@ impl Value {
                 format!("'{formatted}'")
             }
             Value::Date(d) => {
-                let date = NaiveDate::from_num_days_from_ce_opt(*d + DAYS_FROM_CE).unwrap();
+                let date = NaiveDate::from_num_days_from_ce_opt(d.saturating_add(DAYS_FROM_CE))
+                    .unwrap_or_default();
                 format!("'{}'", date.format("%Y-%m-%d"))
             }
             Value::Binary(b) => format!("'{}'", hex::encode(b)),

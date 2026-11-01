@@ -62,7 +62,9 @@ impl GeoValue {
     pub fn from_binary(v: Vec<u8>, typ: GeometryDataType) -> crate::error::Result<Self> {
         match typ {
             GeometryDataType::WKB | GeometryDataType::EWKB => Ok(GeoValue::Binary(v)),
-            _ => Ok(GeoValue::String(unsafe { String::from_utf8_unchecked(v) })),
+            _ => Ok(GeoValue::String(String::from_utf8(v).map_err(|_| {
+                crate::error::Error::Parsing("fail to decode geometry data as utf-8".to_string())
+            })?)),
         }
     }
 
