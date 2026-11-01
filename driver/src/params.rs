@@ -17,6 +17,7 @@ use std::fmt::Debug;
 
 use databend_common_ast::ast::Statement;
 use databend_common_ast::parser::Dialect;
+use databend_driver_core::error::{Error, Result};
 
 pub trait Param: Debug {
     fn as_json_value(&self) -> serde_json::Value;
@@ -101,15 +102,23 @@ impl Params {
         }
     }
 
-    pub fn merge(&mut self, other: Params) {
+    /// Merge `other` into `self`.
+    ///
+    /// Returns [`Error::BadArgument`] when the two params use different binding
+    /// styles (`QuestionParams` vs `NamedParams`); previously this panicked.
+    pub fn try_merge(&mut self, other: Params) -> Result<()> {
         match (self, other) {
             (Params::QuestionParams(vec1), Params::QuestionParams(vec2)) => {
                 vec1.extend(vec2);
+                Ok(())
             }
             (Params::NamedParams(map1), Params::NamedParams(map2)) => {
                 map1.extend(map2);
+                Ok(())
             }
-            _ => panic!("Cannot merge QuestionParams with NamedParams"),
+            _ => Err(Error::BadArgument(
+                "Cannot merge QuestionParams with NamedParams".to_string(),
+            )),
         }
     }
 
@@ -282,9 +291,7 @@ macro_rules! impl_from_tuple_for_params {
         impl<$head: Param, $($tail: Param),*> From<($head, $($tail),*)> for Params {
             fn from(tuple: ($head, $($tail),*)) -> Self {
                 let (h, $($tail),*) = tuple;
-                let mut params = Params::QuestionParams(vec![h.as_json_value()]);
-                $(params.merge(Params::QuestionParams(vec![$tail.as_json_value()]));)*
-                params
+                Params::QuestionParams(vec![h.as_json_value(), $($tail.as_json_value()),*])
             }
         }
 

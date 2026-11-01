@@ -102,8 +102,9 @@ impl IConnection for FlightSQLConnection {
     }
 
     async fn kill_query(&self, _query_id: &str) -> Result<()> {
-        // todo: implement kill query
-        Ok(())
+        Err(Error::Protocol(
+            "kill_query unavailable for FlightSQL".to_string(),
+        ))
     }
 
     async fn query_iter(&self, sql: &str) -> Result<RowIterator> {
@@ -120,7 +121,11 @@ impl IConnection for FlightSQLConnection {
             .await
             .map_err(flight_error)?;
         let flight_info = stmt.execute().await.map_err(flight_error)?;
-        let ticket = flight_info.endpoint[0]
+        let endpoint = flight_info
+            .endpoint
+            .first()
+            .ok_or_else(|| Error::Protocol("FlightInfo has no endpoint".to_string()))?;
+        let ticket = endpoint
             .ticket
             .as_ref()
             .ok_or_else(|| Error::Protocol("Ticket is empty".to_string()))?;
