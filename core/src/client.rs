@@ -687,7 +687,7 @@ impl APIClient {
         need_progress: bool,
         params: Option<serde_json::Value>,
     ) -> Result<Pages> {
-        info!("start query: {sql}");
+        info!("start query: {}", crate::mask::mask_secrets(sql));
         let (resp, batches) = self.start_query_inner(sql, None, false, params).await?;
         Pages::new(self.clone(), resp, batches, need_progress)
     }
@@ -1010,7 +1010,10 @@ impl APIClient {
         file_format_options: BTreeMap<&str, &str>,
         copy_options: BTreeMap<&str, &str>,
     ) -> Result<QueryStats> {
-        info!("insert with stage: {sql}, format: {file_format_options:?}, copy: {copy_options:?}");
+        info!(
+            "insert with stage: {}, format: {file_format_options:?}, copy: {copy_options:?}",
+            crate::mask::mask_secrets(sql)
+        );
         let stage_attachment = Some(StageAttachmentConfig {
             location: stage,
             file_format_options: Some(file_format_options),
@@ -1438,7 +1441,7 @@ impl APIClient {
                     if let Some(reason) = Self::retry_reason_for_reqwest(&err)
                         .filter(|_| allow_replay || err.is_connect())
                     {
-                        if retries >= max_retries.saturating_sub(1) {
+                        if retries >= max_retries {
                             return Err(Self::with_request_context(
                                 err,
                                 &request_kind,
@@ -1478,9 +1481,9 @@ impl APIClient {
                 Err(err) => {
                     if let Some(reason) = Self::retry_reason_for_reqwest(&err)
                         .or_else(|| self.transport.body_error_fallback())
-                        .filter(|_| allow_replay)
+                        .filter(|_| self.transport.allow_replay_body(&request_kind))
                     {
-                        if retries >= max_retries.saturating_sub(1) {
+                        if retries >= max_retries {
                             return Err(Self::with_request_context(
                                 err,
                                 &request_kind,
@@ -1511,7 +1514,7 @@ impl APIClient {
             };
 
             if retry_if_503 && allow_replay && status == StatusCode::SERVICE_UNAVAILABLE {
-                if retries >= max_retries.saturating_sub(1) {
+                if retries >= max_retries {
                     return Ok(HttpResponseData {
                         status,
                         headers,
@@ -1543,6 +1546,15 @@ impl APIClient {
                         Box::pin(self.refresh_session_token(session_token_info.clone())).await?;
                         refreshed = true;
                         retries = 0;
+                        // The Authorization header was stripped above; re-apply the
+                        // refreshed session token so the retried request is authenticated.
+                        let builder = RequestBuilder::from_parts(
+                            HttpClient::new(),
+                            request.try_clone().ok_or_else(|| {
+                                Error::BadArgument("request not cloneable".to_string())
+                            })?,
+                        );
+                        request = self.wrap_auth_or_session_token(builder)?.build()?;
                         warn!(
                             "retry for {} due to: session token expired and refreshed, retrying after {} seconds",
                             request.url(),
@@ -1553,7 +1565,7 @@ impl APIClient {
                     }
                 }
                 if reload_auth_if_401 && self.auth.can_reload() {
-                    if retries >= max_retries.saturating_sub(1) {
+                    if retries >= max_retries {
                         return Ok(HttpResponseData {
                             status,
                             headers,

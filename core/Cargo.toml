@@ -24,15 +24,20 @@ tokio-stream = { workspace = true }
 arrow-array = { workspace = true }
 arrow-ipc = { workspace = true }
 arrow-schema = { workspace = true }
-bytes = "1.10.1"
 base64 = "0.22.1"
-cookie = "0.18.1"
+bytes = "1.10.1"
 chrono-tz = { workspace = true }
+cookie = "0.18.1"
+jsonwebtoken = "9"
 log = { version = "0.4", features = ["kv"] }
 once_cell = "1.21"
 parking_lot = "0.12.3"
+pem = "3"
 percent-encoding = "2.3"
+pkcs8 = { version = "0.11", features = ["encryption", "pem"] }
+regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream", "cookies"] }
+sec1 = { version = "0.7", features = ["pem"] }
 semver = "1.0.14"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
@@ -41,10 +46,6 @@ tokio-retry = "0.3"
 tokio-util = { version = "0.7", features = ["io-util"] }
 url = { version = "2.5", default-features = false }
 uuid = { version = "1.16", features = ["std", "v4", "v7"] }
-jsonwebtoken = "9"
-pem = "3"
-pkcs8 = { version = "0.11", features = ["encryption", "pem"] }
-sec1 = { version = "0.7", features = ["pem"] }
 
 [dev-dependencies]
 chrono = { workspace = true }
