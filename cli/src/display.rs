@@ -659,8 +659,13 @@ fn create_table(
     if is_single_number_result {
         let mut cells = Vec::new();
         for (idx, cell) in res_vec[0].iter().enumerate() {
-            let f: f64 = cell.content().parse().unwrap();
-            let content = format!("({})", humanize_count(f));
+            let content = match cell.content().parse::<f64>() {
+                Ok(f) => format!("({})", humanize_count(f)),
+                // The cell may already have been truncated to fit its column
+                // width (e.g. "1000000000…"); keep it verbatim instead of
+                // panicking on the failed parse.
+                Err(_) => cell.content().to_string(),
+            };
             let cell = Cell::new(&content)
                 .fg(Color::Rgb {
                     r: 128,
@@ -944,6 +949,29 @@ mod agent_tests {
         // here; the width must saturate at 0 rather than underflow.
         let widths = compute_column_widths(schema.as_ref(), &[row], 80, 20, false);
         assert_eq!(widths.len(), 30);
+    }
+
+    #[test]
+    fn truncated_number_cells_do_not_panic() {
+        let fields: Vec<databend_driver::Field> = (0..20)
+            .map(|i| databend_driver::Field {
+                name: format!("c{i}"),
+                data_type: databend_driver::DataType::Number(
+                    databend_driver::NumberDataType::Float64,
+                ),
+            })
+            .collect();
+        let schema: SchemaRef = Arc::new(Schema::from_vec(fields));
+        let row = Row::new(
+            schema.clone(),
+            (0..20)
+                .map(|_| Value::Number(databend_driver::NumberValue::Float64(1e20)))
+                .collect(),
+        );
+        // An 80-char budget across 20 columns forces truncation; the humanized
+        // single-number pass must not panic when a cell no longer re-parses.
+        let table = create_table(schema.clone(), &[row], false, 80, 10, 1);
+        assert!(table.is_ok());
     }
 
     fn stream(fail: bool) -> RowStatsIterator {

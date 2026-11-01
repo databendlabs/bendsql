@@ -58,16 +58,12 @@ pub fn json_value_to_sql_string(v: &serde_json::Value) -> String {
             let items: Vec<String> = arr.iter().map(json_value_to_sql_string).collect();
             format!("[{}]", items.join(", "))
         }
-        serde_json::Value::Object(map) => {
-            let mut s = String::from("'{");
-            for (i, (k, v)) in map.iter().enumerate() {
-                if i > 0 {
-                    s.push_str(", ");
-                }
-                s.push_str(&format!("\"{k}\": {}", json_value_to_sql_string(v)));
-            }
-            s.push_str("}'::JSON");
-            s
+        serde_json::Value::Object(_) => {
+            // Serialize the whole object as JSON text inside a single SQL
+            // string literal. Recursively emitting SQL literals for each value
+            // would break the surrounding literal, e.g. {"a":"b"} would become
+            // '{"a": 'b'}'::JSON.
+            format!("'{}'::JSON", v.to_string().replace('\'', "''"))
         }
     }
 }
@@ -332,6 +328,18 @@ impl From<serde_json::Value> for Params {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_object_param_is_valid_json_literal() {
+        // Object params must be emitted as JSON text inside one SQL string
+        // literal, not as recursively-generated SQL literals which would close
+        // the surrounding string early.
+        let value = serde_json::json!({"a": "b", "n": 1});
+        assert_eq!(
+            json_value_to_sql_string(&value),
+            "'{\"a\":\"b\",\"n\":1}'::JSON"
+        );
+    }
 
     #[test]
     fn test_params() {

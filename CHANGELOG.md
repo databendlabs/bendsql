@@ -19,6 +19,16 @@
   header instead of sending an unauthenticated request.
 - `retry_count` now performs exactly that many retries; previously it performed
   one fewer.
+- Interval parsing no longer swallows an unknown date-part specifier, and no
+  longer overflows on large numeric or time values; both now report an error.
+- Object-typed query parameters are emitted as a valid JSON string literal
+  (`'{"a":"b"}'::JSON`) instead of a broken, potentially injectable SQL string.
+- The CLI table renderer no longer panics when a wide numeric result set
+  truncates its own cells.
+- A session-token TTL that would overflow `Instant`, an unparsable
+  `DATABEND_DRIVER_HEARTBEAT_INTERVAL_SECONDS`, a non-UTF-8 session header, and a
+  failed logout-request build no longer panic; the logout is skipped with a
+  warning instead.
 
 ### Logging
 

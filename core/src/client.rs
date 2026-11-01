@@ -1161,13 +1161,17 @@ impl APIClient {
         let resp = builder.headers(headers).multipart(form).send().await?;
         let status = resp.status();
         if let Some(value) = resp.headers().get(HEADER_QUERY_CONTEXT) {
-            match Self::decode_json_header::<SessionState>(
-                HEADER_QUERY_CONTEXT,
-                value.to_str().unwrap(),
-            ) {
+            let decoded = value
+                .to_str()
+                .map_err(|e| format!("session header is not valid utf-8: {e}"))
+                .and_then(|value| {
+                    Self::decode_json_header::<SessionState>(HEADER_QUERY_CONTEXT, value)
+                        .map_err(|e| e.to_string())
+                });
+            match decoded {
                 Ok(session) => *self.session_state.lock() = session,
                 Err(e) => {
-                    error!("Error decoding session state when streaming load: {e}");
+                    error!("Error decoding session state when loading data: {e}");
                 }
             }
         };
@@ -1399,7 +1403,12 @@ impl APIClient {
                 let guard = info.lock();
                 (guard.1, guard.0.session_token_ttl_in_secs)
             };
-            if Instant::now() > start + Duration::from_secs(ttl) {
+            let expired = match start.checked_add(Duration::from_secs(ttl)) {
+                Some(expires) => Instant::now() > expires,
+                // A TTL that would overflow `Instant` is treated as expired.
+                None => true,
+            };
+            if expired {
                 return Some(info.clone());
             }
         }
@@ -1629,9 +1638,13 @@ impl APIClient {
             GLOBAL_CLIENT_MANAGER.unregister_client(&self.session_id);
             if self.need_logout() {
                 let cli = self.cli.clone();
-                let req = self
-                    .build_log_out_request()
-                    .expect("failed to build logout request");
+                let req = match self.build_log_out_request() {
+                    Ok(req) => req,
+                    Err(e) => {
+                        warn!("[session {session_id}] skip logout, cannot build request: {e}");
+                        return;
+                    }
+                };
                 if self.transport.is_cloud_webapi() {
                     Self::logout_cloud(cli, req).await;
                 } else {
@@ -1651,11 +1664,15 @@ impl APIClient {
             GLOBAL_CLIENT_MANAGER.unregister_client(&self.session_id);
             if self.need_logout() {
                 let cli = self.cli.clone();
-                let req = self
-                    .build_log_out_request()
-                    .expect("failed to build logout request");
-                let session_id = self.session_id.clone();
                 let cloud = self.transport.is_cloud_webapi();
+                let req = match self.build_log_out_request() {
+                    Ok(req) => req,
+                    Err(e) => {
+                        warn!("[session {session_id}] skip logout, cannot build request: {e}");
+                        return;
+                    }
+                };
+                let session_id = self.session_id.clone();
                 GLOBAL_RUNTIME.spawn(async move {
                     if cloud {
                         Self::logout_cloud(cli, req).await;
