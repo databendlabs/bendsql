@@ -17,8 +17,7 @@
   server has started responding.
 - Retrying after a refreshed session token re-applies the `Authorization`
   header instead of sending an unauthenticated request.
-- `retry_count` now performs exactly that many retries; previously it performed
-  one fewer.
+
 - Interval parsing no longer swallows an unknown date-part specifier, and no
   longer overflows on large numeric or time values; both now report an error.
 - Object-typed query parameters are emitted as a valid JSON string literal

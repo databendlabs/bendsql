@@ -1450,7 +1450,7 @@ impl APIClient {
                     if let Some(reason) = Self::retry_reason_for_reqwest(&err)
                         .filter(|_| allow_replay || err.is_connect())
                     {
-                        if retries >= max_retries {
+                        if retries >= max_retries.saturating_sub(1) {
                             return Err(Self::with_request_context(
                                 err,
                                 &request_kind,
@@ -1492,7 +1492,7 @@ impl APIClient {
                         .or_else(|| self.transport.body_error_fallback())
                         .filter(|_| self.transport.allow_replay_body(&request_kind))
                     {
-                        if retries >= max_retries {
+                        if retries >= max_retries.saturating_sub(1) {
                             return Err(Self::with_request_context(
                                 err,
                                 &request_kind,
@@ -1523,7 +1523,7 @@ impl APIClient {
             };
 
             if retry_if_503 && allow_replay && status == StatusCode::SERVICE_UNAVAILABLE {
-                if retries >= max_retries {
+                if retries >= max_retries.saturating_sub(1) {
                     return Ok(HttpResponseData {
                         status,
                         headers,
@@ -1574,7 +1574,7 @@ impl APIClient {
                     }
                 }
                 if reload_auth_if_401 && self.auth.can_reload() {
-                    if retries >= max_retries {
+                    if retries >= max_retries.saturating_sub(1) {
                         return Ok(HttpResponseData {
                             status,
                             headers,
