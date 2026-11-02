@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use crate::_macro_internal::Value;
-use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
+use crate::value::base::{date_from_day_count, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
 use crate::value::format::display::{display_decimal_128, display_decimal_256};
 use crate::value::NumberValue;
-use chrono::NaiveDate;
+
 use hex;
 use lexical_core::{ToLexical, ToLexicalWithOptions, WriteFloatOptions};
 
@@ -104,9 +104,10 @@ impl Value {
                 Self::write_string(bytes, &s, raw);
             }
             Value::Date(i) => {
-                let days = i + DAYS_FROM_CE;
-                let d = NaiveDate::from_num_days_from_ce_opt(days).unwrap_or_default();
-                let s = format!("{}", d);
+                let s = match date_from_day_count(*i) {
+                    Some(d) => format!("{}", d),
+                    None => format!("<invalid date: {i}>"),
+                };
                 Self::write_string(bytes, &s, raw);
             }
             Value::Array(vals) => {

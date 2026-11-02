@@ -8,8 +8,10 @@
   empty or invalid Decimal strings, non-UTF-8 Geometry, Arrow map values with
   fewer than two fields, and `Decimal` / `Vector` type descriptions without
   arguments now return decode errors instead of aborting the process.
-- `Date` formatting in `to_json_value` / `to_sql_string` no longer panics on an
-  out-of-range day number.
+- Out-of-range `Date` values no longer panic, nor silently become `1970-01-01`:
+  `to_json_value` / `to_sql_string` emit the raw day count for the server to
+  reject, and rendering shows `<invalid date: N>`. All `+ DAYS_FROM_CE`
+  conversions now use `checked_add`.
 - The CLI table renderer no longer underflows the available width on wide result
   sets (>= 27 columns).
 - Query submission is no longer replayed after a response-body read failure on

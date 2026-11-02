@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, FixedOffset, NaiveDate};
 use chrono_tz::Tz;
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use databend_client::GeometryDataType;
@@ -23,6 +23,16 @@ use std::borrow::Cow;
 pub(crate) const DAYS_FROM_CE: i32 = 719_163;
 pub(crate) const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.6f";
 pub(crate) const TIMESTAMP_TIMEZONE_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.6f %z";
+
+/// Convert a Databend day count (days since 1970-01-01) into a `NaiveDate`.
+///
+/// Returns `None` when the count is outside chrono's range or when adding the
+/// epoch offset overflows `i32`, so every caller can fail loudly instead of
+/// fabricating a plausible-looking date such as `1970-01-01`.
+pub(crate) fn date_from_day_count(days: i32) -> Option<NaiveDate> {
+    days.checked_add(DAYS_FROM_CE)
+        .and_then(NaiveDate::from_num_days_from_ce_opt)
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NumberValue {
