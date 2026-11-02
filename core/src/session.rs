@@ -45,6 +45,10 @@ impl SessionState {
         settings.insert(key.into(), value.into());
     }
 
+    pub fn set_catalog(&mut self, catalog: impl Into<String>) {
+        self.catalog = Some(catalog.into());
+    }
+
     pub fn set_database(&mut self, database: impl Into<String>) {
         self.database = Some(database.into());
     }

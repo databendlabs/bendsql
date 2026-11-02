@@ -125,6 +125,7 @@ pub struct APIClient {
     disable_login: bool,
     query_result_format: String,
     disable_session_token: bool,
+    disable_server_side_params: bool,
     session_token_info: Option<Arc<Mutex<(SessionTokenInfo, Instant)>>>,
 
     closed: AtomicBool,
@@ -262,6 +263,14 @@ impl APIClient {
         &self.capability
     }
 
+    fn capability_for(&self, server_version: &Version) -> Capability {
+        let mut capability = Capability::from_server_version(server_version);
+        if self.disable_server_side_params {
+            capability.server_side_params = false;
+        }
+        capability
+    }
+
     fn set_presign_mode(&self, mode: PresignMode) {
         *self.presign.lock() = mode
     }
@@ -388,6 +397,11 @@ impl APIClient {
                 "warehouse" => {
                     client.warehouse = Mutex::new(Some(v.to_string()));
                 }
+                "catalog" => {
+                    if !v.is_empty() {
+                        session_state.set_catalog(v);
+                    }
+                }
                 "role" => session_state.set_role(v),
                 "sslmode" => match v.as_ref() {
                     "disable" => scheme = "http",
@@ -435,6 +449,17 @@ impl APIClient {
                         _ => {
                             return Err(Error::BadArgument(format!(
                                 "Invalid value for session_token: {v}"
+                            )))
+                        }
+                    }
+                }
+                "server_side_params" => {
+                    client.disable_server_side_params = match v.as_ref() {
+                        "disable" => true,
+                        "enable" => false,
+                        _ => {
+                            return Err(Error::BadArgument(format!(
+                                "Invalid value for server_side_params: {v}"
                             )))
                         }
                     }
@@ -1221,7 +1246,7 @@ impl APIClient {
                     .version
                     .parse()
                     .map_err(|e| Error::Decode(format!("invalid server version: {e}")))?;
-                self.capability = Capability::from_server_version(&server_version);
+                self.capability = self.capability_for(&server_version);
                 self.server_version = Some(server_version.clone());
                 let session_id = self.session_id.as_str();
                 if let Some(tokens) = info.tokens {
@@ -1704,6 +1729,7 @@ impl Default for APIClient {
             route_hint: RouteHintGenerator::new(),
             last_node_id: Default::default(),
             disable_session_token: true,
+            disable_server_side_params: false,
             disable_login: false,
             query_result_format: "json".to_string(),
             session_token_info: None,
@@ -1806,6 +1832,52 @@ mod test {
         assert_eq!(
             *client.warehouse.try_lock().unwrap(),
             Some("wh".to_string())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_dsn_with_catalog() -> Result<()> {
+        let dsn =
+            "databend://username:password@app.databend.com/db1?catalog=iceberg&sslmode=disable";
+        let client = APIClient::from_dsn(dsn).await?;
+        assert_eq!(client.current_catalog(), Some("iceberg".to_string()));
+        assert_eq!(client.current_database(), Some("db1".to_string()));
+        let session_state = client.session_state();
+        assert!(session_state.settings.is_none());
+        let request = serde_json::to_value(&session_state)?;
+        assert_eq!(request["catalog"], "iceberg");
+        assert_eq!(request["database"], "db1");
+
+        let client = APIClient::from_dsn("databend://app.databend.com/db1").await?;
+        assert_eq!(client.current_catalog(), None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_dsn_with_server_side_params() -> Result<()> {
+        let version = Version::new(1, 2, 901);
+
+        let client = APIClient::from_dsn("databend://app.databend.com/db1").await?;
+        assert!(!client.disable_server_side_params);
+        assert!(client.capability_for(&version).server_side_params);
+
+        let client =
+            APIClient::from_dsn("databend://app.databend.com/db1?server_side_params=enable")
+                .await?;
+        assert!(client.capability_for(&version).server_side_params);
+
+        let client =
+            APIClient::from_dsn("databend://app.databend.com/db1?server_side_params=disable")
+                .await?;
+        assert!(client.disable_server_side_params);
+        assert!(!client.capability_for(&version).server_side_params);
+        assert!(client.session_state().settings.is_none());
+
+        assert!(
+            APIClient::from_dsn("databend://app.databend.com/db1?server_side_params=off")
+                .await
+                .is_err()
         );
         Ok(())
     }
