@@ -25,9 +25,12 @@ static SENSITIVE_LITERAL: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
         r#"(?ix)
         \b(?:
-            identified\s+by
+            identified\s+(?:with\s+\w+\s+)?by
           | pass(?:word|wd)
           | credentials?
+          | account_key
+          | master_key
+          | security_token
           | aws_(?:access_key_id|key_id|secret_(?:access_)?key|session_token)
           | secret_(?:access_)?key
           | access_key(?:_id|_secret)?
@@ -39,7 +42,7 @@ static SENSITIVE_LITERAL: Lazy<Regex> = Lazy::new(|| {
           | private_key
         )\b
         \s*(?:=|by)?\s*
-        ('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")
+        ('(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*")
         "#,
     )
     .expect("sensitive literal regex must compile")
@@ -111,6 +114,42 @@ mod tests {
         assert_eq!(
             mask_secrets("aws_secret_access_key='x'"),
             "aws_secret_access_key='<redacted>'"
+        );
+    }
+
+    #[test]
+    fn masks_identified_with_auth_type() {
+        // `IDENTIFIED WITH <auth_type> BY '...'` keeps `_` inside the auth type,
+        // which must not stop the keyword from matching.
+        assert_eq!(
+            mask_secrets("CREATE USER u IDENTIFIED WITH sha256_password BY 'topsecret'"),
+            "CREATE USER u IDENTIFIED WITH sha256_password BY '<redacted>'"
+        );
+        assert_eq!(
+            mask_secrets("ALTER USER u IDENTIFIED WITH double_sha1_password BY 'P@ss'"),
+            "ALTER USER u IDENTIFIED WITH double_sha1_password BY '<redacted>'"
+        );
+    }
+
+    #[test]
+    fn masks_standard_escaped_quotes() {
+        // `''` is SQL-standard escaping; the whole literal must be masked
+        // rather than stopping at the first quote and leaking the rest.
+        assert_eq!(
+            mask_secrets("CREATE USER u IDENTIFIED BY 'ab''cd'"),
+            "CREATE USER u IDENTIFIED BY '<redacted>'"
+        );
+    }
+
+    #[test]
+    fn masks_azure_connection_keys() {
+        assert_eq!(
+            mask_secrets("CONNECTION=(ACCOUNT_KEY='azkey')"),
+            "CONNECTION=(ACCOUNT_KEY='<redacted>')"
+        );
+        assert_eq!(
+            mask_secrets("CONNECTION=(MASTER_KEY='mk' SECURITY_TOKEN='st')"),
+            "CONNECTION=(MASTER_KEY='<redacted>' SECURITY_TOKEN='<redacted>')"
         );
     }
 }
