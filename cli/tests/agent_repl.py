@@ -1955,7 +1955,7 @@ def exercise_sql_compatibility_and_sharing_consent(executable, env, port):
                 if name.startswith("bendsql.log"):
                     with open(os.path.join(directory, name), "rb") as file: logs += file.read()
         assert b"SELECT 123456" in logs, "SQL-only --log-level must remain effective"
-        assert b"private-credential" in logs, "SQL-only logs match main; AI redaction must not affect them"
+        assert b"private-credential" not in logs, "SQL credentials must be masked in logs outside AI mode too"
         with Terminal(executable, local, port, mode=None, startup_prompt=prompt) as terminal:
             terminal.expect(prompt)
             count = len(MockService.sql_requests)

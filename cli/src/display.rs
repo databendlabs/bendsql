@@ -659,8 +659,13 @@ fn create_table(
     if is_single_number_result {
         let mut cells = Vec::new();
         for (idx, cell) in res_vec[0].iter().enumerate() {
-            let f: f64 = cell.content().parse().unwrap();
-            let content = format!("({})", humanize_count(f));
+            let content = match cell.content().parse::<f64>() {
+                Ok(f) => format!("({})", humanize_count(f)),
+                // The cell may already have been truncated to fit its column
+                // width (e.g. "1000000000…"); keep it verbatim instead of
+                // panicking on the failed parse.
+                Err(_) => cell.content().to_string(),
+            };
             let cell = Cell::new(&content)
                 .fg(Color::Rgb {
                     r: 128,
@@ -821,7 +826,7 @@ fn compute_column_widths(
 ) -> Vec<usize> {
     let column_num = schema.fields().len();
     // The maximum width must subtract the width of border and line within each column.
-    max_width -= column_num * 3 + 1;
+    max_width = max_width.saturating_sub(column_num.saturating_mul(3).saturating_add(1));
 
     let mut column_widths: Vec<usize> = Vec::with_capacity(column_num);
     // Collect the width of each column header
@@ -926,6 +931,48 @@ fn value_display_width(value: &Value, quote_string: bool) -> usize {
 #[cfg(test)]
 mod agent_tests {
     use super::*;
+
+    #[test]
+    fn wide_results_saturate_max_width_instead_of_underflowing() {
+        let fields: Vec<databend_driver::Field> = (0..30)
+            .map(|i| databend_driver::Field {
+                name: format!("c{i}"),
+                data_type: databend_driver::DataType::String,
+            })
+            .collect();
+        let schema = Arc::new(Schema::from_vec(fields));
+        let row = Row::new(
+            schema.clone(),
+            (0..30).map(|i| Value::String(i.to_string())).collect(),
+        );
+        // 30 columns need 91 chars of border padding, more than the 80 passed
+        // here; the width must saturate at 0 rather than underflow.
+        let widths = compute_column_widths(schema.as_ref(), &[row], 80, 20, false);
+        assert_eq!(widths.len(), 30);
+    }
+
+    #[test]
+    fn truncated_number_cells_do_not_panic() {
+        let fields: Vec<databend_driver::Field> = (0..20)
+            .map(|i| databend_driver::Field {
+                name: format!("c{i}"),
+                data_type: databend_driver::DataType::Number(
+                    databend_driver::NumberDataType::Float64,
+                ),
+            })
+            .collect();
+        let schema: SchemaRef = Arc::new(Schema::from_vec(fields));
+        let row = Row::new(
+            schema.clone(),
+            (0..20)
+                .map(|_| Value::Number(databend_driver::NumberValue::Float64(1e20)))
+                .collect(),
+        );
+        // An 80-char budget across 20 columns forces truncation; the humanized
+        // single-number pass must not panic when a cell no longer re-parses.
+        let table = create_table(schema.clone(), &[row], false, 80, 10, 1);
+        assert!(table.is_ok());
+    }
 
     fn stream(fail: bool) -> RowStatsIterator {
         let schema = Arc::new(Schema::from_vec(vec![databend_driver::Field {

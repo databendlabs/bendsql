@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use crate::_macro_internal::Value;
-use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
+use crate::value::base::{date_from_day_count, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
 use crate::value::NumberValue;
-use chrono::NaiveDate;
+
 use ethnum::i256;
 use std::fmt::Write;
 
@@ -98,15 +98,23 @@ impl Value {
                     write!(f, "\"{formatted}\"")
                 }
             }
-            Value::Date(i) => {
-                let days = i + DAYS_FROM_CE;
-                let d = NaiveDate::from_num_days_from_ce_opt(days).unwrap_or_default();
-                if raw {
-                    write!(f, "{d}")
-                } else {
-                    write!(f, "\"{d}\"")
+            Value::Date(i) => match date_from_day_count(*i) {
+                Some(d) => {
+                    if raw {
+                        write!(f, "{d}")
+                    } else {
+                        write!(f, "\"{d}\"")
+                    }
                 }
-            }
+                None => {
+                    let s = format!("<invalid date: {i}>");
+                    if raw {
+                        write!(f, "{s}")
+                    } else {
+                        write!(f, "\"{s}\"")
+                    }
+                }
+            },
             Value::Array(vals) => {
                 write!(f, "[")?;
                 for (i, val) in vals.iter().enumerate() {

@@ -401,13 +401,6 @@ fn replace_query_fields_placeholder(sql: &str, field_names: &[&str]) -> String {
     sql.replace("?fields", &fields)
 }
 
-// Helper function to replace ?fields placeholder for inserts
-#[allow(dead_code)]
-fn replace_insert_fields_placeholder(sql: &str, field_names: &[&str]) -> String {
-    let fields = field_names.join(", ");
-    sql.replace("?fields", &fields)
-}
-
 // ORM Query Builder
 pub struct ORMQueryBuilder<'a, T> {
     connection: &'a Connection,

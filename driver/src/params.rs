@@ -17,6 +17,7 @@ use std::fmt::Debug;
 
 use databend_common_ast::ast::Statement;
 use databend_common_ast::parser::Dialect;
+use databend_driver_core::error::{Error, Result};
 
 pub trait Param: Debug {
     fn as_json_value(&self) -> serde_json::Value;
@@ -57,16 +58,12 @@ pub fn json_value_to_sql_string(v: &serde_json::Value) -> String {
             let items: Vec<String> = arr.iter().map(json_value_to_sql_string).collect();
             format!("[{}]", items.join(", "))
         }
-        serde_json::Value::Object(map) => {
-            let mut s = String::from("'{");
-            for (i, (k, v)) in map.iter().enumerate() {
-                if i > 0 {
-                    s.push_str(", ");
-                }
-                s.push_str(&format!("\"{k}\": {}", json_value_to_sql_string(v)));
-            }
-            s.push_str("}'::JSON");
-            s
+        serde_json::Value::Object(_) => {
+            // Serialize the whole object as JSON text inside a single SQL
+            // string literal. Recursively emitting SQL literals for each value
+            // would break the surrounding literal, e.g. {"a":"b"} would become
+            // '{"a": 'b'}'::JSON.
+            format!("'{}'::JSON", v.to_string().replace('\'', "''"))
         }
     }
 }
@@ -101,15 +98,23 @@ impl Params {
         }
     }
 
-    pub fn merge(&mut self, other: Params) {
+    /// Merge `other` into `self`.
+    ///
+    /// Returns [`Error::BadArgument`] when the two params use different binding
+    /// styles (`QuestionParams` vs `NamedParams`); previously this panicked.
+    pub fn try_merge(&mut self, other: Params) -> Result<()> {
         match (self, other) {
             (Params::QuestionParams(vec1), Params::QuestionParams(vec2)) => {
                 vec1.extend(vec2);
+                Ok(())
             }
             (Params::NamedParams(map1), Params::NamedParams(map2)) => {
                 map1.extend(map2);
+                Ok(())
             }
-            _ => panic!("Cannot merge QuestionParams with NamedParams"),
+            _ => Err(Error::BadArgument(
+                "Cannot merge QuestionParams with NamedParams".to_string(),
+            )),
         }
     }
 
@@ -282,9 +287,7 @@ macro_rules! impl_from_tuple_for_params {
         impl<$head: Param, $($tail: Param),*> From<($head, $($tail),*)> for Params {
             fn from(tuple: ($head, $($tail),*)) -> Self {
                 let (h, $($tail),*) = tuple;
-                let mut params = Params::QuestionParams(vec![h.as_json_value()]);
-                $(params.merge(Params::QuestionParams(vec![$tail.as_json_value()]));)*
-                params
+                Params::QuestionParams(vec![h.as_json_value(), $($tail.as_json_value()),*])
             }
         }
 
@@ -325,6 +328,18 @@ impl From<serde_json::Value> for Params {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_object_param_is_valid_json_literal() {
+        // Object params must be emitted as JSON text inside one SQL string
+        // literal, not as recursively-generated SQL literals which would close
+        // the surrounding string early.
+        let value = serde_json::json!({"a": "b", "n": 1});
+        assert_eq!(
+            json_value_to_sql_string(&value),
+            "'{\"a\":\"b\",\"n\":1}'::JSON"
+        );
+    }
 
     #[test]
     fn test_params() {

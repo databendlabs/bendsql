@@ -157,6 +157,16 @@ impl Transport {
         }
     }
 
+    /// Whether a response-body read failure may be retried for this request kind.
+    ///
+    /// A failed body read happens after the server has begun responding and thus
+    /// can never prove the statement was not executed. Query submission is never
+    /// replayed for any transport: replaying `INSERT/UPDATE/DELETE` would execute
+    /// its side effects twice.
+    pub(crate) fn allow_replay_body(&self, kind: &RequestKind) -> bool {
+        !matches!(kind, RequestKind::QueryStart)
+    }
+
     pub(crate) fn allow_replay(&self, kind: &RequestKind) -> bool {
         match self {
             Self::Native => true,
@@ -287,6 +297,11 @@ mod tests {
             assert_eq!(mode.allow_replay(&RequestKind::QueryStart), !cloud);
             assert!(mode.allow_replay(&RequestKind::QueryPage));
             assert!(mode.allow_replay(&RequestKind::QueryFinal));
+            // Body-read failures can never prove a submitted statement did not
+            // run, so QueryStart is never replayable regardless of transport.
+            assert!(!mode.allow_replay_body(&RequestKind::QueryStart));
+            assert!(mode.allow_replay_body(&RequestKind::QueryPage));
+            assert!(mode.allow_replay_body(&RequestKind::QueryFinal));
             assert_eq!(mode.supports_presign(), !cloud);
             assert_eq!(mode.uses_native_session_tokens(), !cloud);
             assert_eq!(mode.can_use_session_lifecycle(), !cloud);
