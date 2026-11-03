@@ -69,8 +69,10 @@ impl Error {
 
                         let message_index = msg.find(START).unwrap_or(0);
                         let message_end_index = msg.find(END).unwrap_or(msg.len());
-                        let message = &msg[message_index..message_end_index];
-                        message.replace("\\n", "\n")
+                        match msg.get(message_index..message_end_index) {
+                            Some(message) => message.replace("\\n", "\n"),
+                            None => msg.replace("\\n", "\n"),
+                        }
                     }
                     other => format!("{other}"),
                 };

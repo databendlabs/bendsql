@@ -558,10 +558,18 @@ fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
     let bytes = text.as_bytes();
     let mut is_negative = false;
 
+    // Reject empty input instead of indexing past the end.
+    let Some(&first) = bytes.first() else {
+        return Err(ConvertError::new("decimal", "empty string".to_string()).into());
+    };
     // Check if the number is negative
-    if bytes[start] == b'-' {
+    if first == b'-' {
         is_negative = true;
         start += 1;
+    }
+    // A lone sign has no digits to parse.
+    if start >= text.len() {
+        return Err(ConvertError::new("decimal", format!("{text:?}")).into());
     }
 
     while start < text.len() && bytes[start] == b'0' {
@@ -601,7 +609,7 @@ fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
         let digits = std::str::from_utf8(&digits[..precision])?;
 
         let result = if size.precision > 38 {
-            NumberValue::Decimal256(i256::from_str(digits).unwrap(), size)
+            NumberValue::Decimal256(i256::from_str(digits)?, size)
         } else if size.precision > 19 {
             NumberValue::Decimal128(digits.parse::<i128>()?, size)
         } else {
@@ -626,6 +634,20 @@ fn parse_decimal(text: &str, size: DecimalSize) -> Result<NumberValue> {
 mod tests {
     use super::*;
     use databend_client::schema::DataType;
+
+    #[test]
+    fn parse_decimal_rejects_empty_and_sign_only_input() {
+        let size = || DecimalSize {
+            precision: 10,
+            scale: 2,
+        };
+        assert!(parse_decimal("", size()).is_err());
+        assert!(parse_decimal("-", size()).is_err());
+        assert_eq!(
+            parse_decimal("0", size()).unwrap(),
+            NumberValue::Decimal64(0, size())
+        );
+    }
 
     fn settings(binary_output_format: BinaryFormat) -> ResultFormatSettings {
         ResultFormatSettings {

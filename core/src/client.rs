@@ -687,7 +687,7 @@ impl APIClient {
         need_progress: bool,
         params: Option<serde_json::Value>,
     ) -> Result<Pages> {
-        info!("start query: {sql}");
+        info!("start query: {}", crate::mask::mask_secrets(sql));
         let (resp, batches) = self.start_query_inner(sql, None, false, params).await?;
         Pages::new(self.clone(), resp, batches, need_progress)
     }
@@ -1010,7 +1010,10 @@ impl APIClient {
         file_format_options: BTreeMap<&str, &str>,
         copy_options: BTreeMap<&str, &str>,
     ) -> Result<QueryStats> {
-        info!("insert with stage: {sql}, format: {file_format_options:?}, copy: {copy_options:?}");
+        info!(
+            "insert with stage: {}, format: {file_format_options:?}, copy: {copy_options:?}",
+            crate::mask::mask_secrets(sql)
+        );
         let stage_attachment = Some(StageAttachmentConfig {
             location: stage,
             file_format_options: Some(file_format_options),
@@ -1158,13 +1161,17 @@ impl APIClient {
         let resp = builder.headers(headers).multipart(form).send().await?;
         let status = resp.status();
         if let Some(value) = resp.headers().get(HEADER_QUERY_CONTEXT) {
-            match Self::decode_json_header::<SessionState>(
-                HEADER_QUERY_CONTEXT,
-                value.to_str().unwrap(),
-            ) {
+            let decoded = value
+                .to_str()
+                .map_err(|e| format!("session header is not valid utf-8: {e}"))
+                .and_then(|value| {
+                    Self::decode_json_header::<SessionState>(HEADER_QUERY_CONTEXT, value)
+                        .map_err(|e| e.to_string())
+                });
+            match decoded {
                 Ok(session) => *self.session_state.lock() = session,
                 Err(e) => {
-                    error!("Error decoding session state when streaming load: {e}");
+                    error!("Error decoding session state when loading data: {e}");
                 }
             }
         };
@@ -1396,7 +1403,12 @@ impl APIClient {
                 let guard = info.lock();
                 (guard.1, guard.0.session_token_ttl_in_secs)
             };
-            if Instant::now() > start + Duration::from_secs(ttl) {
+            let expired = match start.checked_add(Duration::from_secs(ttl)) {
+                Some(expires) => Instant::now() > expires,
+                // A TTL that would overflow `Instant` is treated as expired.
+                None => true,
+            };
+            if expired {
                 return Some(info.clone());
             }
         }
@@ -1478,7 +1490,7 @@ impl APIClient {
                 Err(err) => {
                     if let Some(reason) = Self::retry_reason_for_reqwest(&err)
                         .or_else(|| self.transport.body_error_fallback())
-                        .filter(|_| allow_replay)
+                        .filter(|_| self.transport.allow_replay_body(&request_kind))
                     {
                         if retries >= max_retries.saturating_sub(1) {
                             return Err(Self::with_request_context(
@@ -1543,6 +1555,15 @@ impl APIClient {
                         Box::pin(self.refresh_session_token(session_token_info.clone())).await?;
                         refreshed = true;
                         retries = 0;
+                        // The Authorization header was stripped above; re-apply the
+                        // refreshed session token so the retried request is authenticated.
+                        let builder = RequestBuilder::from_parts(
+                            HttpClient::new(),
+                            request.try_clone().ok_or_else(|| {
+                                Error::BadArgument("request not cloneable".to_string())
+                            })?,
+                        );
+                        request = self.wrap_auth_or_session_token(builder)?.build()?;
                         warn!(
                             "retry for {} due to: session token expired and refreshed, retrying after {} seconds",
                             request.url(),
@@ -1617,9 +1638,13 @@ impl APIClient {
             GLOBAL_CLIENT_MANAGER.unregister_client(&self.session_id);
             if self.need_logout() {
                 let cli = self.cli.clone();
-                let req = self
-                    .build_log_out_request()
-                    .expect("failed to build logout request");
+                let req = match self.build_log_out_request() {
+                    Ok(req) => req,
+                    Err(e) => {
+                        warn!("[session {session_id}] skip logout, cannot build request: {e}");
+                        return;
+                    }
+                };
                 if self.transport.is_cloud_webapi() {
                     Self::logout_cloud(cli, req).await;
                 } else {
@@ -1639,11 +1664,15 @@ impl APIClient {
             GLOBAL_CLIENT_MANAGER.unregister_client(&self.session_id);
             if self.need_logout() {
                 let cli = self.cli.clone();
-                let req = self
-                    .build_log_out_request()
-                    .expect("failed to build logout request");
-                let session_id = self.session_id.clone();
                 let cloud = self.transport.is_cloud_webapi();
+                let req = match self.build_log_out_request() {
+                    Ok(req) => req,
+                    Err(e) => {
+                        warn!("[session {session_id}] skip logout, cannot build request: {e}");
+                        return;
+                    }
+                };
+                let session_id = self.session_id.clone();
                 GLOBAL_RUNTIME.spawn(async move {
                     if cloud {
                         Self::logout_cloud(cli, req).await;

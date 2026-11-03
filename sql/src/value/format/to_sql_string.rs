@@ -13,9 +13,10 @@
 // limitations under the License.
 
 use crate::_macro_internal::Value;
-use crate::value::base::{NumberValue, DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
+use crate::value::base::{
+    date_from_day_count, NumberValue, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT,
+};
 use crate::value::format::display::{display_decimal_128, display_decimal_256};
-use chrono::NaiveDate;
 
 impl Value {
     /// Convert a Value to a serde_json::Value for use in Params.
@@ -53,10 +54,13 @@ impl Value {
             Value::TimestampTz(dt) => {
                 serde_json::Value::String(dt.format(TIMESTAMP_TIMEZONE_FORMAT).to_string())
             }
-            Value::Date(d) => {
-                let date = NaiveDate::from_num_days_from_ce_opt(*d + DAYS_FROM_CE).unwrap();
-                serde_json::Value::String(date.format("%Y-%m-%d").to_string())
-            }
+            Value::Date(d) => match date_from_day_count(*d) {
+                Some(date) => serde_json::Value::String(date.format("%Y-%m-%d").to_string()),
+                // Out of range: emit the raw day count rather than a fake
+                // 1970-01-01 so the server rejects the value instead of storing
+                // a plausible-looking date.
+                None => serde_json::Value::Number((*d).into()),
+            },
             Value::Binary(b) => serde_json::Value::String(hex::encode(b)),
             Value::Array(arr) => {
                 serde_json::Value::Array(arr.iter().map(|v| v.to_json_value()).collect())
@@ -109,10 +113,12 @@ impl Value {
                 let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
                 format!("'{formatted}'")
             }
-            Value::Date(d) => {
-                let date = NaiveDate::from_num_days_from_ce_opt(*d + DAYS_FROM_CE).unwrap();
-                format!("'{}'", date.format("%Y-%m-%d"))
-            }
+            Value::Date(d) => match date_from_day_count(*d) {
+                Some(date) => format!("'{}'", date.format("%Y-%m-%d")),
+                // Out of range: emit the raw day count so the server rejects it
+                // rather than silently storing a fake 1970-01-01.
+                None => d.to_string(),
+            },
             Value::Binary(b) => format!("'{}'", hex::encode(b)),
             Value::Array(arr) => {
                 let items: Vec<String> = arr.iter().map(|v| v.to_sql_string()).collect();
@@ -170,5 +176,18 @@ mod tests {
             Value::Number(NumberValue::Decimal256(i256::from(12345), size)).to_json_value(),
             serde_json::json!("123.45")
         );
+    }
+
+    #[test]
+    fn out_of_range_date_is_not_a_fake_date() {
+        // A day count outside chrono's range must not silently become
+        // 1970-01-01; the raw count is emitted instead so the server rejects it.
+        let above = Value::Date(i32::MAX);
+        assert_eq!(above.to_json_value(), serde_json::json!(i32::MAX));
+        assert_eq!(above.to_sql_string(), i32::MAX.to_string());
+
+        // The epoch offset addition must not overflow either.
+        let below = Value::Date(i32::MIN);
+        assert_eq!(below.to_json_value(), serde_json::json!(i32::MIN));
     }
 }

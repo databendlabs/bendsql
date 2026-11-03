@@ -206,6 +206,11 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
             "Float32" => DataType::Number(NumberDataType::Float32),
             "Float64" => DataType::Number(NumberDataType::Float64),
             "Decimal" => {
+                if desc.args.len() != 2 {
+                    return Err(Error::Decode(
+                        "Decimal type must have two arguments".to_string(),
+                    ));
+                }
                 let precision = desc.args[0].name.parse::<u8>()?;
                 let scale = desc.args[1].name.parse::<u8>()?;
 
@@ -275,6 +280,11 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
             "Geography" => DataType::Geography,
             "Interval" => DataType::Interval,
             "Vector" => {
+                if desc.args.len() != 1 {
+                    return Err(Error::Decode(
+                        "Vector type must have one argument".to_string(),
+                    ));
+                }
                 let dimension = desc.args[0].name.parse::<u64>()?;
                 DataType::Vector(dimension)
             }
@@ -513,6 +523,17 @@ mod test {
     use std::vec;
 
     use super::*;
+
+    #[test]
+    fn rejects_decimal_and_vector_without_args() {
+        for ty in ["Decimal", "Vector"] {
+            let desc = parse_type_desc(ty).unwrap();
+            assert!(
+                matches!(DataType::try_from(&desc), Err(Error::Decode(_))),
+                "{ty} without arguments must be a decode error, not a panic"
+            );
+        }
+    }
 
     #[test]
     fn test_parse_type_desc() {

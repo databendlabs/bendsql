@@ -14,10 +14,9 @@
 
 use crate::_macro_internal::{Error, Value};
 use crate::error::ConvertError;
-use crate::value::base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
+use crate::value::base::{date_from_day_count, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
 use crate::value::format::display::{display_decimal_128, display_decimal_256};
 use crate::value::NumberValue;
-use chrono::NaiveDate;
 
 impl TryFrom<Value> for String {
     type Error = Error;
@@ -35,10 +34,8 @@ impl TryFrom<Value> for String {
             Value::Interval(s) => Ok(s),
             Value::Variant(s) => Ok(s),
             Value::Date(d) => {
-                let date =
-                    NaiveDate::from_num_days_from_ce_opt(d + DAYS_FROM_CE).ok_or_else(|| {
-                        ConvertError::new("date", format!("invalid date value: {}", d))
-                    })?;
+                let date = date_from_day_count(d)
+                    .ok_or_else(|| ConvertError::new("date", format!("invalid date value: {d}")))?;
                 Ok(date.format("%Y-%m-%d").to_string())
             }
             Value::Timestamp(dt) => Ok(dt.format(TIMESTAMP_FORMAT).to_string()),

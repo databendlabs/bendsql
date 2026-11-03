@@ -19,7 +19,7 @@ use std::hash::Hash;
 
 use crate::error::{ConvertError, Error, Result};
 
-use super::{NumberValue, Value, DAYS_FROM_CE};
+use super::{date_from_day_count, NumberValue, Value, DAYS_FROM_CE};
 
 impl TryFrom<Value> for bool {
     type Error = Error;
@@ -104,13 +104,9 @@ impl TryFrom<Value> for NaiveDate {
     type Error = Error;
     fn try_from(val: Value) -> Result<Self> {
         match val {
-            Value::Date(i) => {
-                let days = i + DAYS_FROM_CE;
-                match NaiveDate::from_num_days_from_ce_opt(days) {
-                    Some(d) => Ok(d),
-                    None => Err(ConvertError::new("NaiveDate", "".to_string()).into()),
-                }
-            }
+            Value::Date(i) => date_from_day_count(i).ok_or_else(|| {
+                ConvertError::new("NaiveDate", format!("invalid date value: {i}")).into()
+            }),
             _ => Err(ConvertError::new("NaiveDate", format!("{val}")).into()),
         }
     }

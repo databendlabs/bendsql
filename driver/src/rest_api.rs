@@ -29,7 +29,7 @@ use crate::client::LoadMethod;
 use crate::conn::{ConnectionInfo, IConnection, Reader};
 use databend_client::schema::{Schema, SchemaRef};
 use databend_client::Pages;
-use databend_client::{APIClient, ResultFormatSettings};
+use databend_client::{mask_secrets, APIClient, ResultFormatSettings};
 use databend_driver_core::error::{Error, Result};
 use databend_driver_core::raw_rows::{RawRow, RawRowIterator, RawRowWithStats};
 use databend_driver_core::rows::{
@@ -177,13 +177,13 @@ impl IConnection for RestAPIConnection {
     }
 
     async fn exec(&self, sql: &str) -> Result<i64> {
-        info!("exec: {}", sql);
+        info!("exec: {}", mask_secrets(sql));
         let page = self.client.query_all(sql, None).await?;
         Ok(page.stats.progresses.write_progress.rows as i64)
     }
 
     async fn exec_with_params(&self, sql: &str, params: Option<serde_json::Value>) -> Result<i64> {
-        info!("exec with params: {}", sql);
+        info!("exec with params: {}", mask_secrets(sql));
         let page = self.client.query_all(sql, params).await?;
         Ok(page.stats.progresses.write_progress.rows as i64)
     }
@@ -193,14 +193,14 @@ impl IConnection for RestAPIConnection {
     }
 
     async fn query_iter(&self, sql: &str) -> Result<RowIterator> {
-        info!("query iter: {}", sql);
+        info!("query iter: {}", mask_secrets(sql));
         let rows_with_progress = self.query_iter_ext(sql).await?;
         let rows = rows_with_progress.filter_rows().await?;
         Ok(rows)
     }
 
     async fn query_iter_ext(&self, sql: &str) -> Result<RowStatsIterator> {
-        info!("query iter ext: {}", sql);
+        info!("query iter ext: {}", mask_secrets(sql));
         let pages = self.client.start_query(sql, true, None).await?;
         let (schema, rows) = RestAPIRows::<RowWithStats>::from_pages(pages).await?;
         Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
@@ -211,7 +211,7 @@ impl IConnection for RestAPIConnection {
         sql: &str,
         params: Option<serde_json::Value>,
     ) -> Result<RowIterator> {
-        info!("query iter with params: {}", sql);
+        info!("query iter with params: {}", mask_secrets(sql));
         let rows_with_progress = self.query_iter_ext_with_params(sql, params).await?;
         let rows = rows_with_progress.filter_rows().await?;
         Ok(rows)
@@ -222,7 +222,7 @@ impl IConnection for RestAPIConnection {
         sql: &str,
         params: Option<serde_json::Value>,
     ) -> Result<RowStatsIterator> {
-        info!("query iter ext with params: {}", sql);
+        info!("query iter ext with params: {}", mask_secrets(sql));
         let pages = self.client.start_query(sql, true, params).await?;
         let (schema, rows) = RestAPIRows::<RowWithStats>::from_pages(pages).await?;
         Ok(RowStatsIterator::new(Arc::new(schema), Box::pin(rows)))
@@ -230,7 +230,7 @@ impl IConnection for RestAPIConnection {
 
     // raw data response query, only for test
     async fn query_raw_iter(&self, sql: &str) -> Result<RawRowIterator> {
-        info!("query raw iter: {}", sql);
+        info!("query raw iter: {}", mask_secrets(sql));
         let pages = self.client.start_query(sql, true, None).await?;
         let (schema, rows) = RestAPIRows::<RawRowWithStats>::from_pages(pages).await?;
         Ok(RawRowIterator::new(Arc::new(schema), Box::pin(rows)))
@@ -250,7 +250,11 @@ impl IConnection for RestAPIConnection {
     ) -> Result<ServerStats> {
         let sql = sql.trim_end();
         let sql = sql.trim_end_matches(';');
-        info!("load data: {}, size: {}, method: {method:?}", sql, size);
+        info!(
+            "load data: {}, size: {}, method: {method:?}",
+            mask_secrets(sql),
+            size
+        );
         let sql_low = sql.to_lowercase();
         let has_place_holder = sql_low.contains(LOAD_PLACEHOLDER);
         let sql = match (self.client.capability().streaming_load, has_place_holder) {
@@ -277,7 +281,7 @@ impl IConnection for RestAPIConnection {
     }
 
     async fn load_file(&self, sql: &str, fp: &Path, method: LoadMethod) -> Result<ServerStats> {
-        info!("load file: {}, file: {:?}", sql, fp,);
+        info!("load file: {}, file: {:?}", mask_secrets(sql), fp,);
         let file = File::open(fp).await?;
         let metadata = file.metadata().await?;
         let size = metadata.len();
@@ -306,7 +310,7 @@ impl IConnection for RestAPIConnection {
         data: Vec<Vec<&str>>,
         method: LoadMethod,
     ) -> Result<ServerStats> {
-        info!("stream load: {}; rows: {:?}", sql, data.len());
+        info!("stream load: {}; rows: {:?}", mask_secrets(sql), data.len());
         let mut wtr = csv::WriterBuilder::new().from_writer(vec![]);
         for row in data {
             wtr.write_record(row)

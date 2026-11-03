@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### Correctness and robustness
+
+- Decoding malformed server data no longer panics: Bitmap deserialization,
+  empty or invalid Decimal strings, non-UTF-8 Geometry, Arrow map values with
+  fewer than two fields, and `Decimal` / `Vector` type descriptions without
+  arguments now return decode errors instead of aborting the process.
+- Out-of-range `Date` values no longer panic, nor silently become `1970-01-01`:
+  `to_json_value` / `to_sql_string` emit the raw day count for the server to
+  reject, and rendering shows `<invalid date: N>`. All `+ DAYS_FROM_CE`
+  conversions now use `checked_add`.
+- The CLI table renderer no longer underflows the available width on wide result
+  sets (>= 27 columns).
+- Query submission is no longer replayed after a response-body read failure on
+  any transport, so `INSERT/UPDATE/DELETE` cannot be executed twice once the
+  server has started responding.
+- Retrying after a refreshed session token re-applies the `Authorization`
+  header instead of sending an unauthenticated request.
+
+- Interval parsing no longer swallows an unknown date-part specifier, and no
+  longer overflows on large numeric or time values; both now report an error.
+- Object-typed query parameters are emitted as a valid JSON string literal
+  (`'{"a":"b"}'::JSON`) instead of a broken, potentially injectable SQL string.
+- The CLI table renderer no longer panics when a wide numeric result set
+  truncates its own cells.
+- A session-token TTL that would overflow `Instant`, an unparsable
+  `DATABEND_DRIVER_HEARTBEAT_INTERVAL_SECONDS`, a non-UTF-8 session header, and a
+  failed logout-request build no longer panic; the logout is skipped with a
+  warning instead.
+
+### Logging
+
+- SQL text is masked at the library layer (`databend_client::mask_secrets`)
+  before being logged, so credentials in `IDENTIFIED BY`, `PASSWORD`,
+  `CREDENTIALS`, access keys and tokens stay out of log files for every consumer
+  (CLI, Python and Node bindings), not only for the CLI.
+
+### Breaking changes
+
+- `Params::merge` is renamed to `Params::try_merge` and returns `Result<()>`
+  instead of panicking when mixing `QuestionParams` with `NamedParams`.
+  Migration: `params.merge(other)` -> `params.try_merge(other)?`.
+- FlightSQL `kill_query` now returns an error instead of silently reporting
+  success, matching the REST behavior. Migration: callers that relied on the
+  no-op must stop invoking it on FlightSQL connections.
+
 ### Dependencies
 
 - Upgrade Arrow to 60 and tonic to 0.14, which moves zstd to 0.14.3 / zstd-safe

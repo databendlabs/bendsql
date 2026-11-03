@@ -22,5 +22,5 @@ mod string_decoder;
 pub use base::{GeoValue, NumberValue, Value};
 pub use interval::Interval;
 
-use base::{DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
+use base::{date_from_day_count, DAYS_FROM_CE, TIMESTAMP_FORMAT, TIMESTAMP_TIMEZONE_FORMAT};
 pub use format::FormatOptions;

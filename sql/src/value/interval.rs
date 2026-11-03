@@ -167,7 +167,7 @@ impl Interval {
                     let (specifier, next_pos) = parse_identifier(&str[pos..]);
 
                     pos += next_pos;
-                    let _ = apply_specifier(&mut result, number, fraction, &specifier);
+                    apply_specifier(&mut result, number, fraction, &specifier)?;
                     found_any = true;
                 }
                 b'-' => {
@@ -181,7 +181,7 @@ impl Interval {
                     let (specifier, next_pos) = parse_identifier(&str[pos..]);
 
                     pos += next_pos;
-                    let _ = apply_specifier(&mut result, number, fraction, &specifier);
+                    apply_specifier(&mut result, number, fraction, &specifier)?;
                     found_any = true;
                 }
                 b'a' | b'A' => {
@@ -234,8 +234,8 @@ fn parse_number(bytes: &[u8]) -> Result<(i64, i64, usize)> {
     while pos < bytes.len() && bytes[pos].is_ascii_digit() {
         number = number
             .checked_mul(10)
-            .ok_or(Error::BadArgument("Number too large".to_string()))?
-            + (bytes[pos] - b'0') as i64;
+            .and_then(|n| n.checked_add((bytes[pos] - b'0') as i64))
+            .ok_or(Error::BadArgument("Number too large".to_string()))?;
         pos += 1;
     }
 
@@ -254,13 +254,22 @@ fn parse_number(bytes: &[u8]) -> Result<(i64, i64, usize)> {
         // parse time format HH:MM:SS[.FFFFFF]
         let time_bytes = &bytes[pos..];
         let mut time_pos = 0;
-        let mut total_micros: i64 = number * 60 * 60 * MICROS_PER_SEC;
+        let mut total_micros: i64 = number
+            .checked_mul(60)
+            .and_then(|n| n.checked_mul(60))
+            .and_then(|n| n.checked_mul(MICROS_PER_SEC))
+            .ok_or(Error::BadArgument("Number too large".to_string()))?;
         let mut colon_count = 0;
 
         while colon_count < 2 && time_bytes.len() > time_pos {
             let (minute, _, next_pos) = parse_time_part(&time_bytes[time_pos..])?;
-            let minute_micros = minute * 60 * MICROS_PER_SEC;
-            total_micros += minute_micros;
+            let minute_micros = minute
+                .checked_mul(60)
+                .and_then(|n| n.checked_mul(MICROS_PER_SEC))
+                .ok_or(Error::BadArgument("Number too large".to_string()))?;
+            total_micros = total_micros
+                .checked_add(minute_micros)
+                .ok_or(Error::BadArgument("Number too large".to_string()))?;
             time_pos += next_pos;
 
             if time_bytes.len() > time_pos && time_bytes[time_pos] == b':' {
@@ -272,7 +281,13 @@ fn parse_number(bytes: &[u8]) -> Result<(i64, i64, usize)> {
         }
         if time_bytes.len() > time_pos {
             let (seconds, micros, next_pos) = parse_time_part_with_macros(&time_bytes[time_pos..])?;
-            total_micros += seconds * MICROS_PER_SEC + micros;
+            let seconds_micros = seconds
+                .checked_mul(MICROS_PER_SEC)
+                .and_then(|n| n.checked_add(micros))
+                .ok_or(Error::BadArgument("Number too large".to_string()))?;
+            total_micros = total_micros
+                .checked_add(seconds_micros)
+                .ok_or(Error::BadArgument("Number too large".to_string()))?;
             time_pos += next_pos;
         }
         return Ok((total_micros, 0, pos + time_pos));
@@ -291,8 +306,8 @@ fn parse_time_part(bytes: &[u8]) -> Result<(i64, i64, usize)> {
     while pos < bytes.len() && bytes[pos].is_ascii_digit() {
         number = number
             .checked_mul(10)
-            .ok_or(Error::BadArgument("Number too large".to_string()))?
-            + (bytes[pos] - b'0') as i64;
+            .and_then(|n| n.checked_add((bytes[pos] - b'0') as i64))
+            .ok_or(Error::BadArgument("Number too large".to_string()))?;
         pos += 1;
     }
     Ok((number, 0, pos))
@@ -306,8 +321,8 @@ fn parse_time_part_with_macros(bytes: &[u8]) -> Result<(i64, i64, usize)> {
     while pos < bytes.len() && bytes[pos].is_ascii_digit() {
         number = number
             .checked_mul(10)
-            .ok_or(Error::BadArgument("Number too large".to_string()))?
-            + (bytes[pos] - b'0') as i64;
+            .and_then(|n| n.checked_add((bytes[pos] - b'0') as i64))
+            .ok_or(Error::BadArgument("Number too large".to_string()))?;
         pos += 1;
     }
 
@@ -563,5 +578,19 @@ mod tests {
     fn test_from_string_basic_positive() {
         let interval = Interval::from_string("0:00:00.000001").unwrap();
         assert_eq!(interval.micros, 1);
+    }
+
+    #[test]
+    fn test_from_string_rejects_unknown_specifier() {
+        // An unknown date-part specifier must surface an error rather than
+        // being swallowed and returning a zeroed interval.
+        assert!(Interval::from_string("5foo").is_err());
+        assert!(Interval::from_string("5 bogus").is_err());
+    }
+
+    #[test]
+    fn test_from_string_rejects_numeric_overflow() {
+        assert!(Interval::from_string("9223372036854775808").is_err());
+        assert!(Interval::from_string("999999999999:00:00").is_err());
     }
 }
