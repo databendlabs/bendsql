@@ -379,6 +379,8 @@ Examples:
 | Arg                         | Description                                                                                                                                                      | Default   |
 |-----------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|
 | `query_result_format`       | (Since v0.33.1) Format to fetch result set, available arguments are `json`/`arrow`.                                                                              | `JSON`    |
+| `catalog`                   | Catalog to use for the session. The database in the DSN path is resolved in this catalog.                                                                        | `default` |
+| `server_side_params`        | Whether to send query parameters to the server for binding, available values are `enable`/`disable`. When disabled, parameters are interpolated into SQL on the client side. Only takes effect on servers that support server-side binding. | `enable`  |
 | `sslmode`                   | SSL mode, available values are `enable`/`disable`.                                                                                                               | `disable` |
 | `wait_time_secs`            | Request wait time for page.                                                                                                                                      | `1`       |
 | `max_rows_per_page`         | Max result rows for a single page.                                                                                                                               | `10000`   |

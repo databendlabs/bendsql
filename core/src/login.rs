@@ -30,10 +30,17 @@ pub struct LoginRequest {
 
 impl From<&SessionState> for LoginRequest {
     fn from(value: &SessionState) -> Self {
+        // The server validates `database` against the default catalog during login,
+        // so skip it when a non-default catalog is selected. The database is still
+        // applied together with the catalog by each `/v1/query` request.
+        let database = match value.catalog.as_deref() {
+            Some(catalog) if !catalog.eq_ignore_ascii_case("default") => None,
+            _ => value.database.clone(),
+        };
         Self {
             role: value.role.clone(),
             settings: value.settings.clone(),
-            database: value.database.clone(),
+            database,
         }
     }
 }
@@ -72,4 +79,33 @@ pub struct RefreshSessionTokenRequest {
 pub enum RefreshResponse {
     Ok(SessionTokenInfo),
     Err { error: ErrorCode },
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn login_request_keeps_database_for_default_catalog() {
+        let mut session = SessionState::default();
+        session.set_database("db1");
+        assert_eq!(
+            LoginRequest::from(&session).database.as_deref(),
+            Some("db1")
+        );
+
+        session.set_catalog("default");
+        assert_eq!(
+            LoginRequest::from(&session).database.as_deref(),
+            Some("db1")
+        );
+    }
+
+    #[test]
+    fn login_request_skips_database_for_non_default_catalog() {
+        let mut session = SessionState::default();
+        session.set_catalog("iceberg");
+        session.set_database("db1");
+        assert_eq!(LoginRequest::from(&session).database, None);
+    }
 }
