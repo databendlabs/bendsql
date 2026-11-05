@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.34.3 (2026-11-05)
+
 ### Correctness and robustness
 
 - Decoding malformed server data no longer panics: Bitmap deserialization,
