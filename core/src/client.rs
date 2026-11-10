@@ -103,13 +103,20 @@ struct HttpResponseData {
     body: Bytes,
 }
 
+#[derive(Default)]
+struct LastQueryId {
+    current: Option<String>,
+    // Rollback snapshots exist only for live submission guards. Keep them under
+    // the same lock as current so invalidating an unsent ID updates every snapshot.
+    pending: HashMap<String, Option<String>>,
+}
+
 // Restore the previous ID only when no attempt could have reached the server.
 // In particular, dropping a submission while execute() is pending must retain
 // the new ID so callers can cancel a query before its first response.
 struct QuerySubmission<'a> {
     client: &'a APIClient,
     query_id: String,
-    previous_id: Option<String>,
     may_have_reached_server: bool,
 }
 
@@ -117,11 +124,14 @@ impl<'a> QuerySubmission<'a> {
     fn new(client: &'a APIClient, query_id: String) -> Self {
         // Snapshot and publish under one lock so rollback cannot restore a value
         // older than a response received immediately before publication.
-        let previous_id = client.last_query_id.lock().replace(query_id.clone());
+        {
+            let mut state = client.last_query_id.lock();
+            let previous_id = state.current.replace(query_id.clone());
+            state.pending.insert(query_id.clone(), previous_id);
+        }
         Self {
             client,
             query_id,
-            previous_id,
             may_have_reached_server: false,
         }
     }
@@ -129,11 +139,21 @@ impl<'a> QuerySubmission<'a> {
 
 impl Drop for QuerySubmission<'_> {
     fn drop(&mut self) {
+        let mut state = self.client.last_query_id.lock();
+        let Some(previous_id) = state.pending.remove(&self.query_id) else {
+            return;
+        };
         if !self.may_have_reached_server {
-            let mut last_query_id = self.client.last_query_id.lock();
+            // Remove this unsent ID from every live rollback chain, even if a
+            // later query is current. Otherwise its guard could resurrect this ID.
+            for snapshot in state.pending.values_mut() {
+                if snapshot.as_ref() == Some(&self.query_id) {
+                    *snapshot = previous_id.clone();
+                }
+            }
             // Do not overwrite an ID published by another concurrent query.
-            if last_query_id.as_ref() == Some(&self.query_id) {
-                *last_query_id = self.previous_id.take();
+            if state.current.as_ref() == Some(&self.query_id) {
+                state.current = previous_id;
             }
         }
     }
@@ -179,7 +199,7 @@ pub struct APIClient {
 
     presign: Mutex<PresignMode>,
     last_node_id: Mutex<Option<String>>,
-    last_query_id: Mutex<Option<String>>,
+    last_query_id: Mutex<LastQueryId>,
 
     capability: Capability,
 
@@ -723,14 +743,15 @@ impl APIClient {
     }
 
     pub fn set_last_query_id(&self, query_id: Option<String>) {
-        *self.last_query_id.lock() = query_id
+        self.last_query_id.lock().current = query_id
     }
 
     /// Return the latest query ID, available before the first response arrives.
     /// The response ID takes precedence if the server replaces the generated ID.
-    /// A submission proven not to have been sent restores the previous ID.
+    /// A submission proven not to have been sent restores the previous ID,
+    /// skipping other submissions also proven unsent.
     pub fn last_query_id(&self) -> Option<String> {
-        self.last_query_id.lock().clone()
+        self.last_query_id.lock().current.clone()
     }
 
     fn last_node_id(&self) -> Option<String> {
