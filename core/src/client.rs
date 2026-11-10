@@ -113,6 +113,20 @@ struct QuerySubmission<'a> {
     may_have_reached_server: bool,
 }
 
+impl<'a> QuerySubmission<'a> {
+    fn new(client: &'a APIClient, query_id: String) -> Self {
+        // Snapshot and publish under one lock so rollback cannot restore a value
+        // older than a response received immediately before publication.
+        let previous_id = client.last_query_id.lock().replace(query_id.clone());
+        Self {
+            client,
+            query_id,
+            previous_id,
+            may_have_reached_server: false,
+        }
+    }
+}
+
 impl Drop for QuerySubmission<'_> {
     fn drop(&mut self) {
         if !self.may_have_reached_server {
@@ -795,13 +809,7 @@ impl APIClient {
 
         // headers
         let query_id = self.gen_query_id();
-        let mut submission = QuerySubmission {
-            client: self,
-            query_id: query_id.clone(),
-            previous_id: self.last_query_id(),
-            may_have_reached_server: false,
-        };
-        self.set_last_query_id(Some(query_id.clone()));
+        let mut submission = QuerySubmission::new(self, query_id.clone());
         let mut headers = self.make_headers(Some(&query_id))?;
         if self.capability.arrow_data && self.query_result_format == "arrow" && !force_json_body {
             debug!("accept arrow data");

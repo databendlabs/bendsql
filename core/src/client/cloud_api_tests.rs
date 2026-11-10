@@ -299,6 +299,39 @@ async fn interrupted_submission_retains_query_id_before_first_response() {
     }
 }
 
+#[test]
+fn unsent_submission_preserves_response_id_on_either_side_of_publication() {
+    for response_first in [true, false] {
+        let client = APIClient::default();
+        client.set_last_query_id(Some("older-query".into()));
+        if response_first {
+            client.set_last_query_id(Some("server-response-id".into()));
+        }
+
+        let submission = QuerySubmission::new(&client, "new-submission-id".into());
+        assert_eq!(client.last_query_id().as_deref(), Some("new-submission-id"));
+        assert_eq!(
+            submission.previous_id.as_deref(),
+            Some(if response_first {
+                "server-response-id"
+            } else {
+                "older-query"
+            }),
+        );
+        if !response_first {
+            client.set_last_query_id(Some("server-response-id".into()));
+        }
+
+        // A response before publication must be restored; a response after
+        // publication must not be overwritten by an unsent query's rollback.
+        drop(submission);
+        assert_eq!(
+            client.last_query_id().as_deref(),
+            Some("server-response-id")
+        );
+    }
+}
+
 #[tokio::test]
 async fn unsent_submission_restores_previous_query_id() {
     for cloud in [false, true] {
