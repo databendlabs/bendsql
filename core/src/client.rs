@@ -103,6 +103,28 @@ struct HttpResponseData {
     body: Bytes,
 }
 
+// Restore the previous ID only when no attempt could have reached the server.
+// In particular, dropping a submission while execute() is pending must retain
+// the new ID so callers can cancel a query before its first response.
+struct QuerySubmission<'a> {
+    client: &'a APIClient,
+    query_id: String,
+    previous_id: Option<String>,
+    may_have_reached_server: bool,
+}
+
+impl Drop for QuerySubmission<'_> {
+    fn drop(&mut self) {
+        if !self.may_have_reached_server {
+            let mut last_query_id = self.client.last_query_id.lock();
+            // Do not overwrite an ID published by another concurrent query.
+            if last_query_id.as_ref() == Some(&self.query_id) {
+                *last_query_id = self.previous_id.take();
+            }
+        }
+    }
+}
+
 pub struct APIClient {
     pub(crate) session_id: String,
     cli: HttpClient,
@@ -690,6 +712,9 @@ impl APIClient {
         *self.last_query_id.lock() = query_id
     }
 
+    /// Return the latest query ID, available before the first response arrives.
+    /// The response ID takes precedence if the server replaces the generated ID.
+    /// A submission proven not to have been sent restores the previous ID.
     pub fn last_query_id(&self) -> Option<String> {
         self.last_query_id.lock().clone()
     }
@@ -770,6 +795,13 @@ impl APIClient {
 
         // headers
         let query_id = self.gen_query_id();
+        let mut submission = QuerySubmission {
+            client: self,
+            query_id: query_id.clone(),
+            previous_id: self.last_query_id(),
+            may_have_reached_server: false,
+        };
+        self.set_last_query_id(Some(query_id.clone()));
         let mut headers = self.make_headers(Some(&query_id))?;
         if self.capability.arrow_data && self.query_result_format == "arrow" && !force_json_body {
             debug!("accept arrow data");
@@ -789,7 +821,14 @@ impl APIClient {
             .timeout(self.page_request_timeout)
             .build()?;
         let response = self
-            .query_request_helper(request, true, true, true, RequestKind::QueryStart)
+            .query_request_helper(
+                request,
+                true,
+                true,
+                true,
+                RequestKind::QueryStart,
+                Some(&mut submission),
+            )
             .await?;
         self.handle_page(response, true).await
     }
@@ -857,6 +896,7 @@ impl APIClient {
         }
         if is_first {
             self.handle_warnings(&resp);
+            // The server or a gateway may replace the client-generated ID.
             self.set_last_query_id(Some(resp.id.clone()));
             if let Some(node_id) = &resp.node_id {
                 self.set_last_node_id(node_id.clone());
@@ -894,6 +934,7 @@ impl APIClient {
                 true,
                 true,
                 RequestKind::QueryPage,
+                None,
             )
             .await?;
         self.handle_page(response, false).await
@@ -937,7 +978,7 @@ impl APIClient {
                 .timeout(self.page_request_timeout)
                 .build()?;
             let response = self
-                .query_request_helper(request, true, false, false, request_kind.clone())
+                .query_request_helper(request, true, false, false, request_kind.clone(), None)
                 .await?;
             if response.status != StatusCode::OK {
                 return Err(self
@@ -1226,7 +1267,7 @@ impl APIClient {
             .timeout(self.connect_timeout.saturating_add(Duration::from_secs(10)))
             .build()?;
         let response = self
-            .query_request_helper(request, true, false, true, RequestKind::Login)
+            .query_request_helper(request, true, false, true, RequestKind::Login, None)
             .await?;
         if response.status == StatusCode::NOT_FOUND {
             info!("login return 404, skip login on the old version server");
@@ -1316,7 +1357,7 @@ impl APIClient {
         };
         let request = self.wrap_auth_or_session_token(builder)?.build()?;
         let response = self
-            .query_request_helper(request, true, false, true, RequestKind::Heartbeat)
+            .query_request_helper(request, true, false, true, RequestKind::Heartbeat, None)
             .await?;
         if response.status != StatusCode::OK {
             return Err(self
@@ -1405,7 +1446,14 @@ impl APIClient {
             .timeout(self.connect_timeout.saturating_add(Duration::from_secs(10)))
             .build()?;
         let response = self
-            .query_request_helper(request, true, false, false, RequestKind::SessionRefresh)
+            .query_request_helper(
+                request,
+                true,
+                false,
+                false,
+                RequestKind::SessionRefresh,
+                None,
+            )
             .await?;
         if response.status != StatusCode::OK {
             return Err(self
@@ -1454,6 +1502,7 @@ impl APIClient {
         refresh_if_401: bool,
         reload_auth_if_401: bool,
         request_kind: RequestKind,
+        mut submission: Option<&mut QuerySubmission<'_>>,
     ) -> Result<HttpResponseData> {
         let mut refreshed = false;
         let mut retries = 0;
@@ -1469,9 +1518,21 @@ impl APIClient {
             self.transport
                 .prepare_request(&mut request, &self.endpoint)?;
             let req = request.try_clone().expect("request not cloneable");
+            let previously_may_have_reached_server = submission.as_mut().is_some_and(|state| {
+                let previous = state.may_have_reached_server;
+                state.may_have_reached_server = true;
+                previous
+            });
             let response = match self.cli.execute(req).await {
                 Ok(response) => response,
                 Err(err) => {
+                    if err.is_connect() {
+                        if let Some(state) = submission.as_mut() {
+                            // A connect failure proves only this attempt was not sent,
+                            // not that an earlier retry did not reach the server.
+                            state.may_have_reached_server = previously_may_have_reached_server;
+                        }
+                    }
                     if let Some(reason) = Self::retry_reason_for_reqwest(&err)
                         .filter(|_| allow_replay || err.is_connect())
                     {
