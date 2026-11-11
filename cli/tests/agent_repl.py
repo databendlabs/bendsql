@@ -42,6 +42,7 @@ PROVIDER_ERRORS = {
 
 class MockService(http.server.BaseHTTPRequestHandler):
     sql_requests = []
+    submitted_query_ids = []
     model_requests = []
     model_headers = []
     kill_requests = []
@@ -111,6 +112,7 @@ class MockService(http.server.BaseHTTPRequestHandler):
                 response["choices"][0]["message"]["content"] = "private-provider-diagnostic" + "x" * (128 * 1024)
         elif self.path == "/v1/query":
             sql = request["sql"]
+            self.submitted_query_ids.append(self.headers.get("X-DATABEND-QUERY-ID"))
             self.sql_requests.append(sql)
             fail = sql.startswith("Not SQL") or "SPOOF_INTERRUPTED" in sql or "SENSITIVE_ERROR" in sql
             query_id = f"query-{len(self.sql_requests)}"
@@ -1311,21 +1313,24 @@ def exercise_sql_cancellation(executable, env, port):
             kills = len(MockService.kill_requests)
             os.write(terminal.fd, b"SELECT BLOCK_SUBMISSION; SELECT NEVER_AFTER_CANCEL;\r")
             wait_http_count(MockService.sql_requests, sql_count + 1)
+            submitted_query_id = MockService.submitted_query_ids[sql_count]
+            assert submitted_query_id, "Submission must include its generated query ID"
             start = time.monotonic()
             os.write(terminal.fd, b"\x03")
             terminal.expect("smart> ")
             assert time.monotonic() - start < 2, "Submission cancellation waited for a response"
             assert len(MockService.sql_requests) == sql_count + 1
-            assert len(MockService.kill_requests) == kills, "A previous query was incorrectly cancelled"
+            # Before any response, cancel exactly the submitted ID, never a previous query.
+            assert MockService.kill_requests[kills:] == [f"/v1/query/{submitted_query_id}/kill"]
             terminal.send("!ask Explain Q2")
             record = next(r for r in last_context()["query_records"] if r["id"] == "Q2")
-            assert record["status"] == "interrupted" and record["query_id"] is None
-            assert record["cancel_request_sent"] is False
+            assert record["status"] == "interrupted" and record["query_id"] == submitted_query_id
+            assert record["cancel_request_sent"] is True
             assert "state and Query ID may be unknown" in record["error"]
             MockService.release_queries.set()
             terminal.send("SELECT 2;")
             terminal.send("!sql SELECT SPOOF_INTERRUPTED;")
-            assert len(MockService.kill_requests) == kills
+            assert len(MockService.kill_requests) == kills + 1
             terminal.send("!ask Explain Q4")
             record = next(r for r in last_context()["query_records"] if r["id"] == "Q4")
             assert record["status"] == "failed" and record["cancel_request_sent"] is False
@@ -1335,7 +1340,7 @@ def exercise_sql_cancellation(executable, env, port):
             wait_http_count(MockService.page_requests, pages + 1)
             os.write(terminal.fd, b"\x03")
             terminal.expect("smart> ")
-            assert len(MockService.kill_requests) == kills + 1
+            assert len(MockService.kill_requests) == kills + 2
             terminal.send("!ask Explain Q5")
             record = next(r for r in last_context()["query_records"] if r["id"] == "Q5")
             assert record["status"] == "interrupted" and record["query_id"] is not None
@@ -1350,7 +1355,7 @@ def exercise_sql_cancellation(executable, env, port):
             os.write(terminal.fd, b"\x03")
             terminal.expect("smart> ")
             assert time.monotonic() - start < 5, "Cancellation request has no deadline"
-            assert len(MockService.kill_requests) == kills + 2
+            assert len(MockService.kill_requests) == kills + 3
             terminal.send("!ask Explain Q6")
             record = next(r for r in last_context()["query_records"] if r["id"] == "Q6")
             assert record["status"] == "interrupted" and record["cancel_request_sent"] is False
