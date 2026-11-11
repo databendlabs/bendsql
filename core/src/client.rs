@@ -1415,7 +1415,7 @@ impl APIClient {
         let response = self.decode_response(&response.body)?;
         match response {
             RefreshResponse::Err { error } => Err(Error::AuthFailure(error)),
-            RefreshResponse::Ok(info) => {
+            RefreshResponse::Wrapped { tokens: info } | RefreshResponse::Ok(info) => {
                 *self_login_info.lock() = (info, Instant::now());
                 Ok(())
             }
