@@ -77,6 +77,8 @@ const DEFAULT_USERNAME: &str = "root";
 
 #[cfg(test)]
 mod cloud_api_tests;
+#[cfg(test)]
+mod query_id_tests;
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
