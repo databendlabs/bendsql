@@ -135,6 +135,18 @@ impl<'a> QuerySubmission<'a> {
             may_have_reached_server: false,
         }
     }
+
+    fn begin_attempt(&mut self) -> bool {
+        let previous = self.may_have_reached_server;
+        // Retain the ID if cancellation drops the request while execute() is pending.
+        self.may_have_reached_server = true;
+        previous
+    }
+
+    fn attempt_not_sent(&mut self, previous: bool) {
+        // A connect failure rules out only this attempt, not an earlier retry.
+        self.may_have_reached_server = previous;
+    }
 }
 
 impl Drop for QuerySubmission<'_> {
@@ -151,7 +163,7 @@ impl Drop for QuerySubmission<'_> {
                     *snapshot = previous_id.clone();
                 }
             }
-            // Do not overwrite an ID published by another concurrent query.
+            // Restore only if no later submission or response has replaced our ID.
             if state.current.as_ref() == Some(&self.query_id) {
                 state.current = previous_id;
             }
@@ -747,7 +759,7 @@ impl APIClient {
     }
 
     /// Return the latest query ID, available before the first response arrives.
-    /// The response ID takes precedence if the server replaces the generated ID.
+    /// The response ID takes precedence even when the query fails with a SQL error.
     /// A submission proven not to have been sent restores the previous ID,
     /// skipping other submissions also proven unsent.
     pub fn last_query_id(&self) -> Option<String> {
@@ -919,14 +931,16 @@ impl APIClient {
             body = json_body
         };
         let resp: QueryResponse = self.decode_response(&body)?;
+        if is_first {
+            // The server or a gateway may replace the ID, including on SQL errors.
+            self.set_last_query_id(Some(resp.id.clone()));
+        }
         self.handle_session(&resp.session).await;
         if let Some(err) = &resp.error {
             return Err(self.auth.sanitize_error(Error::QueryFailed(err.clone())));
         }
         if is_first {
             self.handle_warnings(&resp);
-            // The server or a gateway may replace the client-generated ID.
-            self.set_last_query_id(Some(resp.id.clone()));
             if let Some(node_id) = &resp.node_id {
                 self.set_last_node_id(node_id.clone());
             }
@@ -1547,19 +1561,16 @@ impl APIClient {
             self.transport
                 .prepare_request(&mut request, &self.endpoint)?;
             let req = request.try_clone().expect("request not cloneable");
-            let previously_may_have_reached_server = submission.as_mut().is_some_and(|state| {
-                let previous = state.may_have_reached_server;
-                state.may_have_reached_server = true;
-                previous
-            });
+            let previously_may_have_reached_server = submission
+                .as_deref_mut()
+                .map(QuerySubmission::begin_attempt)
+                .unwrap_or(false);
             let response = match self.cli.execute(req).await {
                 Ok(response) => response,
                 Err(err) => {
                     if err.is_connect() {
                         if let Some(state) = submission.as_mut() {
-                            // A connect failure proves only this attempt was not sent,
-                            // not that an earlier retry did not reach the server.
-                            state.may_have_reached_server = previously_may_have_reached_server;
+                            state.attempt_not_sent(previously_may_have_reached_server);
                         }
                     }
                     if let Some(reason) = Self::retry_reason_for_reqwest(&err)

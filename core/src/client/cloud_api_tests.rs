@@ -477,10 +477,16 @@ async fn unsent_submission_restores_previous_query_id() {
 #[tokio::test]
 async fn failed_response_retains_submitted_query_id() {
     for cloud in [false, true] {
-        for fault in ["http", "decode", "body"] {
+        for fault in ["http", "decode", "body", "sql"] {
             let server = MockServer::new(move |_| match fault {
                 "http" => MockReply::error(403),
                 "decode" => MockReply::json(json!({"invalid": "response"})),
+                "sql" => {
+                    let mut reply = query_reply();
+                    reply["id"] = json!("server-failed-query-id");
+                    reply["error"] = json!({"code": 5100, "message": "SQL failed"});
+                    MockReply::json(reply)
+                }
                 "body" => {
                     let mut reply = MockReply::json(query_reply());
                     reply.headers.push(("X-Mock-Truncate", "1".into()));
@@ -491,12 +497,22 @@ async fn failed_response_retains_submitted_query_id() {
             .await;
             let client = query_id_client(&server, cloud).await;
             client.set_last_query_id(Some("previous-query".into()));
-            assert!(client
+            let error = client
                 .start_query_inner("SELECT 1", None, false, None)
                 .await
-                .is_err());
+                .unwrap_err();
             let sent_id = received_query_id(&server).await;
-            assert_eq!(client.last_query_id().as_deref(), Some(sent_id.as_str()));
+            if fault == "sql" {
+                assert!(matches!(error, Error::QueryFailed(_)));
+                assert_ne!(sent_id, "server-failed-query-id");
+                assert_eq!(
+                    client.last_query_id().as_deref(),
+                    Some("server-failed-query-id")
+                );
+            } else {
+                assert_eq!(client.last_query_id().as_deref(), Some(sent_id.as_str()));
+            }
+            assert!(client.last_query_id.lock().pending.is_empty());
         }
     }
 }
