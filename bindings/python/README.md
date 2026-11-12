@@ -223,27 +223,20 @@ and values raises a `ValueError` immediately.
 
 ### Query ID tracking and query management
 
-For remote REST connections, `conn.last_query_id()` exposes the connection's latest
-published query ID, not just the last successful query. **After a SQL error, it now
-returns the failed query's ID instead of retaining the previous query's ID.**
+For remote REST connections, `conn.last_query_id()` returns the latest query's ID,
+not just the last successful query's ID. **After a SQL error, it now returns the
+failed query's ID instead of the previous query's ID.**
 
-| Situation | `last_query_id()` |
-| --- | --- |
-| No query has been submitted | `None` |
-| Submission has started, before the first response | The driver-generated ID, published before sending the request |
-| The first query response is decoded, whether successful or a SQL error | The server's response ID, even if a gateway changed the generated ID |
-| Failure proven to be before sending, such as local validation, request construction, or connect-only failures | The previous ID, or `None` if there was none |
-| HTTP/body/decode errors, timeouts, or interruptions after a request may have been sent, without a decoded query response | The generated ID is retained; execution state is unknown |
-| Pagination or result processing fails after the first response was decoded | The response ID is retained |
+The previous ID is retained only when the driver can determine that no attempt
+sent the query (for example, local validation fails or a connection cannot be
+established).
+If the request may have been sent, such as a timeout or interruption while waiting
+for a response, the query's ID is retained even though its execution state is
+unknown. Having an ID does not confirm successful execution or cancellation.
 
-Retries reuse the generated ID. A later connect failure does not roll it back if
-an earlier attempt may have reached the server. Having an ID does not prove that
-the server accepted, completed, or cancelled the query.
-
-This is connection-wide state: concurrent submissions and first responses can
-replace it, so do not use it to correlate individual concurrent queries. A rollback
-neither overwrites a newer ID nor restores another submission known to be unsent.
-FlightSQL and local embedded connections always return `None`.
+The value is connection-wide and can be replaced by concurrent queries. It is
+`None` before any query is submitted; FlightSQL and local embedded connections
+always return `None`.
 
 ```python
 # Get the latest query ID, including failed submissions
