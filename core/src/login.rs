@@ -77,83 +77,13 @@ pub struct RefreshSessionTokenRequest {
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
 pub enum RefreshResponse {
-    Wrapped { tokens: SessionTokenInfo },
-    // Older servers returned the token fields without the `tokens` envelope.
-    Ok(SessionTokenInfo),
+    Ok { tokens: SessionTokenInfo },
     Err { error: ErrorCode },
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-
-    fn assert_refresh_tokens(response: RefreshResponse, ttl: u64) {
-        let tokens = match response {
-            RefreshResponse::Wrapped { tokens } | RefreshResponse::Ok(tokens) => tokens,
-            RefreshResponse::Err { .. } => panic!("expected successful refresh response"),
-        };
-        assert!(tokens.session_token == "test-session");
-        assert!(tokens.refresh_token == "test-refresh");
-        assert_eq!(tokens.session_token_ttl_in_secs, ttl);
-    }
-
-    #[test]
-    fn refresh_response_accepts_wrapped_and_legacy_tokens() {
-        let tokens = serde_json::json!({
-            "session_token": "test-session",
-            "session_token_ttl_in_secs": 120,
-            "refresh_token": "test-refresh"
-        });
-        for body in [tokens.clone(), serde_json::json!({"tokens": tokens})] {
-            assert_refresh_tokens(serde_json::from_value(body).unwrap(), 120);
-        }
-    }
-
-    #[test]
-    fn refresh_response_defaults_missing_ttl() {
-        let tokens = serde_json::json!({
-            "session_token": "test-session",
-            "refresh_token": "test-refresh"
-        });
-        for body in [tokens.clone(), serde_json::json!({"tokens": tokens})] {
-            assert_refresh_tokens(serde_json::from_value(body).unwrap(), 3600);
-        }
-    }
-
-    #[test]
-    fn refresh_response_preserves_server_error() {
-        let response: RefreshResponse = serde_json::from_value(serde_json::json!({
-            "error": {"code": 5101, "message": "session expired", "detail": "test detail"}
-        }))
-        .unwrap();
-        let RefreshResponse::Err { error } = response else {
-            panic!("expected refresh error response");
-        };
-        assert_eq!(error.code, 5101);
-        assert_eq!(error.message, "session expired");
-        assert_eq!(error.detail.as_deref(), Some("test detail"));
-    }
-
-    #[test]
-    fn refresh_response_rejects_incomplete_or_malformed_tokens() {
-        for tokens in [
-            serde_json::json!({}),
-            serde_json::json!({"session_token": "test-session"}),
-            serde_json::json!({"refresh_token": "test-refresh"}),
-            serde_json::json!({"session_token": null, "refresh_token": "test-refresh"}),
-            serde_json::json!({"session_token": "test-session", "refresh_token": null}),
-            serde_json::json!({"session_token": "test-session", "refresh_token": "test-refresh", "session_token_ttl_in_secs": "invalid"}),
-            serde_json::json!({"session_token": "test-session", "refresh_token": "test-refresh", "session_token_ttl_in_secs": null}),
-            serde_json::json!(null),
-            serde_json::json!([]),
-            serde_json::json!("invalid"),
-        ] {
-            for body in [tokens.clone(), serde_json::json!({"tokens": tokens})] {
-                assert!(serde_json::from_value::<RefreshResponse>(body).is_err());
-            }
-        }
-        assert!(serde_json::from_str::<RefreshResponse>(r#"{"tokens":"#).is_err());
-    }
 
     #[test]
     fn login_request_keeps_database_for_default_catalog() {

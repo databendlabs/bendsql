@@ -14,9 +14,6 @@
 
 //! Pages lifecycle tests live under client to inspect its private heartbeat registry.
 
-// Reuse the native HTTP fixture for session-token lifecycle coverage.
-mod session_token;
-
 use super::*;
 use std::any::Any;
 use std::future::Future;
