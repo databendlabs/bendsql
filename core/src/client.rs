@@ -1415,8 +1415,8 @@ impl APIClient {
         let response = self.decode_response(&response.body)?;
         match response {
             RefreshResponse::Err { error } => Err(Error::AuthFailure(error)),
-            RefreshResponse::Ok(info) => {
-                *self_login_info.lock() = (info, Instant::now());
+            RefreshResponse::Ok { tokens } => {
+                *self_login_info.lock() = (tokens, Instant::now());
                 Ok(())
             }
         }
@@ -1846,6 +1846,49 @@ mod test {
             "{message}"
         );
         assert!(!message.contains("retry_times="), "{message}");
+    }
+
+    // Run by `make -C tests test-core` after the real Databend server starts.
+    #[tokio::test]
+    #[ignore = "requires a Databend server"]
+    async fn refresh_session_token_against_server() {
+        let dsn = std::env::var("TEST_DATABEND_DSN")
+            .unwrap_or_else(|_| "databend://root:@localhost:8000/default?sslmode=disable".into());
+        let mut client = APIClient::from_dsn(&dsn).await.unwrap();
+        // Opt in for this test only; leave the default client behavior unchanged.
+        client.disable_session_token = false;
+        client.build_client(None).await.unwrap();
+        assert!(client.login().await.is_ok(), "session-token login failed");
+        let state = client
+            .session_token_info
+            .clone()
+            .expect("login must issue tokens");
+
+        for _ in 0..2 {
+            let (previous, acquired) = state.lock().clone();
+            let before = Instant::now();
+            // Exercise the production refresh request and response decoder, not
+            // a separate HTTP implementation. No need to wait for token expiry.
+            assert!(
+                client.refresh_session_token(state.clone()).await.is_ok(),
+                "session-token refresh failed"
+            );
+            {
+                let (tokens, refreshed) = &*state.lock();
+                // Do not print real credentials on assertion failures.
+                assert!(tokens.session_token != previous.session_token);
+                assert!(tokens.refresh_token != previous.refresh_token);
+                assert!(*refreshed >= before && *refreshed > acquired);
+            }
+            // Each query uses the refreshed session token; the second refresh
+            // also proves the new refresh token was saved and is usable.
+            let result = client
+                .start_query_inner("SELECT 1", None, false, None)
+                .await;
+            assert!(result.is_ok(), "query after refresh failed");
+            assert_eq!(result.unwrap().0.data, vec![vec![Some("1".into())]]);
+        }
+        client.close().await;
     }
 
     #[tokio::test]

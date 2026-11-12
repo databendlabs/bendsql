@@ -36,6 +36,7 @@ start: up
 
 test-core: up
 	cargo test --test core
+	cargo test -p databend-client --lib client::test::refresh_session_token_against_server -- --exact --ignored
 
 test-driver: up
 	cargo test --test driver

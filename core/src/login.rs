@@ -77,7 +77,7 @@ pub struct RefreshSessionTokenRequest {
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
 pub enum RefreshResponse {
-    Ok(SessionTokenInfo),
+    Ok { tokens: SessionTokenInfo },
     Err { error: ErrorCode },
 }
 
