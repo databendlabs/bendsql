@@ -1326,7 +1326,7 @@ def exercise_sql_cancellation(executable, env, port):
             record = next(r for r in last_context()["query_records"] if r["id"] == "Q2")
             assert record["status"] == "interrupted" and record["query_id"] == submitted_query_id
             assert record["cancel_request_sent"] is True
-            assert "state and Query ID may be unknown" in record["error"]
+            assert "server execution may continue; its state may be unknown" in record["error"]
             MockService.release_queries.set()
             terminal.send("SELECT 2;")
             terminal.send("!sql SELECT SPOOF_INTERRUPTED;")
