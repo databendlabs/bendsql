@@ -67,6 +67,35 @@ await finished(stream);
 await conn.close();
 ```
 
+### Query ID tracking
+
+```javascript
+await conn.queryRow("SELECT 1");
+console.log(conn.lastQueryId()); // Synchronous accessor; no await needed.
+```
+
+For remote REST connections, `conn.lastQueryId()` exposes the connection's latest
+published query ID, not just the last successful query. **After a SQL error, it now
+returns the failed query's ID instead of retaining the previous query's ID.**
+
+| Situation                                                                                                                | `lastQueryId()`                                                      |
+| ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| No query has been submitted                                                                                              | `null`                                                               |
+| Submission has started, before the first response                                                                        | The driver-generated ID, published before sending the request        |
+| The first query response is decoded, whether successful or a SQL error                                                   | The server's response ID, even if a gateway changed the generated ID |
+| Failure proven to be before sending, such as local validation, request construction, or connect-only failures            | The previous ID, or `null` if there was none                         |
+| HTTP/body/decode errors, timeouts, or interruptions after a request may have been sent, without a decoded query response | The generated ID is retained; execution state is unknown             |
+| Pagination or result processing fails after the first response was decoded                                               | The response ID is retained                                          |
+
+Retries reuse the generated ID. A later connect failure does not roll it back if
+an earlier attempt may have reached the server. Having an ID does not prove that
+the server accepted, completed, or cancelled the query.
+
+This is connection-wide state: concurrent submissions and first responses can
+replace it, so do not use it to correlate individual concurrent queries. A rollback
+neither overwrites a newer ID nor restores another submission known to be unsent.
+FlightSQL connections always return `null`.
+
 ## Type Mapping
 
 [Databend Types](https://docs.databend.com/sql/sql-reference/data-types/)
