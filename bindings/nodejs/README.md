@@ -78,12 +78,7 @@ For remote REST connections, `conn.lastQueryId()` returns the latest query's ID,
 not just the last successful query's ID. **After a SQL error, it now returns the
 failed query's ID instead of the previous query's ID.**
 
-The previous ID is retained only when the driver can determine that no attempt
-sent the query (for example, local validation fails or a connection cannot be
-established).
-If the request may have been sent, such as a timeout or interruption while waiting
-for a response, the query's ID is retained even though its execution state is
-unknown. Having an ID does not confirm successful execution or cancellation.
+The previous ID is retained only when the query is known not to have been sent.
 
 The value is connection-wide and can be replaced by concurrent queries. It is
 `null` before any query is submitted; FlightSQL connections always return `null`.
