@@ -77,6 +77,8 @@ const DEFAULT_USERNAME: &str = "root";
 
 #[cfg(test)]
 mod cloud_api_tests;
+#[cfg(test)]
+mod query_id_tests;
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -101,6 +103,74 @@ struct HttpResponseData {
     status: StatusCode,
     headers: HeaderMap,
     body: Bytes,
+}
+
+#[derive(Default)]
+struct LastQueryId {
+    current: Option<String>,
+    // Rollback snapshots exist only for live submission guards. Keep them under
+    // the same lock as current so invalidating an unsent ID updates every snapshot.
+    pending: HashMap<String, Option<String>>,
+}
+
+// Restore the previous ID only when no attempt could have reached the server.
+// In particular, dropping a submission while execute() is pending must retain
+// the new ID so callers can cancel a query before its first response.
+struct QuerySubmission<'a> {
+    client: &'a APIClient,
+    query_id: String,
+    may_have_reached_server: bool,
+}
+
+impl<'a> QuerySubmission<'a> {
+    fn new(client: &'a APIClient, query_id: String) -> Self {
+        // Snapshot and publish under one lock so rollback cannot restore a value
+        // older than a response received immediately before publication.
+        {
+            let mut state = client.last_query_id.lock();
+            let previous_id = state.current.replace(query_id.clone());
+            state.pending.insert(query_id.clone(), previous_id);
+        }
+        Self {
+            client,
+            query_id,
+            may_have_reached_server: false,
+        }
+    }
+
+    fn begin_attempt(&mut self) -> bool {
+        let previous = self.may_have_reached_server;
+        // Retain the ID if cancellation drops the request while execute() is pending.
+        self.may_have_reached_server = true;
+        previous
+    }
+
+    fn attempt_not_sent(&mut self, previous: bool) {
+        // A connect failure rules out only this attempt, not an earlier retry.
+        self.may_have_reached_server = previous;
+    }
+}
+
+impl Drop for QuerySubmission<'_> {
+    fn drop(&mut self) {
+        let mut state = self.client.last_query_id.lock();
+        let Some(previous_id) = state.pending.remove(&self.query_id) else {
+            return;
+        };
+        if !self.may_have_reached_server {
+            // Remove this unsent ID from every live rollback chain, even if a
+            // later query is current. Otherwise its guard could resurrect this ID.
+            for snapshot in state.pending.values_mut() {
+                if snapshot.as_ref() == Some(&self.query_id) {
+                    *snapshot = previous_id.clone();
+                }
+            }
+            // Restore only if no later submission or response has replaced our ID.
+            if state.current.as_ref() == Some(&self.query_id) {
+                state.current = previous_id;
+            }
+        }
+    }
 }
 
 pub struct APIClient {
@@ -143,7 +213,7 @@ pub struct APIClient {
 
     presign: Mutex<PresignMode>,
     last_node_id: Mutex<Option<String>>,
-    last_query_id: Mutex<Option<String>>,
+    last_query_id: Mutex<LastQueryId>,
 
     capability: Capability,
 
@@ -687,11 +757,15 @@ impl APIClient {
     }
 
     pub fn set_last_query_id(&self, query_id: Option<String>) {
-        *self.last_query_id.lock() = query_id
+        self.last_query_id.lock().current = query_id
     }
 
+    /// Return the latest query ID, available before the first response arrives.
+    /// The response ID takes precedence even when the query fails with a SQL error.
+    /// A submission proven not to have been sent restores the previous ID,
+    /// skipping other submissions also proven unsent.
     pub fn last_query_id(&self) -> Option<String> {
-        self.last_query_id.lock().clone()
+        self.last_query_id.lock().current.clone()
     }
 
     fn last_node_id(&self) -> Option<String> {
@@ -770,6 +844,7 @@ impl APIClient {
 
         // headers
         let query_id = self.gen_query_id();
+        let mut submission = QuerySubmission::new(self, query_id.clone());
         let mut headers = self.make_headers(Some(&query_id))?;
         if self.capability.arrow_data && self.query_result_format == "arrow" && !force_json_body {
             debug!("accept arrow data");
@@ -789,7 +864,14 @@ impl APIClient {
             .timeout(self.page_request_timeout)
             .build()?;
         let response = self
-            .query_request_helper(request, true, true, true, RequestKind::QueryStart)
+            .query_request_helper(
+                request,
+                true,
+                true,
+                true,
+                RequestKind::QueryStart,
+                Some(&mut submission),
+            )
             .await?;
         self.handle_page(response, true).await
     }
@@ -851,13 +933,16 @@ impl APIClient {
             body = json_body
         };
         let resp: QueryResponse = self.decode_response(&body)?;
+        if is_first {
+            // The server or a gateway may replace the ID, including on SQL errors.
+            self.set_last_query_id(Some(resp.id.clone()));
+        }
         self.handle_session(&resp.session).await;
         if let Some(err) = &resp.error {
             return Err(self.auth.sanitize_error(Error::QueryFailed(err.clone())));
         }
         if is_first {
             self.handle_warnings(&resp);
-            self.set_last_query_id(Some(resp.id.clone()));
             if let Some(node_id) = &resp.node_id {
                 self.set_last_node_id(node_id.clone());
             }
@@ -894,6 +979,7 @@ impl APIClient {
                 true,
                 true,
                 RequestKind::QueryPage,
+                None,
             )
             .await?;
         self.handle_page(response, false).await
@@ -937,7 +1023,7 @@ impl APIClient {
                 .timeout(self.page_request_timeout)
                 .build()?;
             let response = self
-                .query_request_helper(request, true, false, false, request_kind.clone())
+                .query_request_helper(request, true, false, false, request_kind.clone(), None)
                 .await?;
             if response.status != StatusCode::OK {
                 return Err(self
@@ -1226,7 +1312,7 @@ impl APIClient {
             .timeout(self.connect_timeout.saturating_add(Duration::from_secs(10)))
             .build()?;
         let response = self
-            .query_request_helper(request, true, false, true, RequestKind::Login)
+            .query_request_helper(request, true, false, true, RequestKind::Login, None)
             .await?;
         if response.status == StatusCode::NOT_FOUND {
             info!("login return 404, skip login on the old version server");
@@ -1316,7 +1402,7 @@ impl APIClient {
         };
         let request = self.wrap_auth_or_session_token(builder)?.build()?;
         let response = self
-            .query_request_helper(request, true, false, true, RequestKind::Heartbeat)
+            .query_request_helper(request, true, false, true, RequestKind::Heartbeat, None)
             .await?;
         if response.status != StatusCode::OK {
             return Err(self
@@ -1405,7 +1491,14 @@ impl APIClient {
             .timeout(self.connect_timeout.saturating_add(Duration::from_secs(10)))
             .build()?;
         let response = self
-            .query_request_helper(request, true, false, false, RequestKind::SessionRefresh)
+            .query_request_helper(
+                request,
+                true,
+                false,
+                false,
+                RequestKind::SessionRefresh,
+                None,
+            )
             .await?;
         if response.status != StatusCode::OK {
             return Err(self
@@ -1454,6 +1547,7 @@ impl APIClient {
         refresh_if_401: bool,
         reload_auth_if_401: bool,
         request_kind: RequestKind,
+        mut submission: Option<&mut QuerySubmission<'_>>,
     ) -> Result<HttpResponseData> {
         let mut refreshed = false;
         let mut retries = 0;
@@ -1469,9 +1563,18 @@ impl APIClient {
             self.transport
                 .prepare_request(&mut request, &self.endpoint)?;
             let req = request.try_clone().expect("request not cloneable");
+            let previously_may_have_reached_server = submission
+                .as_deref_mut()
+                .map(QuerySubmission::begin_attempt)
+                .unwrap_or(false);
             let response = match self.cli.execute(req).await {
                 Ok(response) => response,
                 Err(err) => {
+                    if err.is_connect() {
+                        if let Some(state) = submission.as_mut() {
+                            state.attempt_not_sent(previously_may_have_reached_server);
+                        }
+                    }
                     if let Some(reason) = Self::retry_reason_for_reqwest(&err)
                         .filter(|_| allow_replay || err.is_connect())
                     {

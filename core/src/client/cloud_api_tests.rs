@@ -17,6 +17,7 @@ use crate::transport::{HEADER_CLIENT_CAPS, HEADER_SESSION};
 use std::sync::atomic::AtomicUsize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::Notify;
 use tokio::task::{JoinHandle, JoinSet};
 
 mod lifecycle;
@@ -79,6 +80,13 @@ impl Drop for MockServer {
 
 impl MockServer {
     async fn new(handler: impl Fn(&MockRequest) -> MockReply + Send + Sync + 'static) -> Self {
+        Self::with_query_gate(handler, None).await
+    }
+
+    async fn with_query_gate(
+        handler: impl Fn(&MockRequest) -> MockReply + Send + Sync + 'static,
+        query_gate: Option<Arc<Notify>>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -92,6 +100,7 @@ impl MockServer {
                         let Ok((mut stream, _)) = connection else { break };
                         let captured = captured.clone();
                         let handler = handler.clone();
+                        let query_gate = query_gate.clone();
                         workers.spawn(async move {
                             let mut bytes = Vec::new();
                             let (end, length) = loop {
@@ -130,7 +139,13 @@ impl MockServer {
                                 && !reply.headers.iter().any(|(key, _)| key.eq_ignore_ascii_case(HEADER_SESSION) || *key == "X-Mock-No-Session") {
                                 reply.headers.push((HEADER_SESSION, "opaque-default-session".into()));
                             }
+                            let is_query_start = request.method == "POST" && request.path == "/v1/query";
                             captured.lock().push(request);
+                            if is_query_start {
+                                if let Some(gate) = query_gate {
+                                    gate.notified().await;
+                                }
+                            }
                             if let Some((_, delay)) = reply.headers.iter().find(|(name, _)| *name == "X-Mock-Delay") {
                                 tokio::time::sleep(Duration::from_millis(delay.parse().unwrap())).await;
                             }
@@ -173,6 +188,239 @@ async fn client(server: &MockServer) -> APIClient {
     ));
     client.build_client(None).await.unwrap();
     client
+}
+
+async fn query_id_client(server: &MockServer, cloud: bool) -> Arc<APIClient> {
+    let mut client = client(server).await;
+    if !cloud {
+        client.transport = Transport::Native;
+        client.auth = Arc::new(BasicAuth::new("root", ""));
+        client.build_client(None).await.unwrap();
+    }
+    Arc::new(client)
+}
+
+async fn received_query_id(server: &MockServer) -> String {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(request) = server.requests.lock().first() {
+                assert_eq!(request.method, "POST");
+                assert_eq!(request.path, "/v1/query");
+                return request.headers["x-databend-query-id"].clone();
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("query request must arrive while its response is blocked")
+}
+
+#[tokio::test]
+async fn last_query_id_is_available_before_first_response() {
+    for cloud in [false, true] {
+        for path in [
+            "start_query",
+            "query_all",
+            "query_all_json",
+            "insert_with_stage",
+        ] {
+            if cloud && path == "insert_with_stage" {
+                // Cloud rejects stage attachments before generating a query ID.
+                continue;
+            }
+            let gate = Arc::new(Notify::new());
+            let server = MockServer::with_query_gate(
+                |_| {
+                    let mut reply = query_reply();
+                    reply["next_uri"] = Value::Null;
+                    MockReply::json(reply)
+                },
+                Some(gate.clone()),
+            )
+            .await;
+            let client = query_id_client(&server, cloud).await;
+            client.set_last_query_id(Some("previous-query".into()));
+            let query_client = client.clone();
+            let query = tokio::spawn(async move {
+                match path {
+                    "start_query" => query_client
+                        .start_query("SELECT 1", false, None)
+                        .await
+                        .map(|_| ()),
+                    "query_all" => query_client.query_all("SELECT 1", None).await.map(|_| ()),
+                    "query_all_json" => query_client
+                        .query_all_inner("SELECT 1", true, None)
+                        .await
+                        .map(|_| ()),
+                    "insert_with_stage" => query_client
+                        .insert_with_stage(
+                            "INSERT INTO t VALUES",
+                            "@stage/file",
+                            BTreeMap::new(),
+                            BTreeMap::new(),
+                        )
+                        .await
+                        .map(|_| ()),
+                    _ => unreachable!(),
+                }
+            });
+            let sent_id = received_query_id(&server).await;
+            assert_ne!(sent_id, "previous-query");
+            assert_eq!(client.last_query_id().as_deref(), Some(sent_id.as_str()));
+            assert!(!query.is_finished(), "the first response is still blocked");
+            gate.notify_one();
+            tokio::time::timeout(Duration::from_secs(5), query)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            // The mock deliberately returns a different ID, like a rewriting gateway.
+            assert_eq!(client.last_query_id().as_deref(), Some("q1"));
+            assert!(client.last_query_id.lock().pending.is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+async fn interrupted_submission_retains_query_id_before_first_response() {
+    for cloud in [false, true] {
+        let server = MockServer::with_query_gate(
+            |_| MockReply::json(query_reply()),
+            Some(Arc::new(Notify::new())),
+        )
+        .await;
+        let client = query_id_client(&server, cloud).await;
+        let query_client = client.clone();
+        let query =
+            tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
+        let sent_id = received_query_id(&server).await;
+        query.abort();
+        assert!(matches!(query.await, Err(error) if error.is_cancelled()));
+        assert_eq!(client.last_query_id().as_deref(), Some(sent_id.as_str()));
+        assert!(client.last_query_id.lock().pending.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn unsent_submission_restores_previous_query_id() {
+    for cloud in [false, true] {
+        for previous_id in [None, Some("previous-query".to_string())] {
+            let server = MockServer::new(|_| panic!("request must not be sent")).await;
+            let mut client = Arc::try_unwrap(query_id_client(&server, cloud).await)
+                .ok()
+                .unwrap();
+            client.set_last_query_id(previous_id.clone());
+            client.tenant = Some("invalid\nheader".into());
+            assert!(client
+                .start_query_inner("SELECT 1", None, false, None)
+                .await
+                .is_err());
+            assert_eq!(client.last_query_id(), previous_id);
+            assert!(server.requests.lock().is_empty());
+
+            client.tenant = None;
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            client.endpoint =
+                Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+            drop(listener);
+            if cloud {
+                client.auth = Arc::new(CloudApiAuth::for_test(
+                    client.endpoint.clone(),
+                    TOKEN.into(),
+                    ORG.into(),
+                ));
+            }
+            client.retry_delay_secs = 0;
+            let error = client
+                .start_query_inner("SELECT 1", None, false, None)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("retry_times=2"), "{error}");
+            assert_eq!(client.last_query_id(), previous_id);
+        }
+    }
+}
+
+#[tokio::test]
+async fn failed_response_retains_submitted_query_id() {
+    for cloud in [false, true] {
+        for fault in ["http", "decode", "body", "sql"] {
+            let server = MockServer::new(move |_| match fault {
+                "http" => MockReply::error(403),
+                "decode" => MockReply::json(json!({"invalid": "response"})),
+                "sql" => {
+                    let mut reply = query_reply();
+                    reply["id"] = json!("server-failed-query-id");
+                    reply["error"] = json!({"code": 5100, "message": "SQL failed"});
+                    MockReply::json(reply)
+                }
+                "body" => {
+                    let mut reply = MockReply::json(query_reply());
+                    reply.headers.push(("X-Mock-Truncate", "1".into()));
+                    reply
+                }
+                _ => unreachable!(),
+            })
+            .await;
+            let client = query_id_client(&server, cloud).await;
+            client.set_last_query_id(Some("previous-query".into()));
+            let error = client
+                .start_query_inner("SELECT 1", None, false, None)
+                .await
+                .unwrap_err();
+            let sent_id = received_query_id(&server).await;
+            if fault == "sql" {
+                assert!(matches!(error, Error::QueryFailed(_)));
+                assert_ne!(sent_id, "server-failed-query-id");
+                assert_eq!(
+                    client.last_query_id().as_deref(),
+                    Some("server-failed-query-id")
+                );
+            } else {
+                assert_eq!(client.last_query_id().as_deref(), Some(sent_id.as_str()));
+            }
+            assert!(client.last_query_id.lock().pending.is_empty());
+        }
+    }
+}
+
+#[tokio::test]
+async fn later_connect_failure_does_not_forget_an_earlier_attempt() {
+    let server = MockServer::new(|_| unreachable!()).await;
+    let mut client = Arc::try_unwrap(query_id_client(&server, false).await)
+        .ok()
+        .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    client.endpoint = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+    client.retry_delay_secs = 0;
+    let first_attempt = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        // Refuse subsequent connections, but let the first attempt receive 503.
+        drop(listener);
+        let mut bytes = Vec::new();
+        loop {
+            let mut chunk = [0; 4096];
+            let count = stream.read(&mut chunk).await.unwrap();
+            assert_ne!(count, 0);
+            bytes.extend_from_slice(&chunk[..count]);
+            if bytes.windows(4).any(|v| v == b"\r\n\r\n") {
+                break;
+            }
+        }
+        stream
+            .write_all(b"HTTP/1.1 503 Mock\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+    });
+    client.set_last_query_id(Some("previous-query".into()));
+    assert!(client
+        .start_query_inner("SELECT 1", None, false, None)
+        .await
+        .is_err());
+    first_attempt.await.unwrap();
+    assert!(client.last_query_id().is_some());
+    assert_ne!(client.last_query_id().as_deref(), Some("previous-query"));
 }
 
 #[tokio::test]
@@ -1221,7 +1469,7 @@ async fn cloud_submission_retries_connect_errors_before_sending_bytes() {
         .build()
         .unwrap();
     let err = client
-        .query_request_helper(request, true, false, false, RequestKind::QueryStart)
+        .query_request_helper(request, true, false, false, RequestKind::QueryStart, None)
         .await
         .err()
         .unwrap();

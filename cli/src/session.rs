@@ -996,7 +996,7 @@ impl Session {
                         tokio::select! {
                             biased;
                             _ = wait_for_interrupt(self.interrupted.clone()) => {
-                                return Err(anyhow!("{INTERRUPTED_MESSAGE} during query submission: server execution may continue; its state and Query ID may be unknown"));
+                                return Err(anyhow!("{INTERRUPTED_MESSAGE} during query submission: server execution may continue; its state may be unknown"));
                             }
                             data = self.conn.query_iter_ext(query) => data?,
                         }

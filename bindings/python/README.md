@@ -223,8 +223,18 @@ and values raises a `ValueError` immediately.
 
 ### Query ID tracking and query management
 
+For remote REST connections, `conn.last_query_id()` returns the latest query's ID,
+not just the last successful query's ID. **After a SQL error, it now returns the
+failed query's ID instead of the previous query's ID.**
+
+The previous ID is retained only when the query is known not to have been sent.
+
+The value is connection-wide and can be replaced by concurrent queries. It is
+`None` before any query is submitted; FlightSQL and local embedded connections
+always return `None`.
+
 ```python
-# Get the last executed query ID
+# Get the latest query ID, including failed submissions
 query_id = conn.last_query_id()
 print(f"Last query ID: {query_id}")
 
