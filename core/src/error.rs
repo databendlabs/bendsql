@@ -21,17 +21,31 @@ const SSLMODE_DISABLE_HINT: &str = "the server may be using plain HTTP; if TLS i
 pub(crate) fn suggests_sslmode_disable(e: &reqwest::Error) -> bool {
     let mut current = e.source();
     while let Some(source) = current {
-        let message = source.to_string();
-        let rustls_plain_http =
-            message.contains("InvalidContentType") && message.contains("received corrupt message");
-        let native_tls_plain_http = message.contains("ssl3_get_record:wrong version number")
-            || message == "record overflow";
-        if rustls_plain_http || native_tls_plain_http {
+        if is_plain_http_tls_error(&source.to_string()) {
             return true;
         }
         current = source.source();
     }
     false
+}
+
+/// Whether a TLS error message indicates that the peer answered with plain HTTP.
+fn is_plain_http_tls_error(message: &str) -> bool {
+    let rustls_plain_http =
+        message.contains("InvalidContentType") && message.contains("received corrupt message");
+    // OpenSSL reads the "HTTP/1.1 ..." response bytes as a TLS record header.
+    // Depending on the version, it rejects the version field ("HTTP" -> 0x5454)
+    // or the length field ("P/" -> 0x502F) first, and the function name in the
+    // message changes across versions:
+    // - 1.1.1 to 3.1: `ssl3_get_record:wrong version number`
+    // - 3.2 to 3.5.5 and 3.6.0 to 3.6.1: `tls_get_more_records:packet length too long`
+    // - 3.5.6, 3.6.2 and later: `tls_validate_record_header:wrong version number`
+    let openssl_plain_http = message.contains("SSL routines")
+        && (message.contains(":wrong version number")
+            || message.contains(":packet length too long"));
+    // Secure Transport (native-tls on macOS).
+    let secure_transport_plain_http = message == "record overflow";
+    rustls_plain_http || openssl_plain_http || secure_transport_plain_http
 }
 
 #[derive(Debug, Clone)]
@@ -316,5 +330,43 @@ impl From<std::io::Error> for Error {
 impl From<std::str::Utf8Error> for Error {
     fn from(e: std::str::Utf8Error) -> Self {
         Error::Decode(e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_plain_http_tls_error;
+
+    #[test]
+    fn detects_plain_http_tls_errors() {
+        let messages = [
+            // rustls
+            "received corrupt message of type InvalidContentType",
+            // OpenSSL 1.1.1
+            "error:1408F10B:SSL routines:ssl3_get_record:wrong version number:ssl/record/ssl3_record.c:332:",
+            // OpenSSL 3.0
+            "error:0A00010B:SSL routines:ssl3_get_record:wrong version number:../ssl/record/ssl3_record.c:354:",
+            // OpenSSL 3.2 to 3.5.5, 3.6.0 to 3.6.1
+            "error:0A0000C6:SSL routines:tls_get_more_records:packet length too long:../ssl/record/methods/tls_common.c:660:, error:0A000139:SSL routines::record layer failure:../ssl/record/rec_layer_s3.c:698:",
+            // OpenSSL 3.5.6, 3.6.2 and later
+            "error:0A00010B:SSL routines:tls_validate_record_header:wrong version number:ssl/record/methods/tlsany_meth.c:78:",
+            // Secure Transport
+            "record overflow",
+        ];
+        for message in messages {
+            assert!(is_plain_http_tls_error(message), "{message}");
+        }
+    }
+
+    #[test]
+    fn ignores_other_tls_errors() {
+        let messages = [
+            "error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:2102:",
+            "invalid peer certificate: UnknownIssuer",
+            "connection refused",
+        ];
+        for message in messages {
+            assert!(!is_plain_http_tls_error(message), "{message}");
+        }
     }
 }
