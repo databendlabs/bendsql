@@ -511,6 +511,13 @@ def _(context):
     if not (DRIVER_VERSION > (0, 34, 3) and DB_VERSION > (1, 2, 965)):
         print("SKIP")
         return
+    # DB_VERSION is unset outside the compatibility matrix; check the server itself.
+    import re
+
+    server = re.search(r"v(\d+)\.(\d+)\.(\d+)", context.conn.version())
+    if server is None or tuple(map(int, server.groups())) <= (1, 2, 965):
+        print("SKIP")
+        return
     import threading
 
     other = context.client.get_conn()

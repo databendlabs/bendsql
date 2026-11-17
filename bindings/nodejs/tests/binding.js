@@ -491,6 +491,12 @@ Then("killQuery from another connection should cancel the query", { timeout: 600
     console.log("SKIP");
     return;
   }
+  // DB_VERSION is unset outside the compatibility matrix; check the server itself.
+  const serverVersion = (await this.conn.version()).match(/v(\d+)\.(\d+)\.(\d+)/);
+  if (!serverVersion || compareVersions(serverVersion.slice(1).map(Number), [1, 2, 965]) <= 0) {
+    console.log("SKIP");
+    return;
+  }
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const other = await this.client.getConn();
   const query = this.conn.queryAll("SELECT sleep(0.5), number FROM numbers(15000000000)").then(
