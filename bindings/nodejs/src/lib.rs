@@ -116,7 +116,10 @@ impl Connection {
         self.inner.last_query_id()
     }
 
-    /// Kill a running query by its query ID
+    /// Kill a running query by its query ID.
+    ///
+    /// Queries started by this connection are cancelled through their own query
+    /// session; any other ID runs `KILL QUERY` (own queries, or any with SUPER).
     #[napi]
     pub async fn kill_query(&self, query_id: String) -> Result<()> {
         self.inner

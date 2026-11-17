@@ -40,7 +40,12 @@ export declare class Connection {
   formatSql(sql: string, params?: Params | undefined | null): string
   /** Get the last executed query ID */
   lastQueryId(): string | null
-  /** Kill a running query by its query ID */
+  /**
+   * Kill a running query by its query ID.
+   *
+   * Queries started by this connection are cancelled through their own query
+   * session; any other ID runs `KILL QUERY` (own queries, or any with SUPER).
+   */
   killQuery(queryId: string): Promise<void>
   /** Execute a SQL query, return the number of affected rows. */
   exec(sql: string, params?: Params | undefined | null): Promise<number>

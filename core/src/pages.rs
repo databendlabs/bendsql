@@ -181,6 +181,7 @@ impl Stream for Pages {
                     self.next_page_future = None;
                     if self.next_uri.is_none() {
                         self.client.unregister_query_for_heartbeat(&self.query_id);
+                        self.client.forget_owned_query(&self.query_id);
                     }
                     if resp.data.is_empty() && !self.need_progress {
                         self.poll_next(cx)
@@ -224,6 +225,8 @@ impl Drop for Pages {
             }
         }
         self.client.unregister_query_for_heartbeat(&self.query_id);
+        // A dropped or failed result may still be running on the server, so it
+        // stays owned: a later kill_query keeps using this query's session.
     }
 }
 

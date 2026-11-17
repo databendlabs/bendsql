@@ -461,6 +461,45 @@ async def _(context):
         print(f"Expected error for non-existent query: {err}")
 
 
+@then("killQuery from another connection should cancel the query")
+async def _(context):
+    # Killing a query started by another connection runs `KILL QUERY`, which
+    # needs databend#21058 on the server and the driver change after 0.34.3.
+    if not (DRIVER_VERSION > (0, 34, 3) and DB_VERSION > (1, 2, 965)):
+        print("SKIP")
+        return
+    import asyncio
+
+    other = await context.client.get_conn()
+    task = asyncio.ensure_future(
+        context.conn.query_all("SELECT sleep(0.5), number FROM numbers(15000000000)")
+    )
+    query_id = None
+    for _ in range(100):
+        query_id = context.conn.last_query_id()
+        if query_id is not None:
+            break
+        await asyncio.sleep(0.05)
+    assert query_id is not None, "query id must be available before the result"
+    # The server may not have registered the query yet.
+    for _ in range(50):
+        try:
+            await other.kill_query(query_id)
+            break
+        except Exception as err:
+            if "1053" not in str(err):
+                raise
+            await asyncio.sleep(0.1)
+    else:
+        raise AssertionError("query was never found by KILL QUERY")
+    with tc.assertRaises(Exception) as cm:
+        await asyncio.wait_for(task, timeout=30)
+    message = str(cm.exception).lower()
+    assert "cancel" in message or "abort" in message, message
+    assert other.last_query_id() is None, "KILL must not change last_query_id"
+    await other.close()
+
+
 @then("Query should not timeout")
 async def _(context):
     if not (DRIVER_VERSION > (0, 30, 3) and DB_VERSION >= (1, 2, 709)):

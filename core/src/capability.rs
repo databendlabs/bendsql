@@ -19,6 +19,9 @@ pub struct Capability {
     pub streaming_load: bool,
     pub arrow_data: bool,
     pub server_side_params: bool,
+    /// `KILL QUERY '<query_id>'` and killing one's own queries without SUPER
+    /// (databendlabs/databend#21058).
+    pub kill_query_by_id: bool,
 }
 
 impl Capability {
@@ -28,6 +31,9 @@ impl Capability {
             arrow_data: ver > &Version::new(1, 2, 835),
             // TODO: update version threshold when server PR gets a release version
             server_side_params: ver > &Version::new(1, 2, 900),
+            // TODO: replace with the first release containing databend#21058
+            // (merged after v1.2.965-nightly).
+            kill_query_by_id: ver > &Version::new(1, 2, 965),
         }
     }
 }

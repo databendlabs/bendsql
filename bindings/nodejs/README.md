@@ -83,6 +83,25 @@ The previous ID is retained only when the query is known not to have been sent.
 The value is connection-wide and can be replaced by concurrent queries. It is
 `null` before any query is submitted; FlightSQL connections always return `null`.
 
+### Killing a query
+
+```javascript
+const id = conn.lastQueryId();
+// ...from any connection, or another process with the same credentials:
+await otherConn.killQuery(id);
+```
+
+`killQuery(id)` follows the server's `KILL QUERY` rules:
+
+- A query started by the same connection is cancelled through its own query
+  session, on every server version. Calling it before the first response is
+  allowed; the cancel is repeated once the server has registered the query.
+- Any other ID runs `KILL QUERY '<id>'` in a separate request that does not
+  touch this connection's transaction or `lastQueryId()`. Users can kill their
+  own queries; killing another user's query needs the global `SUPER` privilege.
+  This requires a Databend server newer than v1.2.965. Error `1053` means the
+  query was not found or already finished; `1063` means permission denied.
+
 ## Type Mapping
 
 [Databend Types](https://docs.databend.com/sql/sql-reference/data-types/)

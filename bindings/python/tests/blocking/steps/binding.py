@@ -504,6 +504,55 @@ def _(context):
         print(f"Expected error for non-existent query: {err}")
 
 
+@then("killQuery from another connection should cancel the query")
+def _(context):
+    # Killing a query started by another connection runs `KILL QUERY`, which
+    # needs databend#21058 on the server and the driver change after 0.34.3.
+    if not (DRIVER_VERSION > (0, 34, 3) and DB_VERSION > (1, 2, 965)):
+        print("SKIP")
+        return
+    import threading
+
+    other = context.client.get_conn()
+    errors = []
+
+    def run():
+        try:
+            context.conn.query_all(
+                "SELECT sleep(0.5), number FROM numbers(15000000000)"
+            )
+        except Exception as err:
+            errors.append(err)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    query_id = None
+    for _ in range(100):
+        query_id = context.conn.last_query_id()
+        if query_id is not None:
+            break
+        sleep(0.05)
+    assert query_id is not None, "query id must be available before the result"
+    # The server may not have registered the query yet.
+    for _ in range(50):
+        try:
+            other.kill_query(query_id)
+            break
+        except Exception as err:
+            if "1053" not in str(err):
+                raise
+            sleep(0.1)
+    else:
+        raise AssertionError("query was never found by KILL QUERY")
+    worker.join(timeout=30)
+    assert not worker.is_alive(), "the killed query must finish"
+    assert len(errors) == 1, "the killed query must fail"
+    message = str(errors[0]).lower()
+    assert "cancel" in message or "abort" in message, message
+    assert other.last_query_id() is None, "KILL must not change last_query_id"
+    other.close()
+
+
 @then("Query should not timeout")
 def _(context):
     if not (DRIVER_VERSION > (0, 30, 3) and DB_VERSION >= (1, 2, 709)):

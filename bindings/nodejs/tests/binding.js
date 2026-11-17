@@ -484,6 +484,44 @@ Then("killQuery should return error for non-existent query ID", async function (
   }
 });
 
+Then("killQuery from another connection should cancel the query", { timeout: 60000 }, async function () {
+  // Killing a query started by another connection runs `KILL QUERY`, which
+  // needs databend#21058 on the server and the driver change after 0.34.3.
+  if (!(compareVersions(DRIVER_VERSION, [0, 34, 3]) > 0 && compareVersions(DB_VERSION, [1, 2, 965]) > 0)) {
+    console.log("SKIP");
+    return;
+  }
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const other = await this.client.getConn();
+  const query = this.conn.queryAll("SELECT sleep(0.5), number FROM numbers(15000000000)").then(
+    () => null,
+    (err) => err,
+  );
+  let queryId = null;
+  for (let i = 0; i < 100 && queryId === null; i++) {
+    queryId = this.conn.lastQueryId();
+    if (queryId === null) await sleep(50);
+  }
+  assert.notEqual(queryId, null, "query id must be available before the result");
+  // The server may not have registered the query yet.
+  let killed = false;
+  for (let i = 0; i < 50 && !killed; i++) {
+    try {
+      await other.killQuery(queryId);
+      killed = true;
+    } catch (err) {
+      if (!err.message.includes("1053")) throw err;
+      await sleep(100);
+    }
+  }
+  assert.ok(killed, "query was never found by KILL QUERY");
+  const err = await query;
+  assert.ok(err instanceof Error, "the killed query must fail");
+  assert.match(err.message.toLowerCase(), /cancel|abort/);
+  assert.equal(other.lastQueryId(), null, "KILL must not change lastQueryId");
+  await other.close();
+});
+
 Then("Query should not timeout", { timeout: 30000 }, async function () {
   if (!(compareVersions(DRIVER_VERSION, [0, 30, 3]) > 0 && compareVersions(DB_VERSION, [1, 2, 709]) >= 0)) {
     console.log("SKIP");

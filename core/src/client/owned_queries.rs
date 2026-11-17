@@ -1,0 +1,215 @@
+// Copyright 2021 Datafuse Labs
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Queries submitted by this connection that may still be running on the server.
+//!
+//! `kill_query` uses this to choose between the session-bound HTTP `/kill`
+//! endpoint (queries started here) and SQL `KILL QUERY` (any other query).
+
+use std::collections::HashMap;
+
+/// Queries whose results were dropped or failed before reading to the end are
+/// never confirmed finished; bound them so a long-lived connection cannot grow.
+const MAX_OWNED_QUERIES: usize = 256;
+
+#[derive(Debug)]
+struct OwnedQuery {
+    seq: u64,
+    node_id: Option<String>,
+    /// The start request is still awaiting its first response.
+    submitting: bool,
+    /// `kill_query` arrived while submitting; kill once the response lands.
+    cancel_requested: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct KillTarget {
+    pub node_id: Option<String>,
+    pub submitting: bool,
+}
+
+#[derive(Default, Debug)]
+pub(crate) struct OwnedQueries {
+    queries: HashMap<String, OwnedQuery>,
+    next_seq: u64,
+}
+
+impl OwnedQueries {
+    fn insert(&mut self, query_id: &str, node_id: Option<String>, submitting: bool) {
+        self.next_seq += 1;
+        self.queries.insert(
+            query_id.to_string(),
+            OwnedQuery {
+                seq: self.next_seq,
+                node_id,
+                submitting,
+                cancel_requested: false,
+            },
+        );
+        if self.queries.len() > MAX_OWNED_QUERIES {
+            // Evict the oldest entry whose submission has ended; live submissions
+            // must stay so a deferred cancel is not lost.
+            if let Some(oldest) = self
+                .queries
+                .iter()
+                .filter(|(_, q)| !q.submitting)
+                .min_by_key(|(_, q)| q.seq)
+                .map(|(id, _)| id.clone())
+            {
+                self.queries.remove(&oldest);
+            }
+        }
+    }
+
+    /// A start request is about to be sent with this client-generated ID.
+    pub(crate) fn submission_started(&mut self, query_id: &str) {
+        self.insert(query_id, None, true);
+    }
+
+    /// The submission guard is gone. Keep the entry only if a request may have
+    /// reached the server: the query can then be running without a response.
+    pub(crate) fn submission_ended(&mut self, query_id: &str, may_have_reached_server: bool) {
+        if !may_have_reached_server {
+            self.queries.remove(query_id);
+        } else if let Some(query) = self.queries.get_mut(query_id) {
+            query.submitting = false;
+        }
+    }
+
+    /// Record the first response of `submitted_id`. `running` carries the
+    /// server-assigned ID and node when the query has more pages; `None` means
+    /// it already finished or failed. Returns true if a kill was requested
+    /// before this response and the query is still running.
+    pub(crate) fn first_response(
+        &mut self,
+        submitted_id: &str,
+        running: Option<(&str, Option<String>)>,
+    ) -> bool {
+        let cancel_requested = self
+            .queries
+            .remove(submitted_id)
+            .is_some_and(|q| q.cancel_requested);
+        match running {
+            Some((query_id, node_id)) => {
+                // A gateway may replace the ID; track the one the server uses.
+                self.insert(query_id, node_id, false);
+                cancel_requested
+            }
+            None => false,
+        }
+    }
+
+    pub(crate) fn finished(&mut self, query_id: &str) {
+        self.queries.remove(query_id);
+    }
+
+    /// Look up a query for `kill_query`. A kill that races the first response
+    /// is also remembered, so the response handler can repeat it once the
+    /// server is guaranteed to know the query.
+    pub(crate) fn request_kill(&mut self, query_id: &str) -> Option<KillTarget> {
+        let query = self.queries.get_mut(query_id)?;
+        if query.submitting {
+            query.cancel_requested = true;
+        }
+        Some(KillTarget {
+            node_id: query.node_id.clone(),
+            submitting: query.submitting,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.queries.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsent_submission_is_forgotten_and_sent_one_is_kept() {
+        let mut owned = OwnedQueries::default();
+        owned.submission_started("unsent");
+        owned.submission_started("sent");
+        owned.submission_ended("unsent", false);
+        owned.submission_ended("sent", true);
+        assert_eq!(owned.request_kill("unsent"), None);
+        assert_eq!(
+            owned.request_kill("sent"),
+            Some(KillTarget {
+                node_id: None,
+                submitting: false
+            })
+        );
+    }
+
+    #[test]
+    fn kill_before_first_response_is_replayed_once_running() {
+        let mut owned = OwnedQueries::default();
+        owned.submission_started("client-id");
+        assert_eq!(
+            owned.request_kill("client-id"),
+            Some(KillTarget {
+                node_id: None,
+                submitting: true
+            })
+        );
+        // The gateway rewrote the ID; the replay targets the server ID and node.
+        assert!(owned.first_response("client-id", Some(("server-id", Some("n1".into())))));
+        owned.submission_ended("client-id", true);
+        assert_eq!(owned.request_kill("client-id"), None);
+        assert_eq!(
+            owned.request_kill("server-id"),
+            Some(KillTarget {
+                node_id: Some("n1".into()),
+                submitting: false
+            })
+        );
+        // A later kill does not request another replay.
+        assert!(!owned.first_response("server-id", Some(("server-id", None))));
+    }
+
+    #[test]
+    fn finished_or_failed_first_response_is_not_tracked() {
+        let mut owned = OwnedQueries::default();
+        owned.submission_started("q");
+        owned.request_kill("q");
+        assert!(!owned.first_response("q", None));
+        owned.submission_ended("q", true);
+        assert_eq!(owned.len(), 0);
+
+        owned.submission_started("r");
+        assert!(!owned.first_response("r", Some(("r", None))));
+        owned.finished("r");
+        assert_eq!(owned.len(), 0);
+    }
+
+    #[test]
+    fn eviction_keeps_live_submissions() {
+        let mut owned = OwnedQueries::default();
+        owned.submission_started("live");
+        for i in 0..MAX_OWNED_QUERIES + 10 {
+            let id = format!("dropped-{i}");
+            owned.submission_started(&id);
+            owned.submission_ended(&id, true);
+        }
+        assert_eq!(owned.len(), MAX_OWNED_QUERIES);
+        assert!(owned.request_kill("live").is_some_and(|t| t.submitting));
+        assert_eq!(owned.request_kill("dropped-0"), None);
+        assert!(owned
+            .request_kill(&format!("dropped-{}", MAX_OWNED_QUERIES + 9))
+            .is_some());
+    }
+}

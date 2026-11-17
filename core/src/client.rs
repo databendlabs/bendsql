@@ -77,8 +77,11 @@ const DEFAULT_USERNAME: &str = "root";
 
 #[cfg(test)]
 mod cloud_api_tests;
+mod owned_queries;
 #[cfg(test)]
 mod query_id_tests;
+
+use owned_queries::OwnedQueries;
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -131,6 +134,7 @@ impl<'a> QuerySubmission<'a> {
             let previous_id = state.current.replace(query_id.clone());
             state.pending.insert(query_id.clone(), previous_id);
         }
+        client.owned_queries.lock().submission_started(&query_id);
         Self {
             client,
             query_id,
@@ -153,6 +157,10 @@ impl<'a> QuerySubmission<'a> {
 
 impl Drop for QuerySubmission<'_> {
     fn drop(&mut self) {
+        self.client
+            .owned_queries
+            .lock()
+            .submission_ended(&self.query_id, self.may_have_reached_server);
         let mut state = self.client.last_query_id.lock();
         let Some(previous_id) = state.pending.remove(&self.query_id) else {
             return;
@@ -214,6 +222,7 @@ pub struct APIClient {
     presign: Mutex<PresignMode>,
     last_node_id: Mutex<Option<String>>,
     last_query_id: Mutex<LastQueryId>,
+    owned_queries: Mutex<OwnedQueries>,
 
     capability: Capability,
 
@@ -873,7 +882,30 @@ impl APIClient {
                 Some(&mut submission),
             )
             .await?;
-        self.handle_page(response, true).await
+        let result = self.handle_page(response, true).await;
+        let running = match &result {
+            Ok((resp, _)) if resp.next_uri.is_some() => {
+                Some((resp.id.as_str(), resp.node_id.clone()))
+            }
+            _ => None,
+        };
+        let replay_kill = self.owned_queries.lock().first_response(&query_id, running);
+        if replay_kill {
+            if let Ok((resp, _)) = &result {
+                // kill_query ran before the server could know this query; repeat
+                // it now so the cancel is not lost. Later pages report the abort.
+                if let Err(e) = self
+                    .end_query(&resp.id, true, resp.node_id.as_deref())
+                    .await
+                {
+                    warn!(
+                        "failed to kill query {} after its first response: {e}",
+                        resp.id
+                    );
+                }
+            }
+        }
+        result
     }
 
     fn is_arrow_data(headers: &HeaderMap) -> bool {
@@ -956,10 +988,24 @@ impl APIClient {
         next_uri: &str,
         node_id: &Option<String>,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
+        let accept_arrow = self.capability.arrow_data && self.query_result_format == "arrow";
+        let response = self
+            .send_page_request(query_id, next_uri, node_id, accept_arrow)
+            .await?;
+        self.handle_page(response, false).await
+    }
+
+    async fn send_page_request(
+        &self,
+        query_id: &str,
+        next_uri: &str,
+        node_id: &Option<String>,
+        accept_arrow: bool,
+    ) -> Result<HttpResponseData> {
         info!("query page: {next_uri}");
         let endpoint = self.endpoint.join(next_uri)?;
         let mut headers = self.make_headers(Some(query_id))?;
-        if self.capability.arrow_data && self.query_result_format == "arrow" {
+        if accept_arrow {
             headers.insert(ACCEPT, HeaderValue::from_static(CONTENT_TYPE_ARROW_OR_JSON));
         }
         let mut builder = self.cli.get(endpoint.clone());
@@ -972,21 +1018,121 @@ impl APIClient {
         }
         let request = builder.build()?;
 
-        let response = self
-            .query_request_helper(
-                request,
-                self.transport.retry_page_503(),
-                true,
-                true,
-                RequestKind::QueryPage,
-                None,
-            )
-            .await?;
-        self.handle_page(response, false).await
+        self.query_request_helper(
+            request,
+            self.transport.retry_page_503(),
+            true,
+            true,
+            RequestKind::QueryPage,
+            None,
+        )
+        .await
     }
 
+    /// Kill a query by ID.
+    ///
+    /// A query started by this connection is cancelled through its own HTTP
+    /// query session (`/v1/query/{id}/kill`), which every server version
+    /// supports. A kill that arrives before the first response is repeated once
+    /// the server has registered the query.
+    ///
+    /// Any other ID runs `KILL QUERY '<id>'` in a request detached from this
+    /// connection's transaction, route hint and `last_query_id`. The server
+    /// then decides: users may kill their own queries from any session, and
+    /// global `SUPER` may kill other users' queries. This requires a server
+    /// that supports killing by query ID (newer than v1.2.965); with an older
+    /// server version the call fails before sending anything.
     pub async fn kill_query(&self, query_id: &str) -> Result<()> {
-        self.end_query(query_id, true, None).await
+        if query_id.is_empty() {
+            return Err(Error::BadArgument("query id must not be empty".into()));
+        }
+        let target = self.owned_queries.lock().request_kill(query_id);
+        let Some(target) = target else {
+            return self.kill_query_by_sql(query_id).await;
+        };
+        match self
+            .end_query(query_id, true, target.node_id.as_deref())
+            .await
+        {
+            // The server has not registered the query yet; the kill is replayed
+            // when the first response arrives.
+            Err(e) if target.submitting && is_not_found(&e) => Ok(()),
+            result => result,
+        }
+    }
+
+    async fn kill_query_by_sql(&self, query_id: &str) -> Result<()> {
+        if let Some(version) = &self.server_version {
+            if !self.capability.kill_query_by_id {
+                return Err(Error::BadArgument(format!(
+                    "query {query_id} was not started by this connection; killing it requires a Databend server newer than v1.2.965 (server is v{version})"
+                )));
+            }
+        }
+        let sql = format!("KILL QUERY {}", sql_string_literal(query_id)?);
+        self.exec_detached(&sql, RequestKind::QueryKill)
+            .await
+            .map_err(|e| match e {
+                Error::WithContext { .. } => e.with_query_id(query_id),
+                other => other
+                    .with_context(RequestKind::QueryKill)
+                    .with_query_id(query_id),
+            })
+    }
+
+    /// Run a statement without reading or updating this connection's session:
+    /// no transaction state, sticky node, route-hint rotation, `last_query_id`
+    /// or query tracking. Only the current roles are sent, so privilege checks
+    /// see the same roles as the connection.
+    async fn exec_detached(&self, sql: &str, request_kind: RequestKind) -> Result<()> {
+        let session = {
+            let state = self.session_state.lock();
+            let mut session = SessionState::default();
+            session.role = state.role.clone();
+            session.secondary_roles = state.secondary_roles.clone();
+            session
+        };
+        let req = QueryRequest::new(sql).with_session(Some(session));
+        let query_id = self.gen_query_id();
+        let headers = self.make_headers(Some(&query_id))?;
+        let builder = self.cli.post(self.endpoint.join("v1/query")?).json(&req);
+        let request = self
+            .wrap_auth_or_session_token(builder)?
+            .headers(headers)
+            .timeout(self.page_request_timeout)
+            .build()?;
+        let response = self
+            .query_request_helper(request, true, true, true, request_kind, None)
+            .await?;
+        let mut resp = self.decode_detached_page(response)?;
+        while let Some(next_uri) = resp.next_uri.clone() {
+            if !next_uri.contains("/page/") {
+                // Only the final URI is left: release the result.
+                if let Err(e) = self
+                    .end_query(&resp.id, false, resp.node_id.as_deref())
+                    .await
+                {
+                    debug!("failed to final detached query {}: {e}", resp.id);
+                }
+                break;
+            }
+            let response = self
+                .send_page_request(&resp.id, &next_uri, &resp.node_id, false)
+                .await?;
+            resp = self.decode_detached_page(response)?;
+        }
+        Ok(())
+    }
+
+    fn decode_detached_page(&self, response: HttpResponseData) -> Result<QueryResponse> {
+        if response.status != StatusCode::OK {
+            return Err(self.status_body_to_error(response.status, &response.body));
+        }
+        let resp: QueryResponse = self.decode_response(&response.body)?;
+        if let Some(err) = resp.error {
+            return Err(self.auth.sanitize_error(Error::QueryFailed(err)));
+        }
+        Ok(resp)
     }
 
     pub async fn final_query(&self, query_id: &str, node_id: Option<&str>) -> Result<()> {
@@ -1820,10 +1966,43 @@ impl APIClient {
     pub(crate) fn unregister_query_for_heartbeat(&self, query_id: &str) {
         self.queries_need_heartbeat.lock().remove(query_id);
     }
+
+    /// The query has finished or its result was released; later `kill_query`
+    /// calls for this ID no longer use this connection's query session.
+    pub(crate) fn forget_owned_query(&self, query_id: &str) {
+        self.owned_queries.lock().finished(query_id);
+    }
 }
 
 #[cfg(test)]
 mod tracking_tests;
+
+/// Whether an HTTP query endpoint reported that the query does not exist.
+fn is_not_found(error: &Error) -> bool {
+    match error {
+        Error::WithContext { inner, .. } => is_not_found(inner),
+        Error::Response { status, .. } | Error::Logic(status, _) => {
+            *status == StatusCode::NOT_FOUND
+        }
+        Error::QueryNotFound(_) => true,
+        _ => false,
+    }
+}
+
+/// Quote a value as a Databend string literal. Databend treats backslash as an
+/// escape character, so both `\` and `'` must be escaped to keep the value
+/// inside the literal.
+fn sql_string_literal(value: &str) -> Result<String> {
+    if value.chars().any(char::is_control) {
+        return Err(Error::BadArgument(
+            "value must not contain control characters".into(),
+        ));
+    }
+    Ok(format!(
+        "'{}'",
+        value.replace('\\', "\\\\").replace('\'', "''")
+    ))
+}
 
 fn json_from_slice<'a, T>(body: &'a [u8]) -> Result<T>
 where
@@ -1867,6 +2046,7 @@ impl Default for APIClient {
             session_token_info: None,
             closed: AtomicBool::new(false),
             last_query_id: Default::default(),
+            owned_queries: Default::default(),
             server_version: None,
             capability: Default::default(),
             queries_need_heartbeat: Default::default(),
