@@ -27,7 +27,10 @@ runs:
         toolchain: ${{ inputs.toolchain }}
         targets: ${{ inputs.target }}
 
+    # sccache re-runs rustc with expanded arguments, which exceeds the Windows
+    # command line limit (os error 206) since Rust 1.100.
     - name: Setup sccache
+      if: runner.os != 'Windows'
       uses: mozilla-actions/sccache-action@main
       with:
         disable_annotations: true
@@ -97,7 +100,7 @@ runs:
 
     - name: Enable sccache for Github Actions
       shell: bash
-      if: inputs.runner == 'github'
+      if: inputs.runner == 'github' && runner.os != 'Windows'
       run: |
         echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
         echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
