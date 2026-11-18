@@ -63,9 +63,9 @@ use tokio_util::io::ReaderStream;
 use url::Url;
 
 const HEADER_QUERY_ID: &str = "X-DATABEND-QUERY-ID";
-/// How long a kill replayed from a dropped submission keeps retrying while
-/// the server has not registered the query yet.
-const DROPPED_KILL_RETRY_BUDGET: Duration = Duration::from_secs(30);
+/// Beyond `wait_time_secs`, how long `kill_query` keeps retrying `/kill` for a
+/// submission the server has not registered (or renamed) yet.
+const KILL_REGISTRATION_SLACK: Duration = Duration::from_secs(2);
 const HEADER_TENANT: &str = "X-DATABEND-TENANT";
 const HEADER_STICKY_NODE: &str = "X-DATABEND-STICKY-NODE";
 const HEADER_STAGE_NAME: &str = "X-DATABEND-STAGE-NAME";
@@ -84,7 +84,7 @@ mod owned_queries;
 #[cfg(test)]
 mod query_id_tests;
 
-use owned_queries::{FirstOutcome, KillReplay, OwnedQueries};
+use owned_queries::{FirstOutcome, OwnedQueries};
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -103,15 +103,6 @@ impl QueryState {
         let t = *self.last_access_time.lock();
         now.duration_since(t).as_secs() > self.timeout_secs / 2
     }
-}
-
-/// First-response bookkeeping for one submission, filled in by `handle_page`.
-struct FirstResponse<'a> {
-    submitted_id: &'a str,
-    /// A kill requested before the first response, to send afterwards.
-    replay: Option<KillReplay>,
-    /// Whether a decoded response settled the query's ownership.
-    recorded: bool,
 }
 
 struct HttpResponseData {
@@ -173,16 +164,10 @@ impl Drop for QuerySubmission<'_> {
     fn drop(&mut self) {
         self.rollback_query_id();
         // Release ownership only after an unsent ID is no longer visible.
-        let replay = self
-            .client
+        self.client
             .owned_queries
             .lock()
             .submission_ended(&self.query_id, self.may_have_reached_server);
-        if let Some(replay) = replay {
-            // The future was dropped before its first response, after
-            // kill_query acknowledged a kill the server could not apply yet.
-            self.client.spawn_kill(replay);
-        }
     }
 }
 
@@ -899,12 +884,7 @@ impl APIClient {
             .headers(headers.clone())
             .timeout(self.page_request_timeout)
             .build()?;
-        let mut first = FirstResponse {
-            submitted_id: &query_id,
-            replay: None,
-            recorded: false,
-        };
-        let result = match self
+        let response = self
             .query_request_helper(
                 request,
                 true,
@@ -913,32 +893,9 @@ impl APIClient {
                 RequestKind::QueryStart,
                 Some(&mut submission),
             )
-            .await
-        {
-            Ok(response) => self.handle_page(response, Some(&mut first)).await,
-            Err(e) => Err(e),
-        };
-        if !first.recorded {
-            // No usable response: the query may still run under the submitted ID.
-            first.replay = self
-                .owned_queries
-                .lock()
-                .first_response(&query_id, FirstOutcome::Unknown);
-        }
-        if let Some(replay) = first.replay {
-            // kill_query ran before the server could know this query; repeat it
-            // now so the cancel is not lost. Later pages report the abort.
-            if let Err(e) = self
-                .end_query(&replay.query_id, true, replay.node_id.as_deref())
-                .await
-            {
-                warn!(
-                    "failed to kill query {} after its first response: {e}",
-                    replay.query_id
-                );
-            }
-        }
-        result
+            .await?;
+        // Without a decoded response the query stays owned under this ID.
+        self.handle_page(response, Some(&query_id)).await
     }
 
     fn is_arrow_data(headers: &HeaderMap) -> bool {
@@ -950,14 +907,14 @@ impl APIClient {
         false
     }
 
-    /// Decode a query page. `first` is set for the first response of a
+    /// Decode a query page. `submitted_id` is set for the first response of a
     /// submission, which also settles the query's ownership for `kill_query`.
     async fn handle_page(
         &self,
         response: HttpResponseData,
-        first: Option<&mut FirstResponse<'_>>,
+        submitted_id: Option<&str>,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
-        let is_first = first.is_some();
+        let is_first = submitted_id.is_some();
         let status = response.status;
         if status != StatusCode::OK {
             let error = self.status_body_to_error(status, &response.body);
@@ -997,7 +954,7 @@ impl APIClient {
         } else {
             self.decode_response(&body)?
         };
-        if let Some(first) = first {
+        if let Some(submitted_id) = submitted_id {
             let outcome = if resp.error.is_none() && resp.next_uri.is_some() {
                 FirstOutcome::Running {
                     query_id: &resp.id,
@@ -1008,11 +965,9 @@ impl APIClient {
             };
             // Settle ownership before publishing the server-side ID, so a
             // kill_query that observes it always finds this query.
-            first.replay = self
-                .owned_queries
+            self.owned_queries
                 .lock()
-                .first_response(first.submitted_id, outcome);
-            first.recorded = true;
+                .first_response(submitted_id, outcome);
             // The server or a gateway may replace the ID, including on SQL errors.
             self.set_last_query_id(Some(resp.id.clone()));
         }
@@ -1088,8 +1043,12 @@ impl APIClient {
     ///
     /// A query started by this connection is cancelled through its own HTTP
     /// query session (`/v1/query/{id}/kill`), which every server version
-    /// supports. A kill that arrives before the first response is repeated once
-    /// the server has registered the query.
+    /// supports. Before the first response the server may not have registered
+    /// the query yet (or a gateway may know it by another ID): while the
+    /// submission is pending, a query-not-found answer is retried with backoff
+    /// for up to `wait_time_secs` plus a short slack, following a rewritten ID
+    /// once the first response reveals it. The result is always the server's
+    /// actual answer; nothing is sent later on the caller's behalf.
     ///
     /// Any other ID runs `KILL QUERY '<id>'` in a request detached from this
     /// connection's transaction, route hint and `last_query_id`. The server
@@ -1101,27 +1060,41 @@ impl APIClient {
         if query_id.is_empty() {
             return Err(Error::BadArgument("query id must not be empty".into()));
         }
-        let target = self.owned_queries.lock().request_kill(query_id);
-        let Some(target) = target else {
+        let target = self.owned_queries.lock().kill_target(query_id);
+        let Some(mut target) = target else {
             return self.kill_query_by_sql(query_id).await;
         };
-        match self
-            .end_query(query_id, true, target.node_id.as_deref())
-            .await
-        {
-            // The server has not registered the query yet; the kill is replayed
-            // when the first response arrives or the submission is dropped.
-            Err(e) if target.submitting && is_query_not_found(&e) => Ok(()),
-            Err(e) => {
-                if target.submitting {
-                    // Not acknowledged: the caller sees the failure, so do not
-                    // replay this kill, which may never succeed (e.g. a bad org).
-                    self.owned_queries.lock().withdraw_kill(query_id);
-                }
-                Err(e)
+        let deadline = Instant::now() + self.kill_registration_wait();
+        let mut delay = Duration::from_millis(50);
+        loop {
+            let result = self
+                .end_query(&target.query_id, true, target.node_id.as_deref())
+                .await;
+            let error = match result {
+                Err(e) if target.submitting && is_query_not_found(&e) => e,
+                result => return result,
+            };
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(error);
             }
-            Ok(()) => Ok(()),
+            // The last attempt runs at the deadline.
+            sleep(delay.min(deadline - now)).await;
+            delay = (delay * 2).min(Duration::from_secs(1));
+            // The first response may have moved the query to its server ID;
+            // if it finished or was never sent, report the real answer.
+            match self.owned_queries.lock().kill_target(query_id) {
+                Some(next) => target = next,
+                None => return Err(error),
+            }
         }
+    }
+
+    /// The server sends the first response within `wait_time_secs`, so by then
+    /// it has registered the query and any rewritten ID is known.
+    fn kill_registration_wait(&self) -> Duration {
+        let wait = self.wait_time_secs.unwrap_or(10).clamp(0, 60) as u64;
+        Duration::from_secs(wait) + KILL_REGISTRATION_SLACK
     }
 
     async fn kill_query_by_sql(&self, query_id: &str) -> Result<()> {
@@ -1218,81 +1191,6 @@ impl APIClient {
 
     pub async fn final_query(&self, query_id: &str, node_id: Option<&str>) -> Result<()> {
         self.end_query(query_id, false, node_id).await
-    }
-
-    /// Send a queued `/kill` in the background, for callers that cannot await
-    /// (dropping a submission). Best effort: failures are only logged.
-    ///
-    /// The dropped start request may still be on its way to the server, so a
-    /// query-not-found answer is retried with backoff for up to
-    /// `DROPPED_KILL_RETRY_BUDGET`, until the server registers the query.
-    fn spawn_kill(&self, replay: KillReplay) {
-        let build = || -> Result<Request> {
-            let uri = format!("/v1/query/{}/kill", replay.query_id);
-            let mut builder = self.cli.request(
-                self.transport.end_query_method(true),
-                self.endpoint.join(&uri)?,
-            );
-            if let Some(node_id) = &replay.node_id {
-                builder = builder.header(HEADER_STICKY_NODE, node_id)
-            }
-            Ok(self
-                .wrap_auth_or_session_token(builder)?
-                .headers(self.make_headers(Some(&replay.query_id))?)
-                .timeout(self.page_request_timeout)
-                .build()?)
-        };
-        let request = build();
-        let query_id = replay.query_id;
-        let request = match request {
-            Ok(request) => request,
-            Err(e) => {
-                warn!("failed to build kill for query {query_id}: {e}");
-                return;
-            }
-        };
-        let cli = self.cli.clone();
-        let session = self.transport.session_handle();
-        let endpoint = self.endpoint.clone();
-        GLOBAL_RUNTIME.spawn(async move {
-            let deadline = Instant::now() + DROPPED_KILL_RETRY_BUDGET;
-            let mut delay = Duration::from_millis(100);
-            loop {
-                let mut attempt = request.try_clone().expect("kill request has no body");
-                // Apply the session as of this attempt; it may have rotated.
-                if let Err(e) = session.prepare(&mut attempt, &endpoint) {
-                    warn!("cannot kill query {query_id} after its submission was dropped: {e}");
-                    return;
-                }
-                let resp = match cli.execute(attempt).await {
-                    Ok(resp) => resp,
-                    Err(e) => {
-                        warn!("failed to kill query {query_id} after its submission was dropped: {e}");
-                        return;
-                    }
-                };
-                // Cloud may rotate the session on any response; keep it current.
-                if let Err(e) = session.observe(resp.headers()) {
-                    warn!("invalid session in kill response for query {query_id}: {e}");
-                }
-                let status = resp.status();
-                if status.is_success() {
-                    info!("killed query {query_id} after its submission was dropped");
-                    return;
-                }
-                let body = resp.text().await.unwrap_or_default();
-                let unregistered =
-                    status == StatusCode::NOT_FOUND && is_query_not_found_body(&body);
-                if !unregistered || Instant::now() + delay > deadline {
-                    warn!(
-                        "failed to kill query {query_id} after its submission was dropped: HTTP {status}"
-                    );
-                    return;
-                }
-                sleep(delay).await;
-                delay = (delay * 2).min(Duration::from_secs(2));
-            }
-        });
     }
 
     pub async fn end_query(

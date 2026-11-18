@@ -16,7 +16,6 @@
 //! detached `KILL QUERY` SQL for everything else.
 
 use super::*;
-use crate::transport::CloudSession;
 
 fn running_reply(id: &str) -> Value {
     let mut reply = query_reply();
@@ -101,64 +100,9 @@ async fn owned_query_is_killed_through_its_session_on_its_node() {
 }
 
 #[tokio::test]
-async fn kill_before_first_response_is_repeated_once_registered() {
-    for cloud in [false, true] {
-        let gate = Arc::new(Notify::new());
-        let kills = Arc::new(AtomicUsize::new(0));
-        let counted = kills.clone();
-        let server = MockServer::with_query_gate(
-            move |request| match request.path.as_str() {
-                // The gateway rewrites the client ID, as in other query ID tests.
-                "/v1/query" => MockReply::json(running_reply("q1")),
-                path if path.ends_with("/kill") => {
-                    if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-                        // The server has not registered the query yet.
-                        not_found_reply()
-                    } else {
-                        ok_reply()
-                    }
-                }
-                path => panic!("unexpected {path}"),
-            },
-            Some(gate.clone()),
-        )
-        .await;
-        let client = query_id_client(&server, cloud).await;
-        let query_client = client.clone();
-        let query =
-            tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
-        let sent_id = received_query_id(&server).await;
-
-        // Accepted although the server answered 404: the kill is pending.
-        client.kill_query(&sent_id).await.unwrap();
-        assert!(!query.is_finished());
-        gate.notify_one();
-        let pages = tokio::time::timeout(Duration::from_secs(5), query)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-
-        let recorded = server.requests.lock();
-        let paths: Vec<_> = recorded.iter().map(|r| r.path.as_str()).collect();
-        assert_eq!(
-            paths,
-            [
-                "/v1/query",
-                format!("/v1/query/{sent_id}/kill").as_str(),
-                "/v1/query/q1/kill"
-            ]
-        );
-        assert_eq!(recorded[2].headers["x-databend-sticky-node"], "n1");
-        drop(recorded);
-        drop(pages);
-    }
-}
-
-#[tokio::test]
 async fn kill_query_without_first_response_returns_server_error_once_submission_ended() {
-    // After the submission is dropped nothing can replay the kill, so a 404
-    // must reach the caller instead of being reported as a pending cancel.
+    // Once the submission is gone the query is not waiting for registration,
+    // so a 404 is the real answer and reaches the caller without retries.
     let server = MockServer::with_query_gate(
         |request| match request.path.as_str() {
             "/v1/query" => MockReply::json(running_reply("q1")),
@@ -356,11 +300,11 @@ fn submitted_id_is_owned_before_it_is_visible() {
     let submission = QuerySubmission::new(&client, "q".into());
     // Any reader that sees the ID must find it owned.
     assert_eq!(client.last_query_id().as_deref(), Some("q"));
-    assert!(client.owned_queries.lock().request_kill("q").is_some());
+    assert!(client.owned_queries.lock().kill_target("q").is_some());
     drop(submission);
     // An unsent ID is no longer visible nor owned.
     assert_eq!(client.last_query_id(), None);
-    assert!(client.owned_queries.lock().request_kill("q").is_none());
+    assert!(client.owned_queries.lock().kill_target("q").is_none());
 }
 
 #[tokio::test]
@@ -408,55 +352,6 @@ async fn detached_kill_is_not_replayed_after_its_response_began() {
             message.contains("query/kill") && message.contains("other"),
             "{message}"
         );
-    }
-}
-
-#[tokio::test]
-async fn acknowledged_kill_is_sent_when_the_submission_is_dropped() {
-    for cloud in [false, true] {
-        let kills = Arc::new(AtomicUsize::new(0));
-        let counted = kills.clone();
-        let server = MockServer::with_query_gate(
-            move |request| match request.path.as_str() {
-                "/v1/query" => MockReply::json(running_reply("q1")),
-                path if path.ends_with("/kill") => {
-                    if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-                        not_found_reply()
-                    } else {
-                        ok_reply()
-                    }
-                }
-                path => panic!("unexpected {path}"),
-            },
-            // The first response never arrives.
-            Some(Arc::new(Notify::new())),
-        )
-        .await;
-        let client = query_id_client(&server, cloud).await;
-        let query_client = client.clone();
-        let query =
-            tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
-        let sent_id = received_query_id(&server).await;
-        // Acknowledged although the server has not registered the query yet.
-        client.kill_query(&sent_id).await.unwrap();
-        // Nobody is left to replay it once the submission is dropped.
-        query.abort();
-        let _ = query.await;
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while kills.load(Ordering::SeqCst) < 2 {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("the acknowledged kill must be sent after the drop");
-        let expected = format!("/v1/query/{sent_id}/kill");
-        let recorded = server.requests.lock();
-        let kill_paths: Vec<_> = recorded
-            .iter()
-            .filter(|r| r.path.ends_with("/kill"))
-            .map(|r| r.path.as_str())
-            .collect();
-        assert_eq!(kill_paths, [expected.as_str(), expected.as_str()]);
     }
 }
 
@@ -543,7 +438,7 @@ async fn cloud_org_not_found_from_an_early_kill_reaches_the_caller() {
     let sent_id = received_query_id(&server).await;
     let err = client.kill_query(&sent_id).await.unwrap_err();
     assert!(format!("{err}").contains("Organization ID"), "{err}");
-    // The failed kill is withdrawn, not replayed after the first response.
+    // A non-query 404 is final: no retry and nothing sent later.
     gate.notify_one();
     let pages = tokio::time::timeout(Duration::from_secs(5), query)
         .await
@@ -551,133 +446,6 @@ async fn cloud_org_not_found_from_an_early_kill_reaches_the_caller() {
         .unwrap()
         .unwrap();
     assert_eq!(kills.load(Ordering::SeqCst), 1);
-    drop(pages);
-}
-
-#[tokio::test]
-async fn kill_replayed_after_a_dropped_submission_records_cloud_session_rotation() {
-    let kills = Arc::new(AtomicUsize::new(0));
-    let counted = kills.clone();
-    let server = MockServer::with_query_gate(
-        move |request| match request.path.as_str() {
-            "/v1/query" => MockReply::json(running_reply("q1")),
-            path if path.ends_with("/kill") => {
-                if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-                    not_found_reply()
-                } else {
-                    let mut reply = ok_reply();
-                    reply
-                        .headers
-                        .push((HEADER_SESSION, "rotated-session".into()));
-                    reply
-                }
-            }
-            path => panic!("unexpected {path}"),
-        },
-        Some(Arc::new(Notify::new())),
-    )
-    .await;
-    let client = query_id_client(&server, true).await;
-    let query_client = client.clone();
-    let query =
-        tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
-    let sent_id = received_query_id(&server).await;
-    client.kill_query(&sent_id).await.unwrap();
-    query.abort();
-    let _ = query.await;
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let ready = match &client.transport {
-                Transport::CloudWebApi { session } => matches!(
-                    &*session.lock(),
-                    CloudSession::Ready(header) if header == "rotated-session"
-                ),
-                Transport::Native => unreachable!(),
-            };
-            if ready {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("the replayed kill's session header must be recorded");
-}
-
-#[tokio::test]
-async fn dropped_kill_retries_until_the_query_is_registered() {
-    let kills = Arc::new(AtomicUsize::new(0));
-    let counted = kills.clone();
-    let server = MockServer::with_query_gate(
-        move |request| match request.path.as_str() {
-            "/v1/query" => MockReply::json(running_reply("q1")),
-            path if path.ends_with("/kill") => {
-                // kill_query and the first two replays race registration.
-                if counted.fetch_add(1, Ordering::SeqCst) < 3 {
-                    not_found_reply()
-                } else {
-                    ok_reply()
-                }
-            }
-            path => panic!("unexpected {path}"),
-        },
-        Some(Arc::new(Notify::new())),
-    )
-    .await;
-    let client = query_id_client(&server, false).await;
-    let query_client = client.clone();
-    let query =
-        tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
-    let sent_id = received_query_id(&server).await;
-    client.kill_query(&sent_id).await.unwrap();
-    query.abort();
-    let _ = query.await;
-    tokio::time::timeout(Duration::from_secs(10), async {
-        while kills.load(Ordering::SeqCst) < 4 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("the replay must retry while the query is not registered");
-    // Success ends the retries.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    assert_eq!(kills.load(Ordering::SeqCst), 4);
-}
-
-#[tokio::test]
-async fn one_failed_kill_does_not_withdraw_another_acknowledged_one() {
-    let gate = Arc::new(Notify::new());
-    let kills = Arc::new(AtomicUsize::new(0));
-    let counted = kills.clone();
-    let server = MockServer::with_query_gate(
-        move |request| match request.path.as_str() {
-            "/v1/query" => MockReply::json(running_reply("q1")),
-            path if path.ends_with("/kill") => match counted.fetch_add(1, Ordering::SeqCst) {
-                0 => not_found_reply(),
-                1 => MockReply::error(500),
-                _ => ok_reply(),
-            },
-            path => panic!("unexpected {path}"),
-        },
-        Some(gate.clone()),
-    )
-    .await;
-    let client = query_id_client(&server, false).await;
-    let query_client = client.clone();
-    let query =
-        tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
-    let sent_id = received_query_id(&server).await;
-    client.kill_query(&sent_id).await.unwrap();
-    assert!(client.kill_query(&sent_id).await.is_err());
-    gate.notify_one();
-    let pages = tokio::time::timeout(Duration::from_secs(5), query)
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    // The first caller's acknowledged kill is still replayed.
-    assert_eq!(kills.load(Ordering::SeqCst), 3);
-    assert_eq!(requests(&server).last().unwrap().1, "/v1/query/q1/kill");
     drop(pages);
 }
 
@@ -714,20 +482,196 @@ async fn corrupt_arrow_batch_still_records_the_server_query_id() {
         headers,
         body: Bytes::from(bytes),
     };
-    let mut first = FirstResponse {
-        submitted_id: "client-id",
-        replay: None,
-        recorded: false,
-    };
     let err = client
-        .handle_page(response, Some(&mut first))
+        .handle_page(response, Some("client-id"))
         .await
         .unwrap_err();
     assert!(format!("{err}").contains("arrow batch"), "{err}");
-    assert!(first.recorded);
     assert_eq!(client.last_query_id().as_deref(), Some("server-id"));
     drop(submission);
-    let mut owned = client.owned_queries.lock();
-    assert!(owned.request_kill("server-id").is_some());
-    assert!(owned.request_kill("client-id").is_none());
+    // Both IDs now reach the server-side query.
+    let owned = client.owned_queries.lock();
+    for id in ["server-id", "client-id"] {
+        assert_eq!(owned.kill_target(id).unwrap().query_id, "server-id");
+    }
+}
+
+/// Start a query whose first response is held back by `gate`.
+async fn pending_submission(
+    server: &MockServer,
+    client: &Arc<APIClient>,
+) -> (JoinHandle<Result<Pages>>, String) {
+    let query_client = client.clone();
+    let query =
+        tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
+    (query, received_query_id(server).await)
+}
+
+async fn wait_for_kills(kills: &AtomicUsize, count: usize) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while kills.load(Ordering::SeqCst) < count {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("expected kill requests");
+}
+
+#[tokio::test]
+async fn kill_retries_until_the_query_is_registered() {
+    for cloud in [false, true] {
+        let kills = Arc::new(AtomicUsize::new(0));
+        let counted = kills.clone();
+        let server = MockServer::with_query_gate(
+            move |request| match request.path.as_str() {
+                "/v1/query" => MockReply::json(running_reply("q1")),
+                path if path.ends_with("/kill") => {
+                    // Not registered for the first two attempts.
+                    if counted.fetch_add(1, Ordering::SeqCst) < 2 {
+                        not_found_reply()
+                    } else {
+                        ok_reply()
+                    }
+                }
+                path => panic!("unexpected {path}"),
+            },
+            // The first response never arrives.
+            Some(Arc::new(Notify::new())),
+        )
+        .await;
+        let client = query_id_client(&server, cloud).await;
+        let (query, sent_id) = pending_submission(&server, &client).await;
+
+        client.kill_query(&sent_id).await.unwrap();
+        let expected = format!("/v1/query/{sent_id}/kill");
+        let kill_paths: Vec<_> = requests(&server)
+            .into_iter()
+            .filter(|(_, path)| path.ends_with("/kill"))
+            .map(|(_, path)| path)
+            .collect();
+        assert_eq!(kill_paths, [expected.clone(), expected.clone(), expected]);
+        query.abort();
+    }
+}
+
+#[tokio::test]
+async fn kill_follows_the_server_id_from_the_first_response() {
+    for cloud in [false, true] {
+        let gate = Arc::new(Notify::new());
+        let kills = Arc::new(AtomicUsize::new(0));
+        let counted = kills.clone();
+        let server = MockServer::with_query_gate(
+            move |request| {
+                if request.path.ends_with("/kill") {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                }
+                match request.path.as_str() {
+                    // The gateway rewrites the client ID and does not know it.
+                    "/v1/query" => MockReply::json(running_reply("q1")),
+                    "/v1/query/q1/kill" => ok_reply(),
+                    path if path.ends_with("/kill") => not_found_reply(),
+                    path => panic!("unexpected {path}"),
+                }
+            },
+            Some(gate.clone()),
+        )
+        .await;
+        let client = query_id_client(&server, cloud).await;
+        let (query, sent_id) = pending_submission(&server, &client).await;
+
+        let kill_client = client.clone();
+        let kill_id = sent_id.clone();
+        let kill = tokio::spawn(async move { kill_client.kill_query(&kill_id).await });
+        wait_for_kills(&kills, 1).await;
+        assert!(
+            !kill.is_finished(),
+            "kill_query waits instead of acknowledging"
+        );
+        gate.notify_one();
+        tokio::time::timeout(Duration::from_secs(5), kill)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        let kills: Vec<(String, Option<String>)> = server
+            .requests
+            .lock()
+            .iter()
+            .filter(|r| r.path.ends_with("/kill"))
+            .map(|r| {
+                (
+                    r.path.clone(),
+                    r.headers.get("x-databend-sticky-node").cloned(),
+                )
+            })
+            .collect();
+        let (last, earlier) = kills.split_last().unwrap();
+        assert_eq!(
+            last,
+            &("/v1/query/q1/kill".to_string(), Some("n1".to_string()))
+        );
+        let client_kill = format!("/v1/query/{sent_id}/kill");
+        assert!(earlier.iter().all(|(path, _)| *path == client_kill));
+        drop(query.await.unwrap().unwrap());
+    }
+}
+
+#[tokio::test]
+async fn kill_reports_not_found_when_the_submission_ends_while_retrying() {
+    let kills = Arc::new(AtomicUsize::new(0));
+    let counted = kills.clone();
+    let server = MockServer::with_query_gate(
+        move |request| match request.path.as_str() {
+            "/v1/query" => MockReply::json(running_reply("q1")),
+            _ => {
+                counted.fetch_add(1, Ordering::SeqCst);
+                not_found_reply()
+            }
+        },
+        Some(Arc::new(Notify::new())),
+    )
+    .await;
+    let client = query_id_client(&server, false).await;
+    let (query, sent_id) = pending_submission(&server, &client).await;
+    let kill_client = client.clone();
+    let kill = tokio::spawn(async move { kill_client.kill_query(&sent_id).await });
+    wait_for_kills(&kills, 1).await;
+    // The caller gives up on the query; the kill must not keep waiting.
+    query.abort();
+    let _ = query.await;
+    let result = tokio::time::timeout(Duration::from_secs(5), kill)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(result.is_err_and(|e| is_query_not_found(&e)));
+}
+
+#[tokio::test]
+async fn kill_gives_up_after_the_registration_wait() {
+    let server = MockServer::with_query_gate(
+        |request| match request.path.as_str() {
+            "/v1/query" => MockReply::json(running_reply("q1")),
+            _ => not_found_reply(),
+        },
+        Some(Arc::new(Notify::new())),
+    )
+    .await;
+    let mut client = Arc::try_unwrap(query_id_client(&server, false).await)
+        .ok()
+        .unwrap();
+    // The first response is due within wait_time_secs, plus the slack.
+    client.wait_time_secs = Some(0);
+    let client = Arc::new(client);
+    let (query, sent_id) = pending_submission(&server, &client).await;
+    let start = Instant::now();
+    let result = client.kill_query(&sent_id).await;
+    let elapsed = start.elapsed();
+    assert!(result.is_err_and(|e| is_query_not_found(&e)));
+    assert!(elapsed >= KILL_REGISTRATION_SLACK - Duration::from_millis(100));
+    assert!(
+        elapsed < KILL_REGISTRATION_SLACK + Duration::from_secs(2),
+        "{elapsed:?}"
+    );
+    query.abort();
 }

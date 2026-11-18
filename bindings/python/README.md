@@ -254,8 +254,10 @@ except Exception as e:
 `kill_query(query_id)` follows the server's `KILL QUERY` rules:
 
 - A query started by the same connection is cancelled through its own query
-  session, on every server version. Calling it before the first response is
-  allowed; the cancel is repeated once the server has registered the query.
+  session, on every server version. Calling it right after starting a query is
+  fine: while the server has not registered the query yet, `kill_query`
+  retries for up to `wait_time_secs` plus 2 seconds and then returns the real
+  result.
 - Any other ID runs `KILL QUERY '<id>'` in a separate request that does not
   touch this connection's transaction or `last_query_id()`. Users can kill
   their own queries; killing another user's query needs the global `SUPER`

@@ -35,91 +35,14 @@ pub(crate) enum Transport {
     #[default]
     Native,
     CloudWebApi {
-        /// Shared so a background request can still record session rotation.
-        session: Arc<Mutex<CloudSession>>,
+        session: Mutex<CloudSession>,
     },
-}
-
-/// Applies and records the Cloud session for requests sent outside
-/// `query_request_helper`, e.g. from a spawned task. A no-op for native.
-#[derive(Clone)]
-pub(crate) struct SessionHandle(Option<Arc<Mutex<CloudSession>>>);
-
-impl SessionHandle {
-    /// Same as `Transport::prepare_request`, with the current session.
-    pub(crate) fn prepare(&self, request: &mut Request, endpoint: &Url) -> Result<()> {
-        match &self.0 {
-            Some(session) => prepare_cloud_request(session, request, endpoint),
-            None => Ok(()),
-        }
-    }
-
-    /// Same as `Transport::observe_response`.
-    pub(crate) fn observe(&self, headers: &HeaderMap) -> Result<()> {
-        match &self.0 {
-            Some(session) => observe_cloud_session(session, headers),
-            None => Ok(()),
-        }
-    }
 }
 
 pub(crate) enum CloudSession {
     Pending,
     Ready(HeaderValue),
     Unavailable,
-}
-
-fn prepare_cloud_request(
-    session: &Mutex<CloudSession>,
-    request: &mut Request,
-    endpoint: &Url,
-) -> Result<()> {
-    let session = session.lock();
-    if matches!(*session, CloudSession::Unavailable) {
-        return Err(session_unavailable());
-    }
-    if request.url().origin() != endpoint.origin() {
-        return Err(Error::BadArgument(
-            "refusing to send Cloud session state to another origin".into(),
-        ));
-    }
-    request.headers_mut().remove(COOKIE);
-    request.headers_mut().insert(
-        HEADER_CLIENT_CAPS,
-        HeaderValue::from_static("session_header"),
-    );
-    request.headers_mut().remove(HEADER_SESSION);
-    if let CloudSession::Ready(header) = &*session {
-        request.headers_mut().insert(HEADER_SESSION, header.clone());
-    }
-    Ok(())
-}
-
-fn observe_cloud_session(session: &Mutex<CloudSession>, headers: &HeaderMap) -> Result<()> {
-    let mut session = session.lock();
-    if matches!(*session, CloudSession::Unavailable) {
-        return Err(session_unavailable());
-    }
-    let mut values = headers.get_all(HEADER_SESSION).iter();
-    if let Some(header) = values.next() {
-        // Opaque and bounded: never decode or synthesize session IDs.
-        if header.is_empty()
-            || header.as_bytes().len() > 8192
-            || header.to_str().is_err()
-            || values.next().is_some()
-        {
-            if matches!(*session, CloudSession::Pending) {
-                *session = CloudSession::Unavailable;
-            }
-            return Err(Error::Decode(
-                "invalid Cloud session response header".into(),
-            ));
-        }
-        let mut header = header.clone();
-        header.set_sensitive(true);
-        *session = CloudSession::Ready(header);
-    }
-    Ok(())
 }
 
 fn session_unavailable() -> Error {
@@ -134,7 +57,7 @@ pub(crate) enum UploadKind {
 impl Transport {
     pub(crate) fn cloud() -> Self {
         Self::CloudWebApi {
-            session: Arc::new(Mutex::new(CloudSession::Pending)),
+            session: Mutex::new(CloudSession::Pending),
         }
     }
 
@@ -274,23 +197,55 @@ impl Transport {
 
     pub(crate) fn prepare_request(&self, request: &mut Request, endpoint: &Url) -> Result<()> {
         if let Self::CloudWebApi { session, .. } = self {
-            prepare_cloud_request(session, request, endpoint)?;
+            let session = session.lock();
+            if matches!(*session, CloudSession::Unavailable) {
+                return Err(session_unavailable());
+            }
+            if request.url().origin() != endpoint.origin() {
+                return Err(Error::BadArgument(
+                    "refusing to send Cloud session state to another origin".into(),
+                ));
+            }
+            request.headers_mut().remove(COOKIE);
+            request.headers_mut().insert(
+                HEADER_CLIENT_CAPS,
+                HeaderValue::from_static("session_header"),
+            );
+            request.headers_mut().remove(HEADER_SESSION);
+            if let CloudSession::Ready(header) = &*session {
+                request.headers_mut().insert(HEADER_SESSION, header.clone());
+            }
         }
         Ok(())
     }
 
     pub(crate) fn observe_response(&self, headers: &HeaderMap) -> Result<()> {
         if let Self::CloudWebApi { session, .. } = self {
-            observe_cloud_session(session, headers)?;
+            let mut session = session.lock();
+            if matches!(*session, CloudSession::Unavailable) {
+                return Err(session_unavailable());
+            }
+            let mut values = headers.get_all(HEADER_SESSION).iter();
+            if let Some(header) = values.next() {
+                // Opaque and bounded: never decode or synthesize session IDs.
+                if header.is_empty()
+                    || header.as_bytes().len() > 8192
+                    || header.to_str().is_err()
+                    || values.next().is_some()
+                {
+                    if matches!(*session, CloudSession::Pending) {
+                        *session = CloudSession::Unavailable;
+                    }
+                    return Err(Error::Decode(
+                        "invalid Cloud session response header".into(),
+                    ));
+                }
+                let mut header = header.clone();
+                header.set_sensitive(true);
+                *session = CloudSession::Ready(header);
+            }
         }
         Ok(())
-    }
-
-    pub(crate) fn session_handle(&self) -> SessionHandle {
-        match self {
-            Self::Native => SessionHandle(None),
-            Self::CloudWebApi { session } => SessionHandle(Some(session.clone())),
-        }
     }
 
     /// Reject a successful SQL response that cannot establish a Cloud session.
