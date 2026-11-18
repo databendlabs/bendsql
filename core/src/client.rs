@@ -63,6 +63,9 @@ use tokio_util::io::ReaderStream;
 use url::Url;
 
 const HEADER_QUERY_ID: &str = "X-DATABEND-QUERY-ID";
+/// How long a kill replayed from a dropped submission keeps retrying while
+/// the server has not registered the query yet.
+const DROPPED_KILL_RETRY_BUDGET: Duration = Duration::from_secs(30);
 const HEADER_TENANT: &str = "X-DATABEND-TENANT";
 const HEADER_STICKY_NODE: &str = "X-DATABEND-STICKY-NODE";
 const HEADER_STAGE_NAME: &str = "X-DATABEND-STAGE-NAME";
@@ -973,31 +976,27 @@ impl APIClient {
                 self.route_hint.set(route_hint.to_str().unwrap_or_default());
             }
         }
-        let mut body = response.body;
-        let mut batches = vec![];
-        if is_arrow_data {
+        let body = response.body;
+        let mut reader = None;
+        // Decode the response header first: it carries the server-side ID,
+        // which must be recorded even if a record batch turns out corrupt.
+        let resp: QueryResponse = if is_arrow_data {
             if is_first {
                 debug!("received arrow data");
             }
             let cursor = std::io::Cursor::new(body.as_ref());
-            let reader = StreamReader::try_new(cursor, None)
+            let stream = StreamReader::try_new(cursor, None)
                 .map_err(|e| Error::Decode(format!("failed to decode arrow stream: {e}")))?;
-            let schema = reader.schema();
-            let json_body = if let Some(json_resp) = schema.metadata.get("response_header") {
-                bytes::Bytes::copy_from_slice(json_resp.as_bytes())
-            } else {
+            let Some(json_resp) = stream.schema().metadata.get("response_header").cloned() else {
                 return Err(Error::Decode(
                     "missing response_header metadata in arrow payload".to_string(),
                 ));
             };
-            for batch in reader {
-                let batch = batch
-                    .map_err(|e| Error::Decode(format!("failed to decode arrow batch: {e}")))?;
-                batches.push(batch);
-            }
-            body = json_body
+            reader = Some(stream);
+            self.decode_response(json_resp.as_bytes())?
+        } else {
+            self.decode_response(&body)?
         };
-        let resp: QueryResponse = self.decode_response(&body)?;
         if let Some(first) = first {
             let outcome = if resp.error.is_none() && resp.next_uri.is_some() {
                 FirstOutcome::Running {
@@ -1016,6 +1015,14 @@ impl APIClient {
             first.recorded = true;
             // The server or a gateway may replace the ID, including on SQL errors.
             self.set_last_query_id(Some(resp.id.clone()));
+        }
+        let mut batches = vec![];
+        if let Some(reader) = reader {
+            for batch in reader {
+                let batch = batch
+                    .map_err(|e| Error::Decode(format!("failed to decode arrow batch: {e}")))?;
+                batches.push(batch);
+            }
         }
         self.handle_session(&resp.session).await;
         if let Some(err) = &resp.error {
@@ -1106,9 +1113,11 @@ impl APIClient {
             // when the first response arrives or the submission is dropped.
             Err(e) if target.submitting && is_query_not_found(&e) => Ok(()),
             Err(e) => {
-                // Not acknowledged: the caller sees the failure, so do not
-                // replay a kill that may never succeed (e.g. a bad org).
-                self.owned_queries.lock().withdraw_kill(query_id);
+                if target.submitting {
+                    // Not acknowledged: the caller sees the failure, so do not
+                    // replay this kill, which may never succeed (e.g. a bad org).
+                    self.owned_queries.lock().withdraw_kill(query_id);
+                }
                 Err(e)
             }
             Ok(()) => Ok(()),
@@ -1213,6 +1222,10 @@ impl APIClient {
 
     /// Send a queued `/kill` in the background, for callers that cannot await
     /// (dropping a submission). Best effort: failures are only logged.
+    ///
+    /// The dropped start request may still be on its way to the server, so a
+    /// query-not-found answer is retried with backoff for up to
+    /// `DROPPED_KILL_RETRY_BUDGET`, until the server registers the query.
     fn spawn_kill(&self, replay: KillReplay) {
         let build = || -> Result<Request> {
             let uri = format!("/v1/query/{}/kill", replay.query_id);
@@ -1223,14 +1236,11 @@ impl APIClient {
             if let Some(node_id) = &replay.node_id {
                 builder = builder.header(HEADER_STICKY_NODE, node_id)
             }
-            let mut request = self
+            Ok(self
                 .wrap_auth_or_session_token(builder)?
                 .headers(self.make_headers(Some(&replay.query_id))?)
                 .timeout(self.page_request_timeout)
-                .build()?;
-            self.transport
-                .prepare_request(&mut request, &self.endpoint)?;
-            Ok(request)
+                .build()?)
         };
         let request = build();
         let query_id = replay.query_id;
@@ -1242,26 +1252,45 @@ impl APIClient {
             }
         };
         let cli = self.cli.clone();
-        let observer = self.transport.response_observer();
+        let session = self.transport.session_handle();
+        let endpoint = self.endpoint.clone();
         GLOBAL_RUNTIME.spawn(async move {
-            let response = cli.execute(request).await;
-            if let Ok(resp) = &response {
+            let deadline = Instant::now() + DROPPED_KILL_RETRY_BUDGET;
+            let mut delay = Duration::from_millis(100);
+            loop {
+                let mut attempt = request.try_clone().expect("kill request has no body");
+                // Apply the session as of this attempt; it may have rotated.
+                if let Err(e) = session.prepare(&mut attempt, &endpoint) {
+                    warn!("cannot kill query {query_id} after its submission was dropped: {e}");
+                    return;
+                }
+                let resp = match cli.execute(attempt).await {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        warn!("failed to kill query {query_id} after its submission was dropped: {e}");
+                        return;
+                    }
+                };
                 // Cloud may rotate the session on any response; keep it current.
-                if let Err(e) = observer.observe(resp.headers()) {
+                if let Err(e) = session.observe(resp.headers()) {
                     warn!("invalid session in kill response for query {query_id}: {e}");
                 }
-            }
-            match response {
-                Ok(resp) if resp.status().is_success() => {
-                    info!("killed query {query_id} after its submission was dropped")
+                let status = resp.status();
+                if status.is_success() {
+                    info!("killed query {query_id} after its submission was dropped");
+                    return;
                 }
-                Ok(resp) => warn!(
-                    "failed to kill query {query_id} after its submission was dropped: HTTP {}",
-                    resp.status()
-                ),
-                Err(e) => {
-                    warn!("failed to kill query {query_id} after its submission was dropped: {e}")
+                let body = resp.text().await.unwrap_or_default();
+                let unregistered =
+                    status == StatusCode::NOT_FOUND && is_query_not_found_body(&body);
+                if !unregistered || Instant::now() + delay > deadline {
+                    warn!(
+                        "failed to kill query {query_id} after its submission was dropped: HTTP {status}"
+                    );
+                    return;
                 }
+                sleep(delay).await;
+                delay = (delay * 2).min(Duration::from_secs(2));
             }
         });
     }

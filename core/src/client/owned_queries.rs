@@ -29,8 +29,16 @@ struct OwnedQuery {
     node_id: Option<String>,
     /// The start request is still awaiting its first response.
     submitting: bool,
-    /// `kill_query` arrived while submitting; kill once the response lands.
-    cancel_requested: bool,
+    /// `kill_query` calls acknowledged while submitting and not withdrawn;
+    /// kill once the response lands if any remain. Counted so one caller's
+    /// failure cannot withdraw another caller's acknowledged kill.
+    pending_kills: u32,
+}
+
+impl OwnedQuery {
+    fn take_pending_kill(&mut self) -> bool {
+        std::mem::take(&mut self.pending_kills) > 0
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -77,7 +85,7 @@ impl OwnedQueries {
                 seq: self.next_seq,
                 node_id,
                 submitting,
-                cancel_requested: false,
+                pending_kills: 0,
             },
         );
         self.trim();
@@ -126,7 +134,7 @@ impl OwnedQueries {
         }
         let query = self.queries.get_mut(query_id)?;
         query.submitting = false;
-        let replay = std::mem::take(&mut query.cancel_requested).then(|| KillReplay {
+        let replay = query.take_pending_kill().then(|| KillReplay {
             query_id: query_id.to_string(),
             node_id: query.node_id.clone(),
         });
@@ -149,7 +157,7 @@ impl OwnedQueries {
                 let cancel_requested = self
                     .queries
                     .remove(submitted_id)
-                    .is_some_and(|q| q.cancel_requested);
+                    .is_some_and(|mut q| q.take_pending_kill());
                 self.insert(query_id, node_id.clone(), false);
                 cancel_requested.then(|| KillReplay {
                     query_id: query_id.to_string(),
@@ -163,7 +171,7 @@ impl OwnedQueries {
             FirstOutcome::Unknown => {
                 // Only a confirmed terminal response may forget the query.
                 let query = self.queries.get_mut(submitted_id)?;
-                std::mem::take(&mut query.cancel_requested).then(|| KillReplay {
+                query.take_pending_kill().then(|| KillReplay {
                     query_id: submitted_id.to_string(),
                     node_id: query.node_id.clone(),
                 })
@@ -181,7 +189,7 @@ impl OwnedQueries {
     pub(crate) fn request_kill(&mut self, query_id: &str) -> Option<KillTarget> {
         let query = self.queries.get_mut(query_id)?;
         if query.submitting {
-            query.cancel_requested = true;
+            query.pending_kills += 1;
         }
         Some(KillTarget {
             node_id: query.node_id.clone(),
@@ -189,10 +197,12 @@ impl OwnedQueries {
         })
     }
 
-    /// `kill_query` reported a failure for a queued kill; do not replay it.
+    /// `kill_query` reported a failure for a kill it queued (its target was
+    /// `submitting`); withdraw that one request only. A no-op if the kill was
+    /// already replayed or the entry moved on.
     pub(crate) fn withdraw_kill(&mut self, query_id: &str) {
         if let Some(query) = self.queries.get_mut(query_id) {
-            query.cancel_requested = false;
+            query.pending_kills = query.pending_kills.saturating_sub(1);
         }
     }
 
@@ -326,6 +336,32 @@ mod tests {
         owned.submission_started("r");
         owned.request_kill("r");
         assert!(owned.first_response("r", FirstOutcome::Unknown).is_some());
+        assert_eq!(owned.submission_ended("r", true), None);
+    }
+
+    #[test]
+    fn concurrent_kills_are_withdrawn_independently() {
+        let mut owned = OwnedQueries::default();
+        owned.submission_started("q");
+        // Two callers queue a kill; one fails and withdraws only its own.
+        assert!(owned.request_kill("q").is_some_and(|t| t.submitting));
+        assert!(owned.request_kill("q").is_some_and(|t| t.submitting));
+        owned.withdraw_kill("q");
+        assert_eq!(
+            owned.first_response("q", running("q", None)),
+            Some(KillReplay {
+                query_id: "q".into(),
+                node_id: None
+            })
+        );
+
+        // When every caller withdraws, nothing is replayed.
+        owned.submission_started("r");
+        owned.request_kill("r");
+        owned.request_kill("r");
+        owned.withdraw_kill("r");
+        owned.withdraw_kill("r");
+        owned.withdraw_kill("r");
         assert_eq!(owned.submission_ended("r", true), None);
     }
 

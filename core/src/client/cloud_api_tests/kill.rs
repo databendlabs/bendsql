@@ -603,3 +603,131 @@ async fn kill_replayed_after_a_dropped_submission_records_cloud_session_rotation
     .await
     .expect("the replayed kill's session header must be recorded");
 }
+
+#[tokio::test]
+async fn dropped_kill_retries_until_the_query_is_registered() {
+    let kills = Arc::new(AtomicUsize::new(0));
+    let counted = kills.clone();
+    let server = MockServer::with_query_gate(
+        move |request| match request.path.as_str() {
+            "/v1/query" => MockReply::json(running_reply("q1")),
+            path if path.ends_with("/kill") => {
+                // kill_query and the first two replays race registration.
+                if counted.fetch_add(1, Ordering::SeqCst) < 3 {
+                    not_found_reply()
+                } else {
+                    ok_reply()
+                }
+            }
+            path => panic!("unexpected {path}"),
+        },
+        Some(Arc::new(Notify::new())),
+    )
+    .await;
+    let client = query_id_client(&server, false).await;
+    let query_client = client.clone();
+    let query =
+        tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
+    let sent_id = received_query_id(&server).await;
+    client.kill_query(&sent_id).await.unwrap();
+    query.abort();
+    let _ = query.await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while kills.load(Ordering::SeqCst) < 4 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the replay must retry while the query is not registered");
+    // Success ends the retries.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(kills.load(Ordering::SeqCst), 4);
+}
+
+#[tokio::test]
+async fn one_failed_kill_does_not_withdraw_another_acknowledged_one() {
+    let gate = Arc::new(Notify::new());
+    let kills = Arc::new(AtomicUsize::new(0));
+    let counted = kills.clone();
+    let server = MockServer::with_query_gate(
+        move |request| match request.path.as_str() {
+            "/v1/query" => MockReply::json(running_reply("q1")),
+            path if path.ends_with("/kill") => match counted.fetch_add(1, Ordering::SeqCst) {
+                0 => not_found_reply(),
+                1 => MockReply::error(500),
+                _ => ok_reply(),
+            },
+            path => panic!("unexpected {path}"),
+        },
+        Some(gate.clone()),
+    )
+    .await;
+    let client = query_id_client(&server, false).await;
+    let query_client = client.clone();
+    let query =
+        tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
+    let sent_id = received_query_id(&server).await;
+    client.kill_query(&sent_id).await.unwrap();
+    assert!(client.kill_query(&sent_id).await.is_err());
+    gate.notify_one();
+    let pages = tokio::time::timeout(Duration::from_secs(5), query)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    // The first caller's acknowledged kill is still replayed.
+    assert_eq!(kills.load(Ordering::SeqCst), 3);
+    assert_eq!(requests(&server).last().unwrap().1, "/v1/query/q1/kill");
+    drop(pages);
+}
+
+#[tokio::test]
+async fn corrupt_arrow_batch_still_records_the_server_query_id() {
+    use arrow_array::Int64Array;
+    use arrow_ipc::writer::StreamWriter;
+    use arrow_schema::{DataType, Field, Schema as ArrowSchema};
+
+    let header = running_reply("server-id").to_string();
+    let schema = Arc::new(ArrowSchema::new_with_metadata(
+        vec![Field::new("n", DataType::Int64, false)],
+        HashMap::from([("response_header".to_string(), header)]),
+    ));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int64Array::from_iter_values(0..1000))],
+    )
+    .unwrap();
+    let mut bytes = Vec::new();
+    let mut writer = StreamWriter::try_new(&mut bytes, &schema).unwrap();
+    writer.write(&batch).unwrap();
+    writer.finish().unwrap();
+    drop(writer);
+    // Cut into the batch: the schema and its response_header stay intact.
+    bytes.truncate(bytes.len() - 100);
+
+    let client = APIClient::default();
+    let submission = QuerySubmission::new(&client, "client-id".into());
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static(CONTENT_TYPE_ARROW));
+    let response = HttpResponseData {
+        status: StatusCode::OK,
+        headers,
+        body: Bytes::from(bytes),
+    };
+    let mut first = FirstResponse {
+        submitted_id: "client-id",
+        replay: None,
+        recorded: false,
+    };
+    let err = client
+        .handle_page(response, Some(&mut first))
+        .await
+        .unwrap_err();
+    assert!(format!("{err}").contains("arrow batch"), "{err}");
+    assert!(first.recorded);
+    assert_eq!(client.last_query_id().as_deref(), Some("server-id"));
+    drop(submission);
+    let mut owned = client.owned_queries.lock();
+    assert!(owned.request_kill("server-id").is_some());
+    assert!(owned.request_kill("client-id").is_none());
+}
