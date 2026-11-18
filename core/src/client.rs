@@ -1052,12 +1052,12 @@ impl APIClient {
     ///
     /// A query started by this connection is cancelled through its own HTTP
     /// query session (`/v1/query/{id}/kill`), which every server version
-    /// supports. Before the first response the server may not have registered
-    /// the query yet (or a gateway may know it by another ID): while the
-    /// submission is pending, a query-not-found answer is retried with backoff
-    /// for up to `wait_time_secs` plus a short slack, following a rewritten ID
-    /// once the first response reveals it. The result is always the server's
-    /// actual answer; nothing is sent later on the caller's behalf.
+    /// supports. Without a usable first response, a query-not-found answer is
+    /// retried with backoff for up to `wait_time_secs` plus a short slack, even
+    /// if a possibly sent submission was dropped. If the first response does
+    /// arrive, a retry can follow the server's ID if it differs from the
+    /// submitted ID. The result is the server's actual answer; nothing is sent
+    /// later on the caller's behalf.
     ///
     /// Any other ID runs `KILL QUERY '<id>'` in a request detached from this
     /// connection's transaction, route hint and `last_query_id`. The server
@@ -1081,7 +1081,7 @@ impl APIClient {
                 .end_query(&target.query_id, true, target.node_id.as_deref())
                 .await;
             let error = match result {
-                Err(e) if target.submitting && is_query_not_found(&e) => e,
+                Err(e) if target.retry_not_found && is_query_not_found(&e) => e,
                 result => return result,
             };
             let now = Instant::now();
@@ -1101,8 +1101,8 @@ impl APIClient {
         }
     }
 
-    /// The server sends the first response within `wait_time_secs`, so by then
-    /// it has registered the query and any rewritten ID is known.
+    /// Allow the server's first-page wait plus slack for registration and
+    /// receipt of the response, if the submission is still being polled.
     fn kill_registration_wait(&self) -> Duration {
         // The server accepts any u32 value, so honor what was configured.
         let wait = self.wait_time_secs.unwrap_or(10).clamp(0, u32::MAX as i64) as u64;

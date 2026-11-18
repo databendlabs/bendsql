@@ -29,8 +29,10 @@ pub(crate) const MAX_OWNED_QUERIES: usize = 256;
 struct OwnedQuery {
     seq: u64,
     node_id: Option<String>,
-    /// The start request is still awaiting its first response.
+    /// The submission future is alive and pins this entry against eviction.
     submitting: bool,
+    /// No usable first response yet, even if the submission future is gone.
+    awaiting_first_response: bool,
     /// A result handle (`Pages`) for the query is alive.
     reading: bool,
     /// The client-generated ID, when the server or a gateway assigned another.
@@ -43,8 +45,8 @@ pub(crate) struct KillTarget {
     /// The ID the server knows the query by.
     pub query_id: String,
     pub node_id: Option<String>,
-    /// No first response yet: the server may not have registered the query.
-    pub submitting: bool,
+    /// The server may not have registered the query yet.
+    pub retry_not_found: bool,
 }
 
 /// What a decoded first response proved about the query. Without one (I/O,
@@ -80,6 +82,7 @@ impl OwnedQueries {
             seq: self.next_seq,
             node_id,
             submitting,
+            awaiting_first_response: submitting,
             reading: false,
             submitted_id: None,
         }
@@ -118,6 +121,8 @@ impl OwnedQueries {
             // Never sent: there is no server query to kill.
             self.queries.remove(query_id);
         } else if let Some(query) = self.queries.get_mut(query_id) {
+            // Allow eviction, but keep retrying an early /kill 404 if we never
+            // received a usable first response.
             query.submitting = false;
             // A burst of live submissions may have grown the set past its bound.
             self.trim();
@@ -163,7 +168,7 @@ impl OwnedQueries {
         let target = |id: &str, query: &OwnedQuery| KillTarget {
             query_id: id.to_string(),
             node_id: query.node_id.clone(),
-            submitting: query.submitting,
+            retry_not_found: query.awaiting_first_response,
         };
         if let Some(query) = self.queries.get(query_id) {
             return Some(target(query_id, query));
@@ -196,11 +201,11 @@ mod tests {
         }
     }
 
-    fn target(query_id: &str, node_id: Option<&str>, submitting: bool) -> Option<KillTarget> {
+    fn target(query_id: &str, node_id: Option<&str>, retry_not_found: bool) -> Option<KillTarget> {
         Some(KillTarget {
             query_id: query_id.into(),
             node_id: node_id.map(Into::into),
-            submitting,
+            retry_not_found,
         })
     }
 
@@ -213,7 +218,8 @@ mod tests {
         owned.submission_ended("unsent", false);
         owned.submission_ended("sent", true);
         assert_eq!(owned.kill_target("unsent"), None);
-        assert_eq!(owned.kill_target("sent"), target("sent", None, false));
+        assert_eq!(owned.kill_target("sent"), target("sent", None, true));
+        assert!(!owned.queries["sent"].submitting);
     }
 
     #[test]
@@ -256,7 +262,7 @@ mod tests {
         // No decoded first response, e.g. a body or decode error.
         owned.submission_started("q");
         owned.submission_ended("q", true);
-        assert_eq!(owned.kill_target("q"), target("q", None, false));
+        assert_eq!(owned.kill_target("q"), target("q", None, true));
     }
 
     #[test]
@@ -269,7 +275,7 @@ mod tests {
             owned.submission_ended(&id, true);
         }
         assert_eq!(owned.len(), MAX_OWNED_QUERIES);
-        assert!(owned.kill_target("live").is_some_and(|t| t.submitting));
+        assert_eq!(owned.kill_target("live"), target("live", None, true));
         assert_eq!(owned.kill_target("dropped-0"), None);
         assert!(owned
             .kill_target(&format!("dropped-{}", MAX_OWNED_QUERIES + 9))
