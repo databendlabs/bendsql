@@ -21,7 +21,9 @@ use std::collections::HashMap;
 
 /// Queries whose results were dropped or failed before reading to the end are
 /// never confirmed finished; bound them so a long-lived connection cannot grow.
-const MAX_OWNED_QUERIES: usize = 256;
+/// Queries still being submitted or read are never evicted: each of them is
+/// backed by a live request or result handle.
+pub(crate) const MAX_OWNED_QUERIES: usize = 256;
 
 #[derive(Debug)]
 struct OwnedQuery {
@@ -29,6 +31,8 @@ struct OwnedQuery {
     node_id: Option<String>,
     /// The start request is still awaiting its first response.
     submitting: bool,
+    /// A result handle (`Pages`) for the query is alive.
+    reading: bool,
     /// The client-generated ID, when the server or a gateway assigned another.
     submitted_id: Option<String>,
 }
@@ -76,19 +80,21 @@ impl OwnedQueries {
             seq: self.next_seq,
             node_id,
             submitting,
+            reading: false,
             submitted_id: None,
         }
     }
 
-    /// Evict the oldest entries whose submission has ended until the set is
-    /// within its bound. Live submissions are never evicted; the set may exceed
-    /// the bound only while more than `MAX_OWNED_QUERIES` are live at once.
+    /// Evict the oldest abandoned entries (neither being submitted nor read)
+    /// until the set is within its bound. The set may exceed the bound only
+    /// while more than `MAX_OWNED_QUERIES` queries are submitted or read at
+    /// once, each holding its own request or result handle.
     fn trim(&mut self) {
         while self.queries.len() > MAX_OWNED_QUERIES {
             let Some(oldest) = self
                 .queries
                 .iter()
-                .filter(|(_, q)| !q.submitting)
+                .filter(|(_, q)| !q.submitting && !q.reading)
                 .min_by_key(|(_, q)| q.seq)
                 .map(|(id, _)| id.clone())
             else {
@@ -125,6 +131,9 @@ impl OwnedQueries {
             FirstOutcome::Running { query_id, node_id } => {
                 self.queries.remove(submitted_id);
                 let mut entry = self.new_entry(node_id, false);
+                // Every start path wraps a running first response in `Pages`,
+                // which calls `result_released` when dropped.
+                entry.reading = true;
                 // A kill that started with the client ID must still find it.
                 entry.submitted_id = (query_id != submitted_id).then(|| submitted_id.into());
                 self.insert(query_id, entry);
@@ -137,6 +146,15 @@ impl OwnedQueries {
 
     pub(crate) fn finished(&mut self, query_id: &str) {
         self.queries.remove(query_id);
+    }
+
+    /// The result handle is gone before the query was confirmed finished. The
+    /// query stays owned, since it may still run, but becomes evictable.
+    pub(crate) fn result_released(&mut self, query_id: &str) {
+        if let Some(query) = self.queries.get_mut(query_id) {
+            query.reading = false;
+            self.trim();
+        }
     }
 
     /// The current `/kill` target for `query_id`, which may be the server ID
@@ -159,6 +177,11 @@ impl OwnedQueries {
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.queries.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_reading(&self, query_id: &str) -> Option<bool> {
+        self.queries.get(query_id).map(|q| q.reading)
     }
 }
 
@@ -251,6 +274,42 @@ mod tests {
         assert!(owned
             .kill_target(&format!("dropped-{}", MAX_OWNED_QUERIES + 9))
             .is_some());
+    }
+
+    #[test]
+    fn queries_being_read_are_never_evicted() {
+        let mut owned = OwnedQueries::default();
+        let ids: Vec<_> = (0..MAX_OWNED_QUERIES + 10)
+            .map(|i| format!("q{i}"))
+            .collect();
+        // Every query got a running first response and its result is open.
+        for id in &ids {
+            owned.submission_started(id);
+            owned.first_response(id, running(id, Some("n1")));
+            owned.submission_ended(id, true);
+        }
+        assert_eq!(owned.len(), MAX_OWNED_QUERIES + 10);
+        assert_eq!(
+            owned.kill_target(&ids[0]),
+            target(&ids[0], Some("n1"), false)
+        );
+
+        // Abandoned queries are evictable even while others are being read.
+        for i in 0..5 {
+            let id = format!("abandoned-{i}");
+            owned.submission_started(&id);
+            owned.submission_ended(&id, true);
+        }
+        assert_eq!(owned.len(), MAX_OWNED_QUERIES + 10);
+        assert!(owned.kill_target(&ids[0]).is_some());
+
+        // Releasing the results makes them evictable, oldest first.
+        for id in &ids {
+            owned.result_released(id);
+        }
+        assert_eq!(owned.len(), MAX_OWNED_QUERIES);
+        assert_eq!(owned.kill_target(&ids[0]), None);
+        assert!(owned.kill_target(&ids[ids.len() - 1]).is_some());
     }
 
     #[test]

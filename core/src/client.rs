@@ -2051,6 +2051,11 @@ impl APIClient {
     pub(crate) fn forget_owned_query(&self, query_id: &str) {
         self.owned_queries.lock().finished(query_id);
     }
+
+    /// The query's result handle was dropped before it finished.
+    pub(crate) fn release_owned_query(&self, query_id: &str) {
+        self.owned_queries.lock().result_released(query_id);
+    }
 }
 
 #[cfg(test)]

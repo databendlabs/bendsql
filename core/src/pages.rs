@@ -226,7 +226,9 @@ impl Drop for Pages {
         }
         self.client.unregister_query_for_heartbeat(&self.query_id);
         // A dropped or failed result may still be running on the server, so it
-        // stays owned: a later kill_query keeps using this query's session.
+        // stays owned (a later kill_query keeps using this query's session),
+        // but it no longer pins its entry against eviction.
+        self.client.release_owned_query(&self.query_id);
     }
 }
 

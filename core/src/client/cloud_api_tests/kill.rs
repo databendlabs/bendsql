@@ -675,3 +675,66 @@ async fn kill_gives_up_after_the_registration_wait() {
     );
     query.abort();
 }
+
+/// Echo the client-generated ID, so every submission is a distinct query.
+fn echo_running_reply(request: &MockRequest) -> MockReply {
+    match (request.method.as_str(), request.path.as_str()) {
+        ("POST", "/v1/query") => {
+            MockReply::json(running_reply(&request.headers["x-databend-query-id"]))
+        }
+        (_, path) if path.ends_with("/kill") || path.ends_with("/final") => ok_reply(),
+        (_, path) => panic!("unexpected {path}"),
+    }
+}
+
+#[tokio::test]
+async fn open_results_beyond_the_bound_stay_killable_through_their_session() {
+    let server = MockServer::new(echo_running_reply).await;
+    let mut client = Arc::try_unwrap(query_id_client(&server, false).await)
+        .ok()
+        .unwrap();
+    // An old server: the detached-SQL fallback is rejected locally, so only
+    // the query's own session can cancel it.
+    let version: Version = "1.2.960".parse().unwrap();
+    client.capability = client.capability_for(&version);
+    client.server_version = Some(version);
+    let client = Arc::new(client);
+
+    let mut open = Vec::new();
+    for _ in 0..owned_queries::MAX_OWNED_QUERIES + 10 {
+        open.push(client.start_query("SELECT 1", false, None).await.unwrap());
+    }
+    // The first request started the oldest query.
+    let oldest = server.requests.lock()[0].headers["x-databend-query-id"].clone();
+
+    client.kill_query(&oldest).await.unwrap();
+    assert_eq!(
+        requests(&server).last().unwrap(),
+        &("POST".to_string(), format!("/v1/query/{oldest}/kill"))
+    );
+    drop(open);
+}
+
+#[tokio::test]
+async fn dropping_a_result_releases_its_entry_but_keeps_it_killable() {
+    let server = MockServer::new(echo_running_reply).await;
+    let client = query_id_client(&server, false).await;
+    let pages = client.start_query("SELECT 1", false, None).await.unwrap();
+    let query_id = client.last_query_id().unwrap();
+    assert_eq!(
+        client.owned_queries.lock().is_reading(&query_id),
+        Some(true)
+    );
+
+    drop(pages);
+    // The query may still run: still owned, but now evictable.
+    assert_eq!(
+        client.owned_queries.lock().is_reading(&query_id),
+        Some(false)
+    );
+    client.kill_query(&query_id).await.unwrap();
+    assert_eq!(
+        requests(&server).last().unwrap(),
+        &("POST".to_string(), format!("/v1/query/{query_id}/kill"))
+    );
+}
