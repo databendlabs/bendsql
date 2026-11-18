@@ -974,9 +974,18 @@ impl APIClient {
         let mut batches = vec![];
         if let Some(reader) = reader {
             for batch in reader {
-                let batch = batch
-                    .map_err(|e| Error::Decode(format!("failed to decode arrow batch: {e}")))?;
-                batches.push(batch);
+                match batch {
+                    Ok(batch) => batches.push(batch),
+                    Err(e) => {
+                        if is_first {
+                            // No `Pages` will be built for this response, so
+                            // release the reading mark set above; the query
+                            // stays owned since it may still run.
+                            self.owned_queries.lock().result_released(&resp.id);
+                        }
+                        return Err(Error::Decode(format!("failed to decode arrow batch: {e}")));
+                    }
+                }
             }
         }
         self.handle_session(&resp.session).await;
@@ -1064,7 +1073,8 @@ impl APIClient {
         let Some(mut target) = target else {
             return self.kill_query_by_sql(query_id).await;
         };
-        let deadline = Instant::now() + self.kill_registration_wait();
+        // `None` if the deadline does not fit in an `Instant`: no deadline.
+        let deadline = Instant::now().checked_add(self.kill_registration_wait());
         let mut delay = Duration::from_millis(50);
         loop {
             let result = self
@@ -1075,11 +1085,12 @@ impl APIClient {
                 result => return result,
             };
             let now = Instant::now();
-            if now >= deadline {
+            if deadline.is_some_and(|deadline| now >= deadline) {
                 return Err(error);
             }
             // The last attempt runs at the deadline.
-            sleep(delay.min(deadline - now)).await;
+            let left = deadline.map_or(delay, |deadline| deadline - now);
+            sleep(delay.min(left)).await;
             delay = (delay * 2).min(Duration::from_secs(1));
             // The first response may have moved the query to its server ID;
             // if it finished or was never sent, report the real answer.
@@ -1093,7 +1104,8 @@ impl APIClient {
     /// The server sends the first response within `wait_time_secs`, so by then
     /// it has registered the query and any rewritten ID is known.
     fn kill_registration_wait(&self) -> Duration {
-        let wait = self.wait_time_secs.unwrap_or(10).clamp(0, 60) as u64;
+        // The server accepts any u32 value, so honor what was configured.
+        let wait = self.wait_time_secs.unwrap_or(10).clamp(0, u32::MAX as i64) as u64;
         Duration::from_secs(wait) + KILL_REGISTRATION_SLACK
     }
 

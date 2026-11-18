@@ -494,6 +494,9 @@ async fn corrupt_arrow_batch_still_records_the_server_query_id() {
     for id in ["server-id", "client-id"] {
         assert_eq!(owned.kill_target(id).unwrap().query_id, "server-id");
     }
+    // No result handle exists for a failed response, so it must not pin the
+    // entry against eviction.
+    assert_eq!(owned.is_reading("server-id"), Some(false));
 }
 
 /// Start a query whose first response is held back by `gate`.
@@ -737,4 +740,24 @@ async fn dropping_a_result_releases_its_entry_but_keeps_it_killable() {
         requests(&server).last().unwrap(),
         &("POST".to_string(), format!("/v1/query/{query_id}/kill"))
     );
+}
+
+#[test]
+fn registration_wait_honors_large_wait_time_secs() {
+    let mut client = APIClient::default();
+    for (wait_time_secs, expected) in [
+        (None, 10),
+        (Some(0), 0),
+        (Some(-5), 0),
+        (Some(120), 120),
+        (Some(3600), 3600),
+        (Some(i64::MAX), u32::MAX as u64),
+    ] {
+        client.wait_time_secs = wait_time_secs;
+        assert_eq!(
+            client.kill_registration_wait(),
+            Duration::from_secs(expected) + KILL_REGISTRATION_SLACK,
+            "{wait_time_secs:?}"
+        );
+    }
 }
