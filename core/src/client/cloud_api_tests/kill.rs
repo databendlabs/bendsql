@@ -16,6 +16,7 @@
 //! detached `KILL QUERY` SQL for everything else.
 
 use super::*;
+use crate::transport::CloudSession;
 
 fn running_reply(id: &str) -> Value {
     let mut reply = query_reply();
@@ -49,7 +50,10 @@ fn ok_reply() -> MockReply {
 }
 
 fn not_found_reply() -> MockReply {
-    let mut reply = MockReply::json(json!({"error": {"code": 404, "message": "query not found"}}));
+    // The server's query_id_not_found response.
+    let mut reply = MockReply::json(
+        json!({"error": {"code": 404, "message": "Query ID q not found on node n1"}}),
+    );
     reply.status = 404;
     reply
 }
@@ -479,4 +483,123 @@ async fn detached_kill_is_not_replayed_after_a_timeout() {
         1,
         "a timed-out KILL must not be resent"
     );
+}
+
+#[test]
+fn only_query_not_found_404s_are_recognized() {
+    let query_body = r#"{"error":{"code":404,"message":"Query ID q not found on node n1"}}"#;
+    for (error, expected) in [
+        // Native /kill keeps the raw body.
+        (Error::response_error(StatusCode::NOT_FOUND, query_body.as_bytes()), true),
+        (
+            Error::response_error(StatusCode::NOT_FOUND, br#"{"error":"QueryNotFound"}"#),
+            true,
+        ),
+        (
+            APIClient::default()
+                .status_body_to_error(StatusCode::NOT_FOUND, query_body.as_bytes())
+                .with_context(RequestKind::QueryKill),
+            true,
+        ),
+        (Error::QueryNotFound("q".into()), true),
+        // Routing errors and anything not about the query must surface.
+        (
+            Error::response_error(
+                StatusCode::NOT_FOUND,
+                br#"{"error":{"code":404,"message":"Routing error: query q should be on server n2"}}"#,
+            ),
+            false,
+        ),
+        (Error::response_error(StatusCode::NOT_FOUND, b"Not Found"), false),
+        (Error::response_error(StatusCode::BAD_REQUEST, query_body.as_bytes()), false),
+    ] {
+        assert_eq!(is_query_not_found(&error), expected, "{error:?}");
+    }
+}
+
+#[tokio::test]
+async fn cloud_org_not_found_from_an_early_kill_reaches_the_caller() {
+    let gate = Arc::new(Notify::new());
+    let kills = Arc::new(AtomicUsize::new(0));
+    let counted = kills.clone();
+    let server = MockServer::with_query_gate(
+        move |request| match request.path.as_str() {
+            "/v1/query" => MockReply::json(running_reply("q1")),
+            path if path.ends_with("/kill") => {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let mut reply = MockReply::json(json!({"error": "OrgNotFound"}));
+                reply.status = 404;
+                reply
+            }
+            path => panic!("unexpected {path}"),
+        },
+        Some(gate.clone()),
+    )
+    .await;
+    let client = query_id_client(&server, true).await;
+    let query_client = client.clone();
+    let query =
+        tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
+    let sent_id = received_query_id(&server).await;
+    let err = client.kill_query(&sent_id).await.unwrap_err();
+    assert!(format!("{err}").contains("Organization ID"), "{err}");
+    // The failed kill is withdrawn, not replayed after the first response.
+    gate.notify_one();
+    let pages = tokio::time::timeout(Duration::from_secs(5), query)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(kills.load(Ordering::SeqCst), 1);
+    drop(pages);
+}
+
+#[tokio::test]
+async fn kill_replayed_after_a_dropped_submission_records_cloud_session_rotation() {
+    let kills = Arc::new(AtomicUsize::new(0));
+    let counted = kills.clone();
+    let server = MockServer::with_query_gate(
+        move |request| match request.path.as_str() {
+            "/v1/query" => MockReply::json(running_reply("q1")),
+            path if path.ends_with("/kill") => {
+                if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                    not_found_reply()
+                } else {
+                    let mut reply = ok_reply();
+                    reply
+                        .headers
+                        .push((HEADER_SESSION, "rotated-session".into()));
+                    reply
+                }
+            }
+            path => panic!("unexpected {path}"),
+        },
+        Some(Arc::new(Notify::new())),
+    )
+    .await;
+    let client = query_id_client(&server, true).await;
+    let query_client = client.clone();
+    let query =
+        tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
+    let sent_id = received_query_id(&server).await;
+    client.kill_query(&sent_id).await.unwrap();
+    query.abort();
+    let _ = query.await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let ready = match &client.transport {
+                Transport::CloudWebApi { session } => matches!(
+                    &*session.lock(),
+                    CloudSession::Ready(header) if header == "rotated-session"
+                ),
+                Transport::Native => unreachable!(),
+            };
+            if ready {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the replayed kill's session header must be recorded");
 }

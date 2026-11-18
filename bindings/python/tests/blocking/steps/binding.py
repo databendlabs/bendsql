@@ -522,6 +522,8 @@ def _(context):
 
     other = context.client.get_conn()
     errors = []
+    # version() above is itself a query; wait for the long query's own ID.
+    previous_id = context.conn.last_query_id()
 
     def run():
         try:
@@ -533,13 +535,15 @@ def _(context):
 
     worker = threading.Thread(target=run)
     worker.start()
-    query_id = None
+    query_id = previous_id
     for _ in range(100):
         query_id = context.conn.last_query_id()
-        if query_id is not None:
+        if query_id not in (None, previous_id):
             break
         sleep(0.05)
-    assert query_id is not None, "query id must be available before the result"
+    assert query_id not in (None, previous_id), (
+        "query id must be available before the result"
+    )
     # The server may not have registered the query yet.
     for _ in range(50):
         try:

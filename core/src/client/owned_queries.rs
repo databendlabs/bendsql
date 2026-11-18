@@ -189,6 +189,13 @@ impl OwnedQueries {
         })
     }
 
+    /// `kill_query` reported a failure for a queued kill; do not replay it.
+    pub(crate) fn withdraw_kill(&mut self, query_id: &str) {
+        if let Some(query) = self.queries.get_mut(query_id) {
+            query.cancel_requested = false;
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.queries.len()

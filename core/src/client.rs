@@ -1103,9 +1103,15 @@ impl APIClient {
             .await
         {
             // The server has not registered the query yet; the kill is replayed
-            // when the first response arrives.
-            Err(e) if target.submitting && is_not_found(&e) => Ok(()),
-            result => result,
+            // when the first response arrives or the submission is dropped.
+            Err(e) if target.submitting && is_query_not_found(&e) => Ok(()),
+            Err(e) => {
+                // Not acknowledged: the caller sees the failure, so do not
+                // replay a kill that may never succeed (e.g. a bad org).
+                self.owned_queries.lock().withdraw_kill(query_id);
+                Err(e)
+            }
+            Ok(()) => Ok(()),
         }
     }
 
@@ -1236,8 +1242,16 @@ impl APIClient {
             }
         };
         let cli = self.cli.clone();
+        let observer = self.transport.response_observer();
         GLOBAL_RUNTIME.spawn(async move {
-            match cli.execute(request).await {
+            let response = cli.execute(request).await;
+            if let Ok(resp) = &response {
+                // Cloud may rotate the session on any response; keep it current.
+                if let Err(e) = observer.observe(resp.headers()) {
+                    warn!("invalid session in kill response for query {query_id}: {e}");
+                }
+            }
+            match response {
                 Ok(resp) if resp.status().is_success() => {
                     info!("killed query {query_id} after its submission was dropped")
                 }
@@ -2115,15 +2129,40 @@ impl APIClient {
 #[cfg(test)]
 mod tracking_tests;
 
-/// Whether an HTTP query endpoint reported that the query does not exist.
-fn is_not_found(error: &Error) -> bool {
+/// Whether a query endpoint reported that the query ID is unknown, as opposed
+/// to any other 404 (e.g. Cloud `OrgNotFound`), which must reach the caller.
+fn is_query_not_found(error: &Error) -> bool {
     match error {
-        Error::WithContext { inner, .. } => is_not_found(inner),
-        Error::Response { status, .. } | Error::Logic(status, _) => {
-            *status == StatusCode::NOT_FOUND
-        }
+        Error::WithContext { inner, .. } => is_query_not_found(inner),
         Error::QueryNotFound(_) => true,
+        Error::Logic(status, code) => {
+            *status == StatusCode::NOT_FOUND && is_query_not_found_message(&code.message)
+        }
+        // Native /kill errors keep the raw body.
+        Error::Response { status, msg } => {
+            *status == StatusCode::NOT_FOUND && is_query_not_found_body(msg)
+        }
         _ => false,
+    }
+}
+
+/// The server answers `Query ID <id> not found on node <node>`.
+fn is_query_not_found_message(message: &str) -> bool {
+    message.starts_with("Query ID ") && message.contains(" not found")
+}
+
+fn is_query_not_found_body(body: &str) -> bool {
+    match serde_json::from_str::<Value>(body) {
+        Ok(value) => match value.get("error") {
+            Some(Value::Object(error)) => error
+                .get("message")
+                .and_then(Value::as_str)
+                .is_some_and(is_query_not_found_message),
+            // Gateway form.
+            Some(Value::String(error)) => error == "QueryNotFound",
+            _ => false,
+        },
+        Err(_) => false,
     }
 }
 

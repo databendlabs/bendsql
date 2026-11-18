@@ -478,16 +478,20 @@ async def _(context):
     import asyncio
 
     other = await context.client.get_conn()
+    # version() above is itself a query; wait for the long query's own ID.
+    previous_id = context.conn.last_query_id()
     task = asyncio.ensure_future(
         context.conn.query_all("SELECT sleep(0.5), number FROM numbers(15000000000)")
     )
-    query_id = None
+    query_id = previous_id
     for _ in range(100):
-        query_id = context.conn.last_query_id()
-        if query_id is not None:
-            break
         await asyncio.sleep(0.05)
-    assert query_id is not None, "query id must be available before the result"
+        query_id = context.conn.last_query_id()
+        if query_id not in (None, previous_id):
+            break
+    assert query_id not in (None, previous_id), (
+        "query id must be available before the result"
+    )
     # The server may not have registered the query yet.
     for _ in range(50):
         try:

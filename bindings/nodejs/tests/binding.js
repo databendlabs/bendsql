@@ -499,16 +499,18 @@ Then("killQuery from another connection should cancel the query", { timeout: 600
   }
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const other = await this.client.getConn();
+  // version() above is itself a query; wait for the long query's own ID.
+  const previousId = this.conn.lastQueryId();
   const query = this.conn.queryAll("SELECT sleep(0.5), number FROM numbers(15000000000)").then(
     () => null,
     (err) => err,
   );
-  let queryId = null;
-  for (let i = 0; i < 100 && queryId === null; i++) {
+  let queryId = previousId;
+  for (let i = 0; i < 100 && (queryId === null || queryId === previousId); i++) {
     queryId = this.conn.lastQueryId();
-    if (queryId === null) await sleep(50);
+    if (queryId === null || queryId === previousId) await sleep(50);
   }
-  assert.notEqual(queryId, null, "query id must be available before the result");
+  assert.ok(queryId !== null && queryId !== previousId, "query id must be available before the result");
   // The server may not have registered the query yet.
   let killed = false;
   for (let i = 0; i < 50 && !killed; i++) {
