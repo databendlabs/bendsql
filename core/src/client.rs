@@ -170,10 +170,16 @@ impl Drop for QuerySubmission<'_> {
     fn drop(&mut self) {
         self.rollback_query_id();
         // Release ownership only after an unsent ID is no longer visible.
-        self.client
+        let replay = self
+            .client
             .owned_queries
             .lock()
             .submission_ended(&self.query_id, self.may_have_reached_server);
+        if let Some(replay) = replay {
+            // The future was dropped before its first response, after
+            // kill_query acknowledged a kill the server could not apply yet.
+            self.client.spawn_kill(replay);
+        }
     }
 }
 
@@ -1133,8 +1139,9 @@ impl APIClient {
     /// or query tracking. Only the current roles are sent, so privilege checks
     /// see the same roles as the connection.
     ///
-    /// The statement is submitted as `QueryStart`, so it is never replayed once
-    /// the server may have run it (e.g. after a response-body read failure).
+    /// The statement is retried only after errors proven to precede sending
+    /// (connect errors), never once the server may have run it: a replayed
+    /// `KILL QUERY` would report 1053 for a kill that already succeeded.
     async fn exec_detached(&self, sql: &str) -> Result<()> {
         let session = {
             let state = self.session_state.lock();
@@ -1153,7 +1160,15 @@ impl APIClient {
             .timeout(self.page_request_timeout)
             .build()?;
         let response = self
-            .query_request_helper(request, true, true, true, RequestKind::QueryStart, None)
+            .query_request_helper_with_replay(
+                request,
+                true,
+                true,
+                true,
+                RequestKind::QueryStart,
+                None,
+                false,
+            )
             .await?;
         let mut resp = self.decode_detached_page(response)?;
         while let Some(next_uri) = resp.next_uri.clone() {
@@ -1188,6 +1203,53 @@ impl APIClient {
 
     pub async fn final_query(&self, query_id: &str, node_id: Option<&str>) -> Result<()> {
         self.end_query(query_id, false, node_id).await
+    }
+
+    /// Send a queued `/kill` in the background, for callers that cannot await
+    /// (dropping a submission). Best effort: failures are only logged.
+    fn spawn_kill(&self, replay: KillReplay) {
+        let build = || -> Result<Request> {
+            let uri = format!("/v1/query/{}/kill", replay.query_id);
+            let mut builder = self.cli.request(
+                self.transport.end_query_method(true),
+                self.endpoint.join(&uri)?,
+            );
+            if let Some(node_id) = &replay.node_id {
+                builder = builder.header(HEADER_STICKY_NODE, node_id)
+            }
+            let mut request = self
+                .wrap_auth_or_session_token(builder)?
+                .headers(self.make_headers(Some(&replay.query_id))?)
+                .timeout(self.page_request_timeout)
+                .build()?;
+            self.transport
+                .prepare_request(&mut request, &self.endpoint)?;
+            Ok(request)
+        };
+        let request = build();
+        let query_id = replay.query_id;
+        let request = match request {
+            Ok(request) => request,
+            Err(e) => {
+                warn!("failed to build kill for query {query_id}: {e}");
+                return;
+            }
+        };
+        let cli = self.cli.clone();
+        GLOBAL_RUNTIME.spawn(async move {
+            match cli.execute(request).await {
+                Ok(resp) if resp.status().is_success() => {
+                    info!("killed query {query_id} after its submission was dropped")
+                }
+                Ok(resp) => warn!(
+                    "failed to kill query {query_id} after its submission was dropped: HTTP {}",
+                    resp.status()
+                ),
+                Err(e) => {
+                    warn!("failed to kill query {query_id} after its submission was dropped: {e}")
+                }
+            }
+        });
     }
 
     pub async fn end_query(
@@ -1739,18 +1801,43 @@ impl APIClient {
     /// refresh databend token or reload jwt token if needed.
     async fn query_request_helper(
         &self,
+        request: Request,
+        retry_if_503: bool,
+        refresh_if_401: bool,
+        reload_auth_if_401: bool,
+        request_kind: RequestKind,
+        submission: Option<&mut QuerySubmission<'_>>,
+    ) -> Result<HttpResponseData> {
+        // Only query submission can have ambiguous SQL side effects. Connect
+        // errors precede sending bytes; login/page/final can be safely repeated.
+        let allow_replay = self.transport.allow_replay(&request_kind);
+        self.query_request_helper_with_replay(
+            request,
+            retry_if_503,
+            refresh_if_401,
+            reload_auth_if_401,
+            request_kind,
+            submission,
+            allow_replay,
+        )
+        .await
+    }
+
+    /// `query_request_helper` with an explicit policy: when `allow_replay` is
+    /// false, a failed attempt is retried only if it is proven unsent.
+    #[allow(clippy::too_many_arguments)]
+    async fn query_request_helper_with_replay(
+        &self,
         mut request: Request,
         retry_if_503: bool,
         refresh_if_401: bool,
         reload_auth_if_401: bool,
         request_kind: RequestKind,
         mut submission: Option<&mut QuerySubmission<'_>>,
+        allow_replay: bool,
     ) -> Result<HttpResponseData> {
         let mut refreshed = false;
         let mut retries = 0;
-        // Only query submission can have ambiguous SQL side effects. Connect
-        // errors precede sending bytes; login/page/final can be safely repeated.
-        let allow_replay = self.transport.allow_replay(&request_kind);
         let max_retries = self.retry_count;
         let retry_delay = Duration::from_secs(self.retry_delay_secs);
 

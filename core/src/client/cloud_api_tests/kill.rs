@@ -406,3 +406,77 @@ async fn detached_kill_is_not_replayed_after_its_response_began() {
         );
     }
 }
+
+#[tokio::test]
+async fn acknowledged_kill_is_sent_when_the_submission_is_dropped() {
+    for cloud in [false, true] {
+        let kills = Arc::new(AtomicUsize::new(0));
+        let counted = kills.clone();
+        let server = MockServer::with_query_gate(
+            move |request| match request.path.as_str() {
+                "/v1/query" => MockReply::json(running_reply("q1")),
+                path if path.ends_with("/kill") => {
+                    if counted.fetch_add(1, Ordering::SeqCst) == 0 {
+                        not_found_reply()
+                    } else {
+                        ok_reply()
+                    }
+                }
+                path => panic!("unexpected {path}"),
+            },
+            // The first response never arrives.
+            Some(Arc::new(Notify::new())),
+        )
+        .await;
+        let client = query_id_client(&server, cloud).await;
+        let query_client = client.clone();
+        let query =
+            tokio::spawn(async move { query_client.start_query("SELECT 1", false, None).await });
+        let sent_id = received_query_id(&server).await;
+        // Acknowledged although the server has not registered the query yet.
+        client.kill_query(&sent_id).await.unwrap();
+        // Nobody is left to replay it once the submission is dropped.
+        query.abort();
+        let _ = query.await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while kills.load(Ordering::SeqCst) < 2 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the acknowledged kill must be sent after the drop");
+        let expected = format!("/v1/query/{sent_id}/kill");
+        let recorded = server.requests.lock();
+        let kill_paths: Vec<_> = recorded
+            .iter()
+            .filter(|r| r.path.ends_with("/kill"))
+            .map(|r| r.path.as_str())
+            .collect();
+        assert_eq!(kill_paths, [expected.as_str(), expected.as_str()]);
+    }
+}
+
+#[tokio::test]
+async fn detached_kill_is_not_replayed_after_a_timeout() {
+    let server = MockServer::new(|_| {
+        let mut reply = MockReply::json(kill_statement_reply(None));
+        // The server applies the kill, but answers after the client timeout.
+        reply.headers.push(("X-Mock-Delay", "1500".into()));
+        reply
+    })
+    .await;
+    let mut client = APIClient::from_dsn(&format!(
+        "databend://root:@127.0.0.1:{}/default?sslmode=disable&retry_delay_secs=0&page_request_timeout_secs=1",
+        server.url.port().unwrap()
+    ))
+    .await
+    .unwrap();
+    client.build_client(None).await.unwrap();
+    assert!(client.retry_count > 1, "native retries timeouts by default");
+    assert!(client.kill_query("other").await.is_err());
+    assert_eq!(
+        requests(&server).len(),
+        1,
+        "a timed-out KILL must not be resent"
+    );
+}

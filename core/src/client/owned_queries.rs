@@ -110,14 +110,29 @@ impl OwnedQueries {
 
     /// The submission guard is gone. Keep the entry only if a request may have
     /// reached the server: the query can then be running without a response.
-    pub(crate) fn submission_ended(&mut self, query_id: &str, may_have_reached_server: bool) {
+    ///
+    /// Returns a kill that `kill_query` queued but no first-response handler
+    /// consumed, e.g. because the submitting future was dropped; the caller
+    /// must send it, since `kill_query` already reported success.
+    pub(crate) fn submission_ended(
+        &mut self,
+        query_id: &str,
+        may_have_reached_server: bool,
+    ) -> Option<KillReplay> {
         if !may_have_reached_server {
+            // Never sent: there is no server query to kill.
             self.queries.remove(query_id);
-        } else if let Some(query) = self.queries.get_mut(query_id) {
-            query.submitting = false;
-            // A burst of live submissions may have grown the set past its bound.
-            self.trim();
+            return None;
         }
+        let query = self.queries.get_mut(query_id)?;
+        query.submitting = false;
+        let replay = std::mem::take(&mut query.cancel_requested).then(|| KillReplay {
+            query_id: query_id.to_string(),
+            node_id: query.node_id.clone(),
+        });
+        // A burst of live submissions may have grown the set past its bound.
+        self.trim();
+        replay
     }
 
     /// Record the first response of `submitted_id`. Call this before the
@@ -277,6 +292,34 @@ mod tests {
             })
         );
         assert_eq!(owned.first_response("r", FirstOutcome::Unknown), None);
+    }
+
+    #[test]
+    fn queued_kill_is_returned_when_the_submission_ends_unconsumed() {
+        let mut owned = OwnedQueries::default();
+        owned.submission_started("q");
+        owned.request_kill("q");
+        assert_eq!(
+            owned.submission_ended("q", true),
+            Some(KillReplay {
+                query_id: "q".into(),
+                node_id: None
+            })
+        );
+        // Consumed: a later kill on the ended submission is not queued again.
+        owned.request_kill("q");
+        assert_eq!(owned.submission_ended("q", true), None);
+
+        // An unsent submission has nothing to kill.
+        owned.submission_started("unsent");
+        owned.request_kill("unsent");
+        assert_eq!(owned.submission_ended("unsent", false), None);
+
+        // A replay consumed by the first response is not returned again.
+        owned.submission_started("r");
+        owned.request_kill("r");
+        assert!(owned.first_response("r", FirstOutcome::Unknown).is_some());
+        assert_eq!(owned.submission_ended("r", true), None);
     }
 
     #[test]
