@@ -1134,10 +1134,15 @@ impl APIClient {
         })
     }
 
-    /// Run a statement without reading or updating this connection's session:
-    /// no transaction state, sticky node, route-hint rotation, `last_query_id`
-    /// or query tracking. Only the current roles are sent, so privilege checks
-    /// see the same roles as the connection.
+    /// Reuse the transport's client session (native cookie or Cloud
+    /// `X-DATABEND-SESSION`), including its normal refresh. That session
+    /// identifies the client; transaction continuation uses the SQL request's
+    /// JSON session state instead.
+    ///
+    /// Copy only the current roles into the JSON session for privilege checks,
+    /// so the statement cannot join the caller's transaction. Do not apply the
+    /// returned SQL session state or update the caller's `last_query_id` or
+    /// query tracking.
     ///
     /// The statement is retried only after errors proven to precede sending
     /// (connect errors), never once the server may have run it: a replayed
