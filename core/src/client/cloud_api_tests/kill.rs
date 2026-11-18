@@ -345,3 +345,64 @@ async fn invalid_kill_ids_are_rejected_before_sending() {
     }
     assert!(server.requests.lock().is_empty());
 }
+
+#[test]
+fn submitted_id_is_owned_before_it_is_visible() {
+    let client = APIClient::default();
+    let submission = QuerySubmission::new(&client, "q".into());
+    // Any reader that sees the ID must find it owned.
+    assert_eq!(client.last_query_id().as_deref(), Some("q"));
+    assert!(client.owned_queries.lock().request_kill("q").is_some());
+    drop(submission);
+    // An unsent ID is no longer visible nor owned.
+    assert_eq!(client.last_query_id(), None);
+    assert!(client.owned_queries.lock().request_kill("q").is_none());
+}
+
+#[tokio::test]
+async fn undecodable_first_response_keeps_the_query_owned() {
+    for cloud in [false, true] {
+        let server = MockServer::new(|request| match request.path.as_str() {
+            "/v1/query" => MockReply {
+                status: 200,
+                body: "not json".into(),
+                headers: vec![],
+            },
+            path if path.ends_with("/kill") => ok_reply(),
+            path => panic!("unexpected {path}"),
+        })
+        .await;
+        let client = query_id_client(&server, cloud).await;
+        assert!(client.start_query("SELECT 1", false, None).await.is_err());
+        let sent_id = client.last_query_id().unwrap();
+
+        // The server may be running the query: cancel it through its session.
+        client.kill_query(&sent_id).await.unwrap();
+        assert_eq!(
+            requests(&server).last().unwrap(),
+            &("POST".to_string(), format!("/v1/query/{sent_id}/kill"))
+        );
+    }
+}
+
+#[tokio::test]
+async fn detached_kill_is_not_replayed_after_its_response_began() {
+    for cloud in [false, true] {
+        let server = MockServer::new(|_| {
+            let mut reply = MockReply::json(kill_statement_reply(None));
+            // The server ran the statement, but the body is cut short.
+            reply.headers.push(("X-Mock-Truncate", "1".into()));
+            reply
+        })
+        .await;
+        let client = query_id_client(&server, cloud).await;
+        let err = client.kill_query("other").await.unwrap_err();
+        // A replay could report 1053 for a kill that already succeeded.
+        assert_eq!(requests(&server).len(), 1, "cloud={cloud}: {err:?}");
+        let message = format!("{err}");
+        assert!(
+            message.contains("query/kill") && message.contains("other"),
+            "{message}"
+        );
+    }
+}

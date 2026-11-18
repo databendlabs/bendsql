@@ -81,7 +81,7 @@ mod owned_queries;
 #[cfg(test)]
 mod query_id_tests;
 
-use owned_queries::OwnedQueries;
+use owned_queries::{FirstOutcome, KillReplay, OwnedQueries};
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -100,6 +100,15 @@ impl QueryState {
         let t = *self.last_access_time.lock();
         now.duration_since(t).as_secs() > self.timeout_secs / 2
     }
+}
+
+/// First-response bookkeeping for one submission, filled in by `handle_page`.
+struct FirstResponse<'a> {
+    submitted_id: &'a str,
+    /// A kill requested before the first response, to send afterwards.
+    replay: Option<KillReplay>,
+    /// Whether a decoded response settled the query's ownership.
+    recorded: bool,
 }
 
 struct HttpResponseData {
@@ -127,6 +136,9 @@ struct QuerySubmission<'a> {
 
 impl<'a> QuerySubmission<'a> {
     fn new(client: &'a APIClient, query_id: String) -> Self {
+        // Own the ID before publishing it, so a kill_query that observes it via
+        // last_query_id always takes the query-session path.
+        client.owned_queries.lock().submission_started(&query_id);
         // Snapshot and publish under one lock so rollback cannot restore a value
         // older than a response received immediately before publication.
         {
@@ -134,7 +146,6 @@ impl<'a> QuerySubmission<'a> {
             let previous_id = state.current.replace(query_id.clone());
             state.pending.insert(query_id.clone(), previous_id);
         }
-        client.owned_queries.lock().submission_started(&query_id);
         Self {
             client,
             query_id,
@@ -157,10 +168,17 @@ impl<'a> QuerySubmission<'a> {
 
 impl Drop for QuerySubmission<'_> {
     fn drop(&mut self) {
+        self.rollback_query_id();
+        // Release ownership only after an unsent ID is no longer visible.
         self.client
             .owned_queries
             .lock()
             .submission_ended(&self.query_id, self.may_have_reached_server);
+    }
+}
+
+impl QuerySubmission<'_> {
+    fn rollback_query_id(&self) {
         let mut state = self.client.last_query_id.lock();
         let Some(previous_id) = state.pending.remove(&self.query_id) else {
             return;
@@ -872,7 +890,12 @@ impl APIClient {
             .headers(headers.clone())
             .timeout(self.page_request_timeout)
             .build()?;
-        let response = self
+        let mut first = FirstResponse {
+            submitted_id: &query_id,
+            replay: None,
+            recorded: false,
+        };
+        let result = match self
             .query_request_helper(
                 request,
                 true,
@@ -881,28 +904,29 @@ impl APIClient {
                 RequestKind::QueryStart,
                 Some(&mut submission),
             )
-            .await?;
-        let result = self.handle_page(response, true).await;
-        let running = match &result {
-            Ok((resp, _)) if resp.next_uri.is_some() => {
-                Some((resp.id.as_str(), resp.node_id.clone()))
-            }
-            _ => None,
+            .await
+        {
+            Ok(response) => self.handle_page(response, Some(&mut first)).await,
+            Err(e) => Err(e),
         };
-        let replay_kill = self.owned_queries.lock().first_response(&query_id, running);
-        if replay_kill {
-            if let Ok((resp, _)) = &result {
-                // kill_query ran before the server could know this query; repeat
-                // it now so the cancel is not lost. Later pages report the abort.
-                if let Err(e) = self
-                    .end_query(&resp.id, true, resp.node_id.as_deref())
-                    .await
-                {
-                    warn!(
-                        "failed to kill query {} after its first response: {e}",
-                        resp.id
-                    );
-                }
+        if !first.recorded {
+            // No usable response: the query may still run under the submitted ID.
+            first.replay = self
+                .owned_queries
+                .lock()
+                .first_response(&query_id, FirstOutcome::Unknown);
+        }
+        if let Some(replay) = first.replay {
+            // kill_query ran before the server could know this query; repeat it
+            // now so the cancel is not lost. Later pages report the abort.
+            if let Err(e) = self
+                .end_query(&replay.query_id, true, replay.node_id.as_deref())
+                .await
+            {
+                warn!(
+                    "failed to kill query {} after its first response: {e}",
+                    replay.query_id
+                );
             }
         }
         result
@@ -917,11 +941,14 @@ impl APIClient {
         false
     }
 
+    /// Decode a query page. `first` is set for the first response of a
+    /// submission, which also settles the query's ownership for `kill_query`.
     async fn handle_page(
         &self,
         response: HttpResponseData,
-        is_first: bool,
+        first: Option<&mut FirstResponse<'_>>,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
+        let is_first = first.is_some();
         let status = response.status;
         if status != StatusCode::OK {
             let error = self.status_body_to_error(status, &response.body);
@@ -965,7 +992,22 @@ impl APIClient {
             body = json_body
         };
         let resp: QueryResponse = self.decode_response(&body)?;
-        if is_first {
+        if let Some(first) = first {
+            let outcome = if resp.error.is_none() && resp.next_uri.is_some() {
+                FirstOutcome::Running {
+                    query_id: &resp.id,
+                    node_id: resp.node_id.clone(),
+                }
+            } else {
+                FirstOutcome::Finished
+            };
+            // Settle ownership before publishing the server-side ID, so a
+            // kill_query that observes it always finds this query.
+            first.replay = self
+                .owned_queries
+                .lock()
+                .first_response(first.submitted_id, outcome);
+            first.recorded = true;
             // The server or a gateway may replace the ID, including on SQL errors.
             self.set_last_query_id(Some(resp.id.clone()));
         }
@@ -992,7 +1034,7 @@ impl APIClient {
         let response = self
             .send_page_request(query_id, next_uri, node_id, accept_arrow)
             .await?;
-        self.handle_page(response, false).await
+        self.handle_page(response, None).await
     }
 
     async fn send_page_request(
@@ -1070,21 +1112,30 @@ impl APIClient {
             }
         }
         let sql = format!("KILL QUERY {}", sql_string_literal(query_id)?);
-        self.exec_detached(&sql, RequestKind::QueryKill)
-            .await
-            .map_err(|e| match e {
-                Error::WithContext { .. } => e.with_query_id(query_id),
-                other => other
-                    .with_context(RequestKind::QueryKill)
-                    .with_query_id(query_id),
-            })
+        self.exec_detached(&sql).await.map_err(|e| match e {
+            // Report the kill and its target rather than the detached statement.
+            Error::WithContext {
+                inner, retry_times, ..
+            } => Error::WithContext {
+                inner,
+                request_kind: Some(RequestKind::QueryKill),
+                query_id: Some(query_id.to_string()),
+                retry_times,
+            },
+            other => other
+                .with_context(RequestKind::QueryKill)
+                .with_query_id(query_id),
+        })
     }
 
     /// Run a statement without reading or updating this connection's session:
     /// no transaction state, sticky node, route-hint rotation, `last_query_id`
     /// or query tracking. Only the current roles are sent, so privilege checks
     /// see the same roles as the connection.
-    async fn exec_detached(&self, sql: &str, request_kind: RequestKind) -> Result<()> {
+    ///
+    /// The statement is submitted as `QueryStart`, so it is never replayed once
+    /// the server may have run it (e.g. after a response-body read failure).
+    async fn exec_detached(&self, sql: &str) -> Result<()> {
         let session = {
             let state = self.session_state.lock();
             let mut session = SessionState::default();
@@ -1102,7 +1153,7 @@ impl APIClient {
             .timeout(self.page_request_timeout)
             .build()?;
         let response = self
-            .query_request_helper(request, true, true, true, request_kind, None)
+            .query_request_helper(request, true, true, true, RequestKind::QueryStart, None)
             .await?;
         let mut resp = self.decode_detached_page(response)?;
         while let Some(next_uri) = resp.next_uri.clone() {
