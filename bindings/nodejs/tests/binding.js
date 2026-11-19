@@ -497,26 +497,31 @@ Then("killQuery from another connection should cancel the query", { timeout: 600
     console.log("SKIP");
     return;
   }
-  const previousId = this.conn.lastQueryId();
-  // Wait for the first response so the query is registered before KILL.
-  const rows = await this.conn.queryIter("SELECT sleep(0.5), number FROM numbers(15000000000)");
+  // Get the first response while the query is registered but still sleeping.
+  // A single-row query avoids having to drain buffered results after KILL.
+  const client = new Client(`${dsn}${dsn.includes("?") ? "&" : "?"}wait_time_secs=1`);
+  const target = await client.getConn();
   try {
-    const queryId = this.conn.lastQueryId();
-    assert.ok(queryId != null && queryId !== previousId, "expected the long query's server-side ID");
-    const other = await this.client.getConn();
+    const rows = await target.queryIter("SELECT sleep(30)");
     try {
-      await other.killQuery(queryId);
-      assert.equal(other.lastQueryId(), null, "KILL must not change lastQueryId");
-      await assert.rejects(async () => {
-        while ((await rows.next()) != null) {
-          // Consume buffered rows until the server reports cancellation.
-        }
-      }, /cancel|abort/i);
+      const queryId = target.lastQueryId();
+      assert.ok(queryId, "expected the sleeping query's server-side ID");
+      const other = await this.client.getConn();
+      try {
+        await other.killQuery(queryId);
+        assert.equal(other.lastQueryId(), null, "KILL must not change lastQueryId");
+        // RowIterator.next() resolves to an Error on a query failure.
+        const result = await rows.next();
+        assert.ok(result instanceof Error, "expected cancellation instead of a row or EOF");
+        assert.match(result.message, /\[1043\].*(cancel|abort)/i);
+      } finally {
+        await other.close();
+      }
     } finally {
-      await other.close();
+      rows.close();
     }
   } finally {
-    rows.close();
+    await target.close();
   }
 });
 

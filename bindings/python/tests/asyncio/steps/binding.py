@@ -65,6 +65,7 @@ async def _(context):
     client = databend_driver.AsyncDatabendClient(dsn)
     context.conn = await client.get_conn()
     context.client = client
+    context.dsn = dsn
 
 
 @when("Create a test table")
@@ -477,31 +478,32 @@ async def _(context):
         return
     import asyncio
 
-    previous_id = context.conn.last_query_id()
-    # Wait for the first response so the query is registered before KILL.
-    rows = await context.conn.query_iter(
-        "SELECT sleep(0.5), number FROM numbers(15000000000)"
+    # Get the first response while the query is registered but still sleeping.
+    # A single-row query avoids having to drain buffered results after KILL.
+    separator = "&" if "?" in context.dsn else "?"
+    client = databend_driver.AsyncDatabendClient(
+        f"{context.dsn}{separator}wait_time_secs=1"
     )
+    target = await client.get_conn()
     try:
-        query_id = context.conn.last_query_id()
-        assert query_id not in (None, previous_id), (
-            "expected the long query's server-side ID"
-        )
-        other = await context.client.get_conn()
+        rows = await target.query_iter("SELECT sleep(30)")
         try:
-            await other.kill_query(query_id)
-            assert other.last_query_id() is None, "KILL must not change last_query_id"
-
-            async def drain():
-                async for _ in rows:
-                    pass
-
-            with tc.assertRaisesRegex(Exception, r"(?i)cancel|abort"):
-                await asyncio.wait_for(drain(), timeout=30)
+            query_id = target.last_query_id()
+            assert query_id, "expected the sleeping query's server-side ID"
+            other = await context.client.get_conn()
+            try:
+                await other.kill_query(query_id)
+                assert other.last_query_id() is None, (
+                    "KILL must not change last_query_id"
+                )
+                with tc.assertRaisesRegex(Exception, r"(?i)\[1043\].*(cancel|abort)"):
+                    await asyncio.wait_for(rows.__anext__(), timeout=10)
+            finally:
+                await other.close()
         finally:
-            await other.close()
+            rows.close()
     finally:
-        rows.close()
+        await target.close()
 
 
 @then("Query should not timeout")
