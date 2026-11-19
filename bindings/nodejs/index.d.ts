@@ -86,10 +86,10 @@ export declare class RowIterator {
   schema(): Schema
   close(): void
   /**
-   * Fetch next row.
-   * Returns `None` if there are no more rows.
+   * Fetch the next row, or return `null` at the end of the result.
+   * Rejects if reading the result fails.
    */
-  next(): Promise<Error | Row | null>
+  next(): Promise<Row | null>
   /**
    * Return a Readable Stream for the query result.
    * Should be used with `ObjectMode` set to `true`.
@@ -100,10 +100,10 @@ export declare class RowIteratorExt {
   schema(): Schema
   close(): void
   /**
-   * Fetch next row or stats.
-   * Returns `None` if there are no more rows.
+   * Fetch the next row or stats, or return `null` at the end of the result.
+   * Rejects if reading the result fails.
    */
-  next(): Promise<Error | RowOrStats | null>
+  next(): Promise<RowOrStats | null>
 }
 /** Must contain either row or stats. */
 export declare class RowOrStats {
@@ -124,4 +124,14 @@ export declare class ServerStats {
   get writeBytes(): bigint
   get spillFileNums(): bigint
   get runningTimeMs(): number
+}
+
+/** A driver error. Metadata is present only when available. */
+export interface DatabendError extends Error {
+  code: 'GenericFailure'
+  errorCode?: number
+  httpStatus?: number
+  requestKind?: string
+  queryId?: string
+  retryTimes?: number
 }

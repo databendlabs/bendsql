@@ -103,6 +103,22 @@ await otherConn.killQuery(id);
   This requires a Databend server newer than v1.2.965. Error `1053` means the
   query was not found or already finished; `1063` means permission denied.
 
+## Errors
+
+Driver errors are native JavaScript `Error` objects. Existing `message` text and
+`code` (`"GenericFailure"` for driver errors) are unchanged. When available, the
+error also has `errorCode` (the numeric code from the REST error payload),
+`httpStatus`, `requestKind`, `queryId`, and `retryTimes` (the number of retries
+already attempted, not the configured retry limit). Missing metadata is omitted;
+for example, a transport failure may have no HTTP status or server code. The
+optional fields are described by the TypeScript `DatabendError` interface.
+Prefer these fields over parsing the diagnostic message.
+
+`RowIterator.next()` and `RowIteratorExt.next()` resolve to a result or `null`
+at the end of the result. Read failures now reject the Promise instead of
+resolving with an `Error` value. Use `try/catch` around `await` or `for await`,
+or handle a stream failure with `pipeline()` or the stream's `error` event.
+
 ## Type Mapping
 
 [Databend Types](https://docs.databend.com/sql/sql-reference/data-types/)
