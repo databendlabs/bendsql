@@ -33,7 +33,7 @@ class RowsStream extends Readable {
         this.push(item);
       })
       .catch((e) => {
-        this.emit("error", e);
+        this.destroy(e);
       });
   }
 }

@@ -16,10 +16,21 @@
 
 const fs = require("fs");
 
-let files = ["generated.js", "index.d.ts"];
+const files = ["generated.js", "index.d.ts"];
+const errorDeclaration = `
+/** A driver error. Metadata is present only when available. */
+export interface DatabendError extends Error {
+  code: 'GenericFailure'
+  errorCode?: number
+  httpStatus?: number
+  requestKind?: string
+  queryId?: string
+  retryTimes?: number
+}
+`;
 
-for (path of files) {
-  let data = fs.readFileSync(path, "utf8");
+for (const path of files) {
+  const data = fs.readFileSync(path, "utf8");
   fs.writeFileSync(
     path,
     `/*
@@ -38,6 +49,8 @@ for (path of files) {
  * limitations under the License.
  */
 
-` + data,
+` +
+      data +
+      (path === "index.d.ts" ? errorDeclaration : ""),
   );
 }

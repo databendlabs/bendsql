@@ -15,6 +15,8 @@
 #[macro_use]
 extern crate napi_derive;
 
+mod error;
+
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use databend_driver::LoadMethod;
 use napi::{bindgen_prelude::*, Env};
@@ -23,6 +25,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::{collections::HashMap, path::Path};
 use tokio_stream::StreamExt;
+
+use crate::error::DriverOutcome;
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -67,10 +71,13 @@ impl Client {
     }
 
     /// Get a connection from the client.
-    #[napi]
-    pub async fn get_conn(&self) -> Result<Connection> {
-        let conn = self.inner.get_conn().await.map_err(format_napi_error)?;
-        Ok(Connection::new(conn, self.opts.clone()))
+    #[napi(ts_return_type = "Promise<Connection>")]
+    pub async fn get_conn(&self) -> DriverOutcome<Connection> {
+        self.inner
+            .get_conn()
+            .await
+            .map(|conn| Connection::new(conn, self.opts.clone()))
+            .into()
     }
 }
 
@@ -100,9 +107,9 @@ impl Connection {
     }
 
     /// Get the databend version.
-    #[napi]
-    pub async fn version(&self) -> Result<String> {
-        self.inner.version().await.map_err(format_napi_error)
+    #[napi(ts_return_type = "Promise<string>")]
+    pub async fn version(&self) -> DriverOutcome<String> {
+        self.inner.version().await.into()
     }
 
     #[napi]
@@ -120,132 +127,132 @@ impl Connection {
     ///
     /// Queries started by this connection are cancelled through their own query
     /// session; any other ID runs `KILL QUERY` (own queries, or any with SUPER).
-    #[napi]
-    pub async fn kill_query(&self, query_id: String) -> Result<()> {
-        self.inner
-            .kill_query(&query_id)
-            .await
-            .map_err(format_napi_error)
+    #[napi(ts_return_type = "Promise<void>")]
+    pub async fn kill_query(&self, query_id: String) -> DriverOutcome<()> {
+        self.inner.kill_query(&query_id).await.into()
     }
 
     /// Execute a SQL query, return the number of affected rows.
-    #[napi]
-    pub async fn exec(&self, sql: String, params: Option<Params>) -> Result<i64> {
+    #[napi(ts_return_type = "Promise<number>")]
+    pub async fn exec(&self, sql: String, params: Option<Params>) -> DriverOutcome<i64> {
         let result = if let Some(p) = params {
             self.inner.exec(&sql).bind(p).await
         } else {
             self.inner.exec(&sql).await
         };
-        result.map_err(format_napi_error)
+        result.into()
     }
 
     /// Execute a SQL query, and only return the first row.
-    #[napi]
-    pub async fn query_row(&self, sql: String, params: Option<Params>) -> Result<Option<Row>> {
+    #[napi(ts_return_type = "Promise<Row | null>")]
+    pub async fn query_row(
+        &self,
+        sql: String,
+        params: Option<Params>,
+    ) -> DriverOutcome<Option<Row>> {
         let ret = if let Some(p) = params {
             self.inner.query(&sql).bind(p).one().await
         } else {
             self.inner.query_row(&sql).await
         };
-        let ret = ret.map_err(format_napi_error)?;
-        let row = ret.map(|r| Row::new(r, self.opts.clone()));
-        Ok(row)
+        ret.map(|row| row.map(|r| Row::new(r, self.opts.clone())))
+            .into()
     }
 
     /// Execute a SQL query and fetch all data into the result
-    #[napi]
-    pub async fn query_all(&self, sql: String, params: Option<Params>) -> Result<Vec<Row>> {
+    #[napi(ts_return_type = "Promise<Array<Row>>")]
+    pub async fn query_all(&self, sql: String, params: Option<Params>) -> DriverOutcome<Vec<Row>> {
         let rows = if let Some(p) = params {
             self.inner.query(&sql).bind(p).all().await
         } else {
             self.inner.query_all(&sql).await
         };
-        Ok(rows
-            .map_err(format_napi_error)?
-            .into_iter()
-            .map(|r| Row::new(r, self.opts.clone()))
-            .collect())
+        rows.map(|rows| {
+            rows.into_iter()
+                .map(|r| Row::new(r, self.opts.clone()))
+                .collect()
+        })
+        .into()
     }
 
     /// Execute a SQL query, and return all rows.
-    #[napi]
-    pub async fn query_iter(&self, sql: String, params: Option<Params>) -> Result<RowIterator> {
+    #[napi(ts_return_type = "Promise<RowIterator>")]
+    pub async fn query_iter(
+        &self,
+        sql: String,
+        params: Option<Params>,
+    ) -> DriverOutcome<RowIterator> {
         let iterator = if let Some(p) = params {
             self.inner.query(&sql).bind(p).iter().await
         } else {
             self.inner.query_iter(&sql).await
         };
-        let iterator = iterator.map_err(format_napi_error)?;
-        Ok(RowIterator::new(
-            iterator,
-            self.opts.clone(),
-            self.inner.clone(),
-        ))
+        iterator
+            .map(|iter| RowIterator::new(iter, self.opts.clone(), self.inner.clone()))
+            .into()
     }
 
     /// Execute a SQL query, and return all rows with schema and stats.
-    #[napi]
+    #[napi(ts_return_type = "Promise<RowIteratorExt>")]
     pub async fn query_iter_ext(
         &self,
         sql: String,
         params: Option<Params>,
-    ) -> Result<RowIteratorExt> {
+    ) -> DriverOutcome<RowIteratorExt> {
         let iterator = if let Some(p) = params {
             self.inner.query(&sql).bind(p).iter_ext().await
         } else {
             self.inner.query_iter_ext(&sql).await
         };
-        let iterator = iterator.map_err(format_napi_error)?;
-        Ok(RowIteratorExt::new(
-            iterator,
-            self.opts.clone(),
-            self.inner.clone(),
-        ))
+        iterator
+            .map(|iter| RowIteratorExt::new(iter, self.opts.clone(), self.inner.clone()))
+            .into()
     }
 
     /// Load data with stage attachment.
     /// The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
-    #[napi]
+    #[napi(ts_return_type = "Promise<ServerStats>")]
     pub async fn stream_load(
         &self,
         sql: String,
         data: Vec<Vec<&str>>,
         method: Option<String>,
-    ) -> Result<ServerStats> {
-        let method = LoadMethod::from_str(&method.unwrap_or_else(|| "stage".to_string()))
-            .map_err(format_napi_error)?;
-        let ss = self
-            .inner
+    ) -> DriverOutcome<ServerStats> {
+        let method = match LoadMethod::from_str(method.as_deref().unwrap_or("stage")) {
+            Ok(method) => method,
+            Err(error) => return Err(error).into(),
+        };
+        self.inner
             .stream_load(&sql, data, method)
             .await
-            .map_err(format_napi_error)?;
-        Ok(ServerStats(ss))
+            .map(ServerStats)
+            .into()
     }
 
     /// Load file with stage attachment.
     /// The SQL can be `INSERT INTO tbl VALUES` or `REPLACE INTO tbl VALUES`.
-    #[napi]
+    #[napi(ts_return_type = "Promise<ServerStats>")]
     pub async fn load_file(
         &self,
         sql: String,
         file: String,
         method: Option<String>,
-    ) -> Result<ServerStats> {
-        let method = LoadMethod::from_str(&method.unwrap_or_else(|| "stage".to_string()))
-            .map_err(format_napi_error)?;
-        let ss = self
-            .inner
+    ) -> DriverOutcome<ServerStats> {
+        let method = match LoadMethod::from_str(method.as_deref().unwrap_or("stage")) {
+            Ok(method) => method,
+            Err(error) => return Err(error).into(),
+        };
+        self.inner
             .load_file(&sql, Path::new(&file), method)
             .await
-            .map_err(format_napi_error)?;
-        Ok(ServerStats(ss))
+            .map(ServerStats)
+            .into()
     }
 
     /// Close the Connection and release resources.
-    #[napi]
-    pub async fn close(&self) -> Result<()> {
-        self.inner.close().await.map_err(format_napi_error)?;
-        Ok(())
+    #[napi(ts_return_type = "Promise<void>")]
+    pub async fn close(&self) -> DriverOutcome<()> {
+        self.inner.close().await.into()
     }
 }
 
@@ -337,7 +344,8 @@ impl ToNapiValue for Value<'_> {
             }
             databend_driver::Value::Date(_) => {
                 let inner = val.inner.clone();
-                let v = NaiveDate::try_from(inner).map_err(format_napi_error)?;
+                let v =
+                    NaiveDate::try_from(inner).map_err(|e| Error::from_reason(e.to_string()))?;
                 NaiveDateTime::to_napi_value(
                     env,
                     NaiveDateTime::new(v, NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
@@ -493,15 +501,17 @@ impl RowIterator {
         self.inner.close()
     }
 
-    /// Fetch next row.
-    /// Returns `None` if there are no more rows.
-    #[napi]
+    /// Fetch the next row, or return `null` at the end of the result.
+    /// Rejects if reading the result fails.
+    #[napi(ts_return_type = "Promise<Row | null>")]
     #[allow(clippy::missing_safety_doc)]
-    pub async unsafe fn next(&mut self) -> Option<Result<Row>> {
-        self.inner.next().await.map(|row| {
-            row.map(|r| Row::new(r, self.opts.clone()))
-                .map_err(format_napi_error)
-        })
+    pub async unsafe fn next(&mut self) -> DriverOutcome<Option<Row>> {
+        self.inner
+            .next()
+            .await
+            .transpose()
+            .map(|row| row.map(|r| Row::new(r, self.opts.clone())))
+            .into()
     }
 
     /// Return a Readable Stream for the query result.
@@ -542,27 +552,28 @@ impl RowIteratorExt {
         self.inner.close()
     }
 
-    /// Fetch next row or stats.
-    /// Returns `None` if there are no more rows.
-    #[napi]
+    /// Fetch the next row or stats, or return `null` at the end of the result.
+    /// Rejects if reading the result fails.
+    #[napi(ts_return_type = "Promise<RowOrStats | null>")]
     #[allow(clippy::missing_safety_doc)]
-    pub async unsafe fn next(&mut self) -> Option<Result<RowOrStats>> {
-        match self.inner.next().await {
-            None => None,
-            Some(r0) => match r0 {
-                Ok(r1) => match r1 {
-                    databend_driver::RowWithStats::Row(r) => Some(Ok(RowOrStats {
+    pub async unsafe fn next(&mut self) -> DriverOutcome<Option<RowOrStats>> {
+        self.inner
+            .next()
+            .await
+            .transpose()
+            .map(|item| {
+                item.map(|item| match item {
+                    databend_driver::RowWithStats::Row(r) => RowOrStats {
                         row: Some(Row::new(r, self.opts.clone())),
                         stats: None,
-                    })),
-                    databend_driver::RowWithStats::Stats(ss) => Some(Ok(RowOrStats {
+                    },
+                    databend_driver::RowWithStats::Stats(ss) => RowOrStats {
                         row: None,
                         stats: Some(ServerStats(ss)),
-                    })),
-                },
-                Err(e) => Some(Err(format_napi_error(e))),
-            },
-        }
+                    },
+                })
+            })
+            .into()
     }
 }
 
@@ -676,10 +687,6 @@ impl ServerStats {
     pub fn running_time_ms(&self) -> f64 {
         self.0.running_time_ms
     }
-}
-
-fn format_napi_error(err: databend_driver::Error) -> Error {
-    Error::from_reason(format!("{err}"))
 }
 
 #[ctor]

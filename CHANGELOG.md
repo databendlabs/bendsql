@@ -15,6 +15,16 @@
   registered the query yet (up to `wait_time_secs` plus 2 seconds) and returns
   the server's actual answer.
 
+### Node.js driver errors
+
+- Driver errors retain their existing message and `code`, and now expose
+  `errorCode`, `httpStatus`, `requestKind`, `queryId`, and `retryTimes` when
+  available.
+- `RowIterator.next()` and `RowIteratorExt.next()` now reject when reading
+  results fails instead of resolving with an `Error` object. Move checks for an
+  `Error` return value into `catch`. Successful results and `null` at end of
+  results are unchanged.
+
 ## 0.34.3 (2026-11-05)
 
 ### Correctness and robustness
