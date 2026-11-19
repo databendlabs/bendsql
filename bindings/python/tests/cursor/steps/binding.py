@@ -431,6 +431,11 @@ def _(context):
     print("SKIP")
 
 
+@then("killQuery from another connection should cancel the query")
+def _(context):
+    print("SKIP")
+
+
 @then("Query should not timeout")
 def _(context):
     if not (DRIVER_VERSION > (0, 30, 3) and DB_VERSION >= (1, 2, 709)):

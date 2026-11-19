@@ -484,6 +484,42 @@ Then("killQuery should return error for non-existent query ID", async function (
   }
 });
 
+Then("killQuery from another connection should cancel the query", { timeout: 60000 }, async function () {
+  // Killing a query started by another connection runs `KILL QUERY`, which
+  // needs databend#21058 on the server and the driver change after 0.34.3.
+  if (!(compareVersions(DRIVER_VERSION, [0, 34, 3]) > 0 && compareVersions(DB_VERSION, [1, 2, 965]) > 0)) {
+    console.log("SKIP");
+    return;
+  }
+  // DB_VERSION is unset outside the compatibility matrix; check the server itself.
+  const serverVersion = (await this.conn.version()).match(/v(\d+)\.(\d+)\.(\d+)/);
+  if (!serverVersion || compareVersions(serverVersion.slice(1).map(Number), [1, 2, 965]) <= 0) {
+    console.log("SKIP");
+    return;
+  }
+  const previousId = this.conn.lastQueryId();
+  // Wait for the first response so the query is registered before KILL.
+  const rows = await this.conn.queryIter("SELECT sleep(0.5), number FROM numbers(15000000000)");
+  try {
+    const queryId = this.conn.lastQueryId();
+    assert.ok(queryId != null && queryId !== previousId, "expected the long query's server-side ID");
+    const other = await this.client.getConn();
+    try {
+      await other.killQuery(queryId);
+      assert.equal(other.lastQueryId(), null, "KILL must not change lastQueryId");
+      await assert.rejects(async () => {
+        while ((await rows.next()) != null) {
+          // Consume buffered rows until the server reports cancellation.
+        }
+      }, /cancel|abort/i);
+    } finally {
+      await other.close();
+    }
+  } finally {
+    rows.close();
+  }
+});
+
 Then("Query should not timeout", { timeout: 30000 }, async function () {
   if (!(compareVersions(DRIVER_VERSION, [0, 30, 3]) > 0 && compareVersions(DB_VERSION, [1, 2, 709]) >= 0)) {
     console.log("SKIP");

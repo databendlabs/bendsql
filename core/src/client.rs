@@ -63,6 +63,8 @@ use tokio_util::io::ReaderStream;
 use url::Url;
 
 const HEADER_QUERY_ID: &str = "X-DATABEND-QUERY-ID";
+/// Extra time beyond `wait_time_secs` for retrying `/kill` before registration.
+const KILL_REGISTRATION_SLACK: Duration = Duration::from_secs(2);
 const HEADER_TENANT: &str = "X-DATABEND-TENANT";
 const HEADER_STICKY_NODE: &str = "X-DATABEND-STICKY-NODE";
 const HEADER_STAGE_NAME: &str = "X-DATABEND-STAGE-NAME";
@@ -77,8 +79,11 @@ const DEFAULT_USERNAME: &str = "root";
 
 #[cfg(test)]
 mod cloud_api_tests;
+mod owned_queries;
 #[cfg(test)]
 mod query_id_tests;
+
+use owned_queries::{FirstOutcome, OwnedQueries};
 
 static VERSION: Lazy<String> = Lazy::new(|| {
     let version = option_env!("CARGO_PKG_VERSION").unwrap_or("unknown");
@@ -124,6 +129,9 @@ struct QuerySubmission<'a> {
 
 impl<'a> QuerySubmission<'a> {
     fn new(client: &'a APIClient, query_id: String) -> Self {
+        // Own the ID before publishing it, so a kill_query that observes it via
+        // last_query_id always takes the query-session path.
+        client.owned_queries.lock().submission_started(&query_id);
         // Snapshot and publish under one lock so rollback cannot restore a value
         // older than a response received immediately before publication.
         {
@@ -153,6 +161,17 @@ impl<'a> QuerySubmission<'a> {
 
 impl Drop for QuerySubmission<'_> {
     fn drop(&mut self) {
+        self.rollback_query_id();
+        // Release ownership only after an unsent ID is no longer visible.
+        self.client
+            .owned_queries
+            .lock()
+            .submission_ended(&self.query_id, self.may_have_reached_server);
+    }
+}
+
+impl QuerySubmission<'_> {
+    fn rollback_query_id(&self) {
         let mut state = self.client.last_query_id.lock();
         let Some(previous_id) = state.pending.remove(&self.query_id) else {
             return;
@@ -214,6 +233,7 @@ pub struct APIClient {
     presign: Mutex<PresignMode>,
     last_node_id: Mutex<Option<String>>,
     last_query_id: Mutex<LastQueryId>,
+    owned_queries: Mutex<OwnedQueries>,
 
     capability: Capability,
 
@@ -873,7 +893,8 @@ impl APIClient {
                 Some(&mut submission),
             )
             .await?;
-        self.handle_page(response, true).await
+        // Without a decoded response the query stays owned under this ID.
+        self.handle_page(response, Some(&query_id)).await
     }
 
     fn is_arrow_data(headers: &HeaderMap) -> bool {
@@ -885,11 +906,14 @@ impl APIClient {
         false
     }
 
+    /// Decode a query page. `submitted_id` is set for the first response of a
+    /// submission, which also settles the query's ownership for `kill_query`.
     async fn handle_page(
         &self,
         response: HttpResponseData,
-        is_first: bool,
+        submitted_id: Option<&str>,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
+        let is_first = submitted_id.is_some();
         let status = response.status;
         if status != StatusCode::OK {
             let error = self.status_body_to_error(status, &response.body);
@@ -908,34 +932,60 @@ impl APIClient {
                 self.route_hint.set(route_hint.to_str().unwrap_or_default());
             }
         }
-        let mut body = response.body;
-        let mut batches = vec![];
-        if is_arrow_data {
+        let body = response.body;
+        let mut reader = None;
+        // Decode the response header first: it carries the server-side ID,
+        // which must be recorded even if a record batch turns out corrupt.
+        let resp: QueryResponse = if is_arrow_data {
             if is_first {
                 debug!("received arrow data");
             }
             let cursor = std::io::Cursor::new(body.as_ref());
-            let reader = StreamReader::try_new(cursor, None)
+            let stream = StreamReader::try_new(cursor, None)
                 .map_err(|e| Error::Decode(format!("failed to decode arrow stream: {e}")))?;
-            let schema = reader.schema();
-            let json_body = if let Some(json_resp) = schema.metadata.get("response_header") {
-                bytes::Bytes::copy_from_slice(json_resp.as_bytes())
-            } else {
+            let Some(json_resp) = stream.schema().metadata.get("response_header").cloned() else {
                 return Err(Error::Decode(
                     "missing response_header metadata in arrow payload".to_string(),
                 ));
             };
-            for batch in reader {
-                let batch = batch
-                    .map_err(|e| Error::Decode(format!("failed to decode arrow batch: {e}")))?;
-                batches.push(batch);
-            }
-            body = json_body
+            reader = Some(stream);
+            self.decode_response(json_resp.as_bytes())?
+        } else {
+            self.decode_response(&body)?
         };
-        let resp: QueryResponse = self.decode_response(&body)?;
-        if is_first {
+        if let Some(submitted_id) = submitted_id {
+            let outcome = if resp.error.is_none() && resp.next_uri.is_some() {
+                FirstOutcome::Running {
+                    query_id: &resp.id,
+                    node_id: resp.node_id.clone(),
+                }
+            } else {
+                FirstOutcome::Finished
+            };
+            // Settle ownership before publishing the server-side ID, so a
+            // kill_query that observes it always finds this query.
+            self.owned_queries
+                .lock()
+                .first_response(submitted_id, outcome);
             // The server or a gateway may replace the ID, including on SQL errors.
             self.set_last_query_id(Some(resp.id.clone()));
+        }
+        let mut batches = vec![];
+        if let Some(reader) = reader {
+            for batch in reader {
+                match batch {
+                    Ok(batch) => batches.push(batch),
+                    Err(e) => {
+                        if is_first {
+                            // No `Pages` will be built for this response, so
+                            // release the reading mark set above; the query
+                            // stays owned since it may still run.
+                            self.owned_queries.lock().result_released(&resp.id);
+                        }
+                        return Err(Error::Decode(format!("failed to decode arrow batch: {e}")));
+                    }
+                }
+            }
         }
         self.handle_session(&resp.session).await;
         if let Some(err) = &resp.error {
@@ -956,10 +1006,24 @@ impl APIClient {
         next_uri: &str,
         node_id: &Option<String>,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
+        let accept_arrow = self.capability.arrow_data && self.query_result_format == "arrow";
+        let response = self
+            .send_page_request(query_id, next_uri, node_id, accept_arrow)
+            .await?;
+        self.handle_page(response, None).await
+    }
+
+    async fn send_page_request(
+        &self,
+        query_id: &str,
+        next_uri: &str,
+        node_id: &Option<String>,
+        accept_arrow: bool,
+    ) -> Result<HttpResponseData> {
         info!("query page: {next_uri}");
         let endpoint = self.endpoint.join(next_uri)?;
         let mut headers = self.make_headers(Some(query_id))?;
-        if self.capability.arrow_data && self.query_result_format == "arrow" {
+        if accept_arrow {
             headers.insert(ACCEPT, HeaderValue::from_static(CONTENT_TYPE_ARROW_OR_JSON));
         }
         let mut builder = self.cli.get(endpoint.clone());
@@ -972,21 +1036,172 @@ impl APIClient {
         }
         let request = builder.build()?;
 
-        let response = self
-            .query_request_helper(
-                request,
-                self.transport.retry_page_503(),
-                true,
-                true,
-                RequestKind::QueryPage,
-                None,
-            )
-            .await?;
-        self.handle_page(response, false).await
+        self.query_request_helper(
+            request,
+            self.transport.retry_page_503(),
+            true,
+            true,
+            RequestKind::QueryPage,
+            None,
+        )
+        .await
     }
 
+    /// Kill a query by ID.
+    ///
+    /// A query started by this connection is cancelled through its own HTTP
+    /// query session (`/v1/query/{id}/kill`), which every server version
+    /// supports. Without a usable first response, a query-not-found answer is
+    /// retried with backoff for up to `wait_time_secs` plus a short slack, even
+    /// if a possibly sent submission was dropped. A retry uses the same ID
+    /// and picks up the query's node once known. The result is the server's
+    /// actual answer; nothing is sent later on the caller's behalf.
+    ///
+    /// Any other ID runs `KILL QUERY '<id>'` in a request detached from this
+    /// connection's transaction, route hint and `last_query_id`. The server
+    /// then decides: users may kill their own queries from any session, and
+    /// global `SUPER` may kill other users' queries. This requires a server
+    /// that supports killing by query ID (newer than v1.2.965); with an older
+    /// server version the call fails before sending anything.
     pub async fn kill_query(&self, query_id: &str) -> Result<()> {
-        self.end_query(query_id, true, None).await
+        if query_id.is_empty() {
+            return Err(Error::BadArgument("query id must not be empty".into()));
+        }
+        let target = self.owned_queries.lock().kill_target(query_id);
+        let Some(mut target) = target else {
+            return self.kill_query_by_sql(query_id).await;
+        };
+        // `None` if the deadline does not fit in an `Instant`: no deadline.
+        let deadline = Instant::now().checked_add(self.kill_registration_wait());
+        let mut delay = Duration::from_millis(50);
+        loop {
+            let result = self
+                .end_query(query_id, true, target.node_id.as_deref())
+                .await;
+            let error = match result {
+                Err(e) if target.retry_not_found && is_query_not_found(&e) => e,
+                result => return result,
+            };
+            let now = Instant::now();
+            if deadline.is_some_and(|deadline| now >= deadline) {
+                return Err(error);
+            }
+            // The last attempt runs at the deadline.
+            let left = deadline.map_or(delay, |deadline| deadline - now);
+            sleep(delay.min(left)).await;
+            delay = (delay * 2).min(Duration::from_secs(1));
+            // The first response may have supplied the query's node. If we
+            // no longer track this ID, return the last server error.
+            match self.owned_queries.lock().kill_target(query_id) {
+                Some(next) => target = next,
+                None => return Err(error),
+            }
+        }
+    }
+
+    /// Allow the server's first-page wait plus slack for registration and
+    /// receipt of the response, if the submission is still being polled.
+    fn kill_registration_wait(&self) -> Duration {
+        // The server accepts any u32 value, so honor what was configured.
+        let wait = self.wait_time_secs.unwrap_or(10).clamp(0, u32::MAX as i64) as u64;
+        Duration::from_secs(wait) + KILL_REGISTRATION_SLACK
+    }
+
+    async fn kill_query_by_sql(&self, query_id: &str) -> Result<()> {
+        if let Some(version) = &self.server_version {
+            if !self.capability.kill_query_by_id {
+                return Err(Error::BadArgument(format!(
+                    "query {query_id} was not started by this connection; killing it requires a Databend server newer than v1.2.965 (server is v{version})"
+                )));
+            }
+        }
+        let sql = format!("KILL QUERY {}", sql_string_literal(query_id)?);
+        self.exec_detached(&sql).await.map_err(|e| match e {
+            // Report the kill and its target rather than the detached statement.
+            Error::WithContext {
+                inner, retry_times, ..
+            } => Error::WithContext {
+                inner,
+                request_kind: Some(RequestKind::QueryKill),
+                query_id: Some(query_id.to_string()),
+                retry_times,
+            },
+            other => other
+                .with_context(RequestKind::QueryKill)
+                .with_query_id(query_id),
+        })
+    }
+
+    /// Reuse the transport's client session (native cookie or Cloud
+    /// `X-DATABEND-SESSION`), including its normal refresh. That session
+    /// identifies the client; transaction continuation uses the SQL request's
+    /// JSON session state instead.
+    ///
+    /// Copy only the current roles into the JSON session for privilege checks,
+    /// so the statement cannot join the caller's transaction. Do not apply the
+    /// returned SQL session state or update the caller's `last_query_id` or
+    /// query tracking.
+    ///
+    /// The statement is retried only after errors proven to precede sending
+    /// (connect errors), never once the server may have run it: a replayed
+    /// `KILL QUERY` would report 1053 for a kill that already succeeded.
+    async fn exec_detached(&self, sql: &str) -> Result<()> {
+        let session = {
+            let state = self.session_state.lock();
+            let mut session = SessionState::default();
+            session.role = state.role.clone();
+            session.secondary_roles = state.secondary_roles.clone();
+            session
+        };
+        let req = QueryRequest::new(sql).with_session(Some(session));
+        let query_id = self.gen_query_id();
+        let headers = self.make_headers(Some(&query_id))?;
+        let builder = self.cli.post(self.endpoint.join("v1/query")?).json(&req);
+        let request = self
+            .wrap_auth_or_session_token(builder)?
+            .headers(headers)
+            .timeout(self.page_request_timeout)
+            .build()?;
+        let response = self
+            .query_request_helper_with_replay(
+                request,
+                true,
+                true,
+                true,
+                RequestKind::QueryStart,
+                None,
+                false,
+            )
+            .await?;
+        let mut resp = self.decode_detached_page(response)?;
+        while let Some(next_uri) = resp.next_uri.clone() {
+            if !next_uri.contains("/page/") {
+                // Only the final URI is left: release the result.
+                if let Err(e) = self
+                    .end_query(&resp.id, false, resp.node_id.as_deref())
+                    .await
+                {
+                    debug!("failed to final detached query {}: {e}", resp.id);
+                }
+                break;
+            }
+            let response = self
+                .send_page_request(&resp.id, &next_uri, &resp.node_id, false)
+                .await?;
+            resp = self.decode_detached_page(response)?;
+        }
+        Ok(())
+    }
+
+    fn decode_detached_page(&self, response: HttpResponseData) -> Result<QueryResponse> {
+        if response.status != StatusCode::OK {
+            return Err(self.status_body_to_error(response.status, &response.body));
+        }
+        let resp: QueryResponse = self.decode_response(&response.body)?;
+        if let Some(err) = resp.error {
+            return Err(self.auth.sanitize_error(Error::QueryFailed(err)));
+        }
+        Ok(resp)
     }
 
     pub async fn final_query(&self, query_id: &str, node_id: Option<&str>) -> Result<()> {
@@ -1542,18 +1757,43 @@ impl APIClient {
     /// refresh databend token or reload jwt token if needed.
     async fn query_request_helper(
         &self,
+        request: Request,
+        retry_if_503: bool,
+        refresh_if_401: bool,
+        reload_auth_if_401: bool,
+        request_kind: RequestKind,
+        submission: Option<&mut QuerySubmission<'_>>,
+    ) -> Result<HttpResponseData> {
+        // Only query submission can have ambiguous SQL side effects. Connect
+        // errors precede sending bytes; login/page/final can be safely repeated.
+        let allow_replay = self.transport.allow_replay(&request_kind);
+        self.query_request_helper_with_replay(
+            request,
+            retry_if_503,
+            refresh_if_401,
+            reload_auth_if_401,
+            request_kind,
+            submission,
+            allow_replay,
+        )
+        .await
+    }
+
+    /// `query_request_helper` with an explicit policy: when `allow_replay` is
+    /// false, a failed attempt is retried only if it is proven unsent.
+    #[allow(clippy::too_many_arguments)]
+    async fn query_request_helper_with_replay(
+        &self,
         mut request: Request,
         retry_if_503: bool,
         refresh_if_401: bool,
         reload_auth_if_401: bool,
         request_kind: RequestKind,
         mut submission: Option<&mut QuerySubmission<'_>>,
+        allow_replay: bool,
     ) -> Result<HttpResponseData> {
         let mut refreshed = false;
         let mut retries = 0;
-        // Only query submission can have ambiguous SQL side effects. Connect
-        // errors precede sending bytes; login/page/final can be safely repeated.
-        let allow_replay = self.transport.allow_replay(&request_kind);
         let max_retries = self.retry_count;
         let retry_delay = Duration::from_secs(self.retry_delay_secs);
 
@@ -1820,10 +2060,73 @@ impl APIClient {
     pub(crate) fn unregister_query_for_heartbeat(&self, query_id: &str) {
         self.queries_need_heartbeat.lock().remove(query_id);
     }
+
+    /// The query has finished or its result was released; later `kill_query`
+    /// calls for this ID no longer use this connection's query session.
+    pub(crate) fn forget_owned_query(&self, query_id: &str) {
+        self.owned_queries.lock().finished(query_id);
+    }
+
+    /// The query's result handle was dropped before it finished.
+    pub(crate) fn release_owned_query(&self, query_id: &str) {
+        self.owned_queries.lock().result_released(query_id);
+    }
 }
 
 #[cfg(test)]
 mod tracking_tests;
+
+/// Whether a query endpoint reported that the query ID is unknown, as opposed
+/// to any other 404 (e.g. Cloud `OrgNotFound`), which must reach the caller.
+fn is_query_not_found(error: &Error) -> bool {
+    match error {
+        Error::WithContext { inner, .. } => is_query_not_found(inner),
+        Error::QueryNotFound(_) => true,
+        Error::Logic(status, code) => {
+            *status == StatusCode::NOT_FOUND && is_query_not_found_message(&code.message)
+        }
+        // Native /kill errors keep the raw body.
+        Error::Response { status, msg } => {
+            *status == StatusCode::NOT_FOUND && is_query_not_found_body(msg)
+        }
+        _ => false,
+    }
+}
+
+/// The server answers `Query ID <id> not found on node <node>`.
+fn is_query_not_found_message(message: &str) -> bool {
+    message.starts_with("Query ID ") && message.contains(" not found")
+}
+
+fn is_query_not_found_body(body: &str) -> bool {
+    match serde_json::from_str::<Value>(body) {
+        Ok(value) => match value.get("error") {
+            Some(Value::Object(error)) => error
+                .get("message")
+                .and_then(Value::as_str)
+                .is_some_and(is_query_not_found_message),
+            // Gateway form.
+            Some(Value::String(error)) => error == "QueryNotFound",
+            _ => false,
+        },
+        Err(_) => false,
+    }
+}
+
+/// Quote a value as a Databend string literal. Databend treats backslash as an
+/// escape character, so both `\` and `'` must be escaped to keep the value
+/// inside the literal.
+fn sql_string_literal(value: &str) -> Result<String> {
+    if value.chars().any(char::is_control) {
+        return Err(Error::BadArgument(
+            "value must not contain control characters".into(),
+        ));
+    }
+    Ok(format!(
+        "'{}'",
+        value.replace('\\', "\\\\").replace('\'', "''")
+    ))
+}
 
 fn json_from_slice<'a, T>(body: &'a [u8]) -> Result<T>
 where
@@ -1867,6 +2170,7 @@ impl Default for APIClient {
             session_token_info: None,
             closed: AtomicBool::new(false),
             last_query_id: Default::default(),
+            owned_queries: Default::default(),
             server_version: None,
             capability: Default::default(),
             queries_need_heartbeat: Default::default(),

@@ -171,6 +171,9 @@ impl Connection {
         params.replace(sql)
     }
 
+    /// Kill a query by ID. Queries started by this connection are cancelled
+    /// through their own query session; any other ID runs `KILL QUERY`, which
+    /// lets users kill their own queries and SUPER kill anyone's.
     pub async fn kill_query(&self, query_id: &str) -> Result<()> {
         self.inner.kill_query(query_id).await
     }

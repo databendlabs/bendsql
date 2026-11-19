@@ -20,6 +20,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio::task::{JoinHandle, JoinSet};
 
+mod kill;
 mod lifecycle;
 
 const TOKEN: &str = "dbc_test_secret";

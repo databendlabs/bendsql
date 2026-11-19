@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Query cancellation
+
+- `kill_query` / `killQuery` can kill queries started by other connections or
+  processes. IDs not started by this connection run `KILL QUERY '<id>'` in a
+  request detached from the connection's transaction and `last_query_id`; the
+  server allows users to kill their own queries and `SUPER` to kill any. This
+  needs a Databend server newer than v1.2.965; older servers return an error
+  before anything is sent.
+- Killing this connection's own query now targets the query's node. A kill
+  issued before the first response retries while the server has not
+  registered the query yet (up to `wait_time_secs` plus 2 seconds) and returns
+  the server's actual answer.
+
 ## 0.34.3 (2026-11-05)
 
 ### Correctness and robustness

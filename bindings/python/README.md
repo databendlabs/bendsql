@@ -243,13 +243,27 @@ await conn.query_row("SELECT 1")
 query_id = conn.last_query_id()
 print(f"Query ID: {query_id}")
 
-# Kill a running query (if needed)
+# Kill a running query by ID, from this or any other connection
 try:
     await conn.kill_query("some-query-id")
     print("Query killed successfully")
 except Exception as e:
     print(f"Failed to kill query: {e}")
 ```
+
+`kill_query(query_id)` follows the server's `KILL QUERY` rules:
+
+- A query started by the same connection is cancelled through its own query
+  session, on every server version. Calling it right after starting a query is
+  fine: while the server has not registered the query yet, `kill_query`
+  retries for up to `wait_time_secs` plus 2 seconds and then returns the real
+  result.
+- Any other ID runs `KILL QUERY '<id>'` in a separate request that does not
+  touch this connection's transaction or `last_query_id()`. Users can kill
+  their own queries; killing another user's query needs the global `SUPER`
+  privilege. This requires a Databend server newer than v1.2.965. Error `1053`
+  means the query was not found or already finished; `1063` means permission
+  denied.
 
 ## Type Mapping
 

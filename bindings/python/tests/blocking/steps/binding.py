@@ -504,6 +504,45 @@ def _(context):
         print(f"Expected error for non-existent query: {err}")
 
 
+@then("killQuery from another connection should cancel the query")
+def _(context):
+    # Killing a query started by another connection runs `KILL QUERY`, which
+    # needs databend#21058 on the server and the driver change after 0.34.3.
+    if not (DRIVER_VERSION > (0, 34, 3) and DB_VERSION > (1, 2, 965)):
+        print("SKIP")
+        return
+    # DB_VERSION is unset outside the compatibility matrix; check the server itself.
+    import re
+
+    server = re.search(r"v(\d+)\.(\d+)\.(\d+)", context.conn.version())
+    if server is None or tuple(map(int, server.groups())) <= (1, 2, 965):
+        print("SKIP")
+        return
+    previous_id = context.conn.last_query_id()
+    # Wait for the first response so the query is registered before KILL.
+    rows = context.conn.query_iter(
+        "SELECT sleep(0.5), number FROM numbers(15000000000)"
+    )
+    try:
+        query_id = context.conn.last_query_id()
+        assert query_id not in (None, previous_id), (
+            "expected the long query's server-side ID"
+        )
+        other = context.client.get_conn()
+        try:
+            other.kill_query(query_id)
+            assert other.last_query_id() is None, "KILL must not change last_query_id"
+            deadline = time.monotonic() + 30
+            with tc.assertRaisesRegex(Exception, r"(?i)cancel|abort"):
+                for _ in rows:
+                    if time.monotonic() >= deadline:
+                        break
+        finally:
+            other.close()
+    finally:
+        rows.close()
+
+
 @then("Query should not timeout")
 def _(context):
     if not (DRIVER_VERSION > (0, 30, 3) and DB_VERSION >= (1, 2, 709)):
