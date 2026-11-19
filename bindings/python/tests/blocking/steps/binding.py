@@ -66,6 +66,7 @@ def _(context):
     client = databend_driver.BlockingDatabendClient(dsn)
     context.conn = client.get_conn()
     context.client = client
+    context.dsn = dsn
 
 
 @when("Create a test table")
@@ -518,29 +519,32 @@ def _(context):
     if server is None or tuple(map(int, server.groups())) <= (1, 2, 965):
         print("SKIP")
         return
-    previous_id = context.conn.last_query_id()
-    # Wait for the first response so the query is registered before KILL.
-    rows = context.conn.query_iter(
-        "SELECT sleep(0.5), number FROM numbers(15000000000)"
+    # Get the first response while the query is registered but still sleeping.
+    # A single-row query avoids having to drain buffered results after KILL.
+    separator = "&" if "?" in context.dsn else "?"
+    client = databend_driver.BlockingDatabendClient(
+        f"{context.dsn}{separator}wait_time_secs=1"
     )
+    target = client.get_conn()
     try:
-        query_id = context.conn.last_query_id()
-        assert query_id not in (None, previous_id), (
-            "expected the long query's server-side ID"
-        )
-        other = context.client.get_conn()
+        rows = target.query_iter("SELECT sleep(30)")
         try:
-            other.kill_query(query_id)
-            assert other.last_query_id() is None, "KILL must not change last_query_id"
-            deadline = time.monotonic() + 30
-            with tc.assertRaisesRegex(Exception, r"(?i)cancel|abort"):
-                for _ in rows:
-                    if time.monotonic() >= deadline:
-                        break
+            query_id = target.last_query_id()
+            assert query_id, "expected the sleeping query's server-side ID"
+            other = context.client.get_conn()
+            try:
+                other.kill_query(query_id)
+                assert other.last_query_id() is None, (
+                    "KILL must not change last_query_id"
+                )
+                with tc.assertRaisesRegex(Exception, r"(?i)\[1043\].*(cancel|abort)"):
+                    next(rows)
+            finally:
+                other.close()
         finally:
-            other.close()
+            rows.close()
     finally:
-        rows.close()
+        target.close()
 
 
 @then("Query should not timeout")
