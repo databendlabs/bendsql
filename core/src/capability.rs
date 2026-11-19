@@ -29,10 +29,7 @@ impl Capability {
         Capability {
             streaming_load: ver > &Version::new(1, 2, 781),
             arrow_data: ver > &Version::new(1, 2, 835),
-            // TODO: update version threshold when server PR gets a release version
             server_side_params: ver > &Version::new(1, 2, 900),
-            // TODO: replace with the first release containing databend#21058
-            // (merged after v1.2.965-nightly).
             kill_query_by_id: ver > &Version::new(1, 2, 965),
         }
     }
