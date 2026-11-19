@@ -55,7 +55,8 @@
     "build:debug": "napi build --platform --target=$NAPI_TARGET --js generated.js && node ./scripts/header.js",
     "docs": "typedoc",
     "format": "prettier --write .",
-    "test": "cucumber-js",
+    "test": "npm run test:types && cucumber-js",
+    "test:types": "tsc --noEmit --strict --target es2022 --module commonjs --moduleResolution node --skipLibCheck tests/types/basic.ts",
     "test:cloud": "python3 ../tests/cloud_dsn.py --node node",
     "prepublishOnly": "napi prepublish -t npm --skip-gh-release"
   },
