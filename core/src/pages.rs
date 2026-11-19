@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::client::QueryState;
+use crate::client::{PasswordChange, QueryState};
 use crate::error::Result;
 use crate::response::QueryResponse;
 use crate::schema::Schema;
 use crate::settings::{QueryResultFormatSettings, ResultFormatSettings};
-use crate::{APIClient, Error, QueryStats, SchemaField, SensitiveString};
+use crate::{APIClient, Error, QueryStats, SchemaField};
 use arrow_array::RecordBatch;
 use log::debug;
 use parking_lot::Mutex;
@@ -79,7 +79,7 @@ pub struct Pages {
     next_page_future: Option<PageFut>,
     node_id: Option<String>,
     next_uri: Option<String>,
-    pending_password: Option<SensitiveString>,
+    password_change: Option<PasswordChange>,
 
     result_timeout_secs: Option<u64>,
     last_access_time: Arc<Mutex<Instant>>,
@@ -100,7 +100,7 @@ impl Pages {
         first_response: QueryResponse,
         record_batches: Vec<RecordBatch>,
         need_progress: bool,
-        pending_password: Option<SensitiveString>,
+        password_change: Option<PasswordChange>,
     ) -> Result<Self> {
         let mut s = Self {
             query_id: first_response.id.clone(),
@@ -110,21 +110,28 @@ impl Pages {
             node_id: first_response.node_id.clone(),
             first_page: None,
             next_uri: first_response.next_uri.clone(),
-            pending_password,
+            password_change,
             result_timeout_secs: first_response.result_timeout_secs,
             last_access_time: Arc::new(Mutex::new(Instant::now())),
         };
-        s.update_password_on_success(&first_response);
+        s.handle_password_change_response(&first_response)?;
         s.first_page = Some(Page::from_response(first_response, record_batches));
         Ok(s)
     }
 
-    fn update_password_on_success(&mut self, response: &QueryResponse) {
+    fn handle_password_change_response(&mut self, response: &QueryResponse) -> Result<()> {
         if response.state == "Succeeded" {
-            if let Some(password) = self.pending_password.take() {
-                self.client.apply_password_change(password);
+            if let Some(change) = self.password_change.take() {
+                change.succeed();
+            }
+        } else if response.next_uri.is_none() {
+            if let Some(change) = self.password_change.take() {
+                return Err(change.finish_error(Error::Decode(
+                    "password change ended without a terminal query response".into(),
+                )));
             }
         }
+        Ok(())
     }
 
     pub fn add_back(&mut self, page: Page) {
@@ -197,12 +204,14 @@ impl Stream for Pages {
         match self.next_page_future {
             Some(ref mut next_page) => match Pin::new(next_page).poll(cx) {
                 Poll::Ready(Ok((resp, batches))) => {
-                    self.update_password_on_success(&resp);
                     self.next_uri = resp.next_uri.clone();
                     self.next_page_future = None;
                     if self.next_uri.is_none() {
                         self.client.unregister_query_for_heartbeat(&self.query_id);
                         self.client.forget_owned_query(&self.query_id);
+                    }
+                    if let Err(error) = self.handle_password_change_response(&resp) {
+                        return Poll::Ready(Some(Err(error)));
                     }
                     if resp.data.is_empty() && !self.need_progress {
                         self.poll_next(cx)
@@ -215,9 +224,12 @@ impl Stream for Pages {
                 Poll::Ready(Err(e)) => {
                     self.next_page_future = None;
                     self.next_uri = None;
-                    self.pending_password = None;
                     self.client.unregister_query_for_heartbeat(&self.query_id);
-                    Poll::Ready(Some(Err(e)))
+                    let error = match self.password_change.take() {
+                        Some(change) => change.finish_error(e),
+                        None => e,
+                    };
+                    Poll::Ready(Some(Err(error)))
                 }
                 Poll::Pending => Poll::Pending,
             },
@@ -227,7 +239,8 @@ impl Stream for Pages {
                     let next_uri = next_uri.clone();
                     let query_id = self.query_id.clone();
                     let node_id = self.node_id.clone();
-                    let pending_password = self.pending_password.clone();
+                    let change = self.password_change.as_ref();
+                    let pending_password = change.map(|change| change.password().clone());
                     self.next_page_future = Some(Box::pin(async move {
                         client
                             .query_page_with_password_change(

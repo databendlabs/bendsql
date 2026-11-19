@@ -341,10 +341,22 @@ async fn password_change_poll_retries_with_new_password_after_401() {
         .await
         .unwrap();
 
-    client
-        .query_all("ALTER USER 'alice' IDENTIFIED BY 'new'", None)
+    let mut pages = client
+        .start_query("ALTER USER 'alice' IDENTIFIED BY 'new'", false, None)
         .await
         .unwrap();
+    // Even the same target password is rejected before sending a second ALTER.
+    let overlap = client
+        .query_all("ALTER USER USER() IDENTIFIED BY 'new'", None)
+        .await;
+    assert!(
+        matches!(overlap, Err(Error::BadArgument(message)) if message.contains("already in progress"))
+    );
+    assert_eq!(requests.lock().unwrap().len(), 1);
+
+    while let Some(page) = pages.next().await {
+        page.unwrap();
+    }
     client.query_all("SELECT 1", None).await.unwrap();
     assert_eq!(requests.lock().unwrap().len(), 4);
     server.abort();
@@ -354,7 +366,7 @@ async fn password_change_poll_retries_with_new_password_after_401() {
 async fn password_change_failure_and_other_user_keep_old_credentials() {
     let poll_uri = "/v1/query/query-id/page/1";
     let handler: Arc<ResponseHandler> = Arc::new(move |idx, req| {
-        assert_basic_password(req, "old");
+        assert_basic_password(req, if idx < 4 { "old" } else { "new" });
         let body = match idx {
             0 => password_change_response("Running", Some(poll_uri)).to_string(),
             1 => {
@@ -363,8 +375,8 @@ async fn password_change_failure_and_other_user_keep_old_credentials() {
                 response["error"] = json!({"code": 1006, "message": "password rejected"});
                 response.to_string()
             }
-            2 => password_change_response("Succeeded", None).to_string(),
-            3 => ok_query_response("1"),
+            2 | 3 => password_change_response("Succeeded", None).to_string(),
+            4 => ok_query_response("1"),
             _ => panic!("unexpected request index: {idx}"),
         };
         (200, "application/json", body)
@@ -382,9 +394,76 @@ async fn password_change_failure_and_other_user_keep_old_credentials() {
         .query_all("ALTER USER bob IDENTIFIED BY 'new'", None)
         .await
         .unwrap();
+    client
+        .query_all("ALTER USER USER() IDENTIFIED BY 'new'", None)
+        .await
+        .unwrap();
     client.query_all("SELECT 1", None).await.unwrap();
-    assert_eq!(requests.lock().unwrap().len(), 4);
+    assert_eq!(requests.lock().unwrap().len(), 5);
     server.abort();
+}
+
+#[tokio::test]
+async fn dropping_unconfirmed_password_change_requires_reconnect_before_another_change() {
+    let handler: Arc<ResponseHandler> = Arc::new(|idx, req| {
+        assert_eq!(idx, 0);
+        assert_eq!(req.path, "/v1/query");
+        assert_basic_password(req, "old");
+        let response = password_change_response("Running", Some("/v1/query/query-id/page/1"));
+        (200, "application/json", response.to_string())
+    });
+    let (port, requests, server) = spawn_test_server(handler);
+    let client = APIClient::new(&password_change_dsn(port), None)
+        .await
+        .unwrap();
+
+    let pages = client
+        .start_query("ALTER USER USER() IDENTIFIED BY 'new'", false, None)
+        .await
+        .unwrap();
+    drop(pages);
+
+    let result = client
+        .query_all("ALTER USER USER() IDENTIFIED BY 'other'", None)
+        .await;
+    assert!(matches!(result, Err(Error::BadArgument(message)) if message.contains("reconnect")));
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    server.abort();
+}
+
+#[tokio::test]
+async fn cancelling_password_change_before_first_response_leaves_outcome_unknown() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = APIClient::new(
+        &password_change_dsn(listener.local_addr().unwrap().port()),
+        None,
+    )
+    .await
+    .unwrap();
+    let submitting_client = client.clone();
+    let submission = tokio::spawn(async move {
+        submitting_client
+            .query_all("ALTER USER USER() IDENTIFIED BY 'new'", None)
+            .await
+    });
+
+    // Read the submission, but leave the socket open without responding.
+    let (mut stream, _) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+    assert_basic_password(&read_request(&mut stream).await.unwrap(), "old");
+    submission.abort();
+    assert!(matches!(submission.await, Err(error) if error.is_cancelled()));
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.query_all("ALTER USER USER() IDENTIFIED BY 'other'", None),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(result, Err(Error::BadArgument(message)) if message.contains("reconnect")));
 }
 
 #[tokio::test]
