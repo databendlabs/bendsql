@@ -63,8 +63,7 @@ use tokio_util::io::ReaderStream;
 use url::Url;
 
 const HEADER_QUERY_ID: &str = "X-DATABEND-QUERY-ID";
-/// Beyond `wait_time_secs`, how long `kill_query` keeps retrying `/kill` for a
-/// submission the server has not registered (or renamed) yet.
+/// Extra time beyond `wait_time_secs` for retrying `/kill` before registration.
 const KILL_REGISTRATION_SLACK: Duration = Duration::from_secs(2);
 const HEADER_TENANT: &str = "X-DATABEND-TENANT";
 const HEADER_STICKY_NODE: &str = "X-DATABEND-STICKY-NODE";
@@ -1054,10 +1053,9 @@ impl APIClient {
     /// query session (`/v1/query/{id}/kill`), which every server version
     /// supports. Without a usable first response, a query-not-found answer is
     /// retried with backoff for up to `wait_time_secs` plus a short slack, even
-    /// if a possibly sent submission was dropped. If the first response does
-    /// arrive, a retry can follow the server's ID if it differs from the
-    /// submitted ID. The result is the server's actual answer; nothing is sent
-    /// later on the caller's behalf.
+    /// if a possibly sent submission was dropped. A retry uses the same ID
+    /// and picks up the query's node once known. The result is the server's
+    /// actual answer; nothing is sent later on the caller's behalf.
     ///
     /// Any other ID runs `KILL QUERY '<id>'` in a request detached from this
     /// connection's transaction, route hint and `last_query_id`. The server
@@ -1078,7 +1076,7 @@ impl APIClient {
         let mut delay = Duration::from_millis(50);
         loop {
             let result = self
-                .end_query(&target.query_id, true, target.node_id.as_deref())
+                .end_query(query_id, true, target.node_id.as_deref())
                 .await;
             let error = match result {
                 Err(e) if target.retry_not_found && is_query_not_found(&e) => e,
@@ -1092,8 +1090,8 @@ impl APIClient {
             let left = deadline.map_or(delay, |deadline| deadline - now);
             sleep(delay.min(left)).await;
             delay = (delay * 2).min(Duration::from_secs(1));
-            // The first response may have moved the query to its server ID;
-            // if it finished or was never sent, report the real answer.
+            // The first response may have supplied the query's node. If we
+            // no longer track this ID, return the last server error.
             match self.owned_queries.lock().kill_target(query_id) {
                 Some(next) => target = next,
                 None => return Err(error),

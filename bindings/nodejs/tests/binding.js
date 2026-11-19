@@ -498,7 +498,7 @@ Then("killQuery from another connection should cancel the query", { timeout: 600
     return;
   }
   const previousId = this.conn.lastQueryId();
-  // Wait for the first response so we get the server-side ID even if a gateway rewrites it.
+  // Wait for the first response so the query is registered before KILL.
   const rows = await this.conn.queryIter("SELECT sleep(0.5), number FROM numbers(15000000000)");
   try {
     const queryId = this.conn.lastQueryId();

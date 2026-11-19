@@ -35,15 +35,11 @@ struct OwnedQuery {
     awaiting_first_response: bool,
     /// A result handle (`Pages`) for the query is alive.
     reading: bool,
-    /// The client-generated ID, when the server or a gateway assigned another.
-    submitted_id: Option<String>,
 }
 
 /// Where `kill_query` should send `/kill` for an owned query, as of now.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct KillTarget {
-    /// The ID the server knows the query by.
-    pub query_id: String,
     pub node_id: Option<String>,
     /// The server may not have registered the query yet.
     pub retry_not_found: bool,
@@ -54,8 +50,7 @@ pub(crate) struct KillTarget {
 /// owned under the submitted ID, since it may still be running.
 #[derive(Debug)]
 pub(crate) enum FirstOutcome<'a> {
-    /// The server reported the query with more pages to fetch. A gateway may
-    /// have replaced the ID, so this carries the server-side ID and node.
+    /// The first response reports a query with more pages to fetch.
     Running {
         query_id: &'a str,
         node_id: Option<String>,
@@ -84,7 +79,6 @@ impl OwnedQueries {
             submitting,
             awaiting_first_response: submitting,
             reading: false,
-            submitted_id: None,
         }
     }
 
@@ -139,8 +133,6 @@ impl OwnedQueries {
                 // Every start path wraps a running first response in `Pages`,
                 // which calls `result_released` when dropped.
                 entry.reading = true;
-                // A kill that started with the client ID must still find it.
-                entry.submitted_id = (query_id != submitted_id).then(|| submitted_id.into());
                 self.insert(query_id, entry);
             }
             FirstOutcome::Finished => {
@@ -162,21 +154,12 @@ impl OwnedQueries {
         }
     }
 
-    /// The current `/kill` target for `query_id`, which may be the server ID
-    /// of a query submitted under this client ID. `None` if not owned.
+    /// The current `/kill` target for `query_id`, or `None` if not owned.
     pub(crate) fn kill_target(&self, query_id: &str) -> Option<KillTarget> {
-        let target = |id: &str, query: &OwnedQuery| KillTarget {
-            query_id: id.to_string(),
+        self.queries.get(query_id).map(|query| KillTarget {
             node_id: query.node_id.clone(),
             retry_not_found: query.awaiting_first_response,
-        };
-        if let Some(query) = self.queries.get(query_id) {
-            return Some(target(query_id, query));
-        }
-        self.queries
-            .iter()
-            .find(|(_, q)| q.submitted_id.as_deref() == Some(query_id))
-            .map(|(id, q)| target(id, q))
+        })
     }
 
     #[cfg(test)]
@@ -201,9 +184,8 @@ mod tests {
         }
     }
 
-    fn target(query_id: &str, node_id: Option<&str>, retry_not_found: bool) -> Option<KillTarget> {
+    fn target(node_id: Option<&str>, retry_not_found: bool) -> Option<KillTarget> {
         Some(KillTarget {
-            query_id: query_id.into(),
             node_id: node_id.map(Into::into),
             retry_not_found,
         })
@@ -214,32 +196,12 @@ mod tests {
         let mut owned = OwnedQueries::default();
         owned.submission_started("unsent");
         owned.submission_started("sent");
-        assert_eq!(owned.kill_target("sent"), target("sent", None, true));
+        assert_eq!(owned.kill_target("sent"), target(None, true));
         owned.submission_ended("unsent", false);
         owned.submission_ended("sent", true);
         assert_eq!(owned.kill_target("unsent"), None);
-        assert_eq!(owned.kill_target("sent"), target("sent", None, true));
+        assert_eq!(owned.kill_target("sent"), target(None, true));
         assert!(!owned.queries["sent"].submitting);
-    }
-
-    #[test]
-    fn rewritten_id_is_reachable_through_the_client_id() {
-        let mut owned = OwnedQueries::default();
-        owned.submission_started("client-id");
-        owned.first_response("client-id", running("server-id", Some("n1")));
-        owned.submission_ended("client-id", true);
-        // Both the client ID and the server ID reach the server-side query.
-        assert_eq!(
-            owned.kill_target("client-id"),
-            target("server-id", Some("n1"), false)
-        );
-        assert_eq!(
-            owned.kill_target("server-id"),
-            target("server-id", Some("n1"), false)
-        );
-        owned.finished("server-id");
-        assert_eq!(owned.kill_target("client-id"), None);
-        assert_eq!(owned.len(), 0);
     }
 
     #[test]
@@ -262,7 +224,7 @@ mod tests {
         // No decoded first response, e.g. a body or decode error.
         owned.submission_started("q");
         owned.submission_ended("q", true);
-        assert_eq!(owned.kill_target("q"), target("q", None, true));
+        assert_eq!(owned.kill_target("q"), target(None, true));
     }
 
     #[test]
@@ -275,7 +237,7 @@ mod tests {
             owned.submission_ended(&id, true);
         }
         assert_eq!(owned.len(), MAX_OWNED_QUERIES);
-        assert_eq!(owned.kill_target("live"), target("live", None, true));
+        assert_eq!(owned.kill_target("live"), target(None, true));
         assert_eq!(owned.kill_target("dropped-0"), None);
         assert!(owned
             .kill_target(&format!("dropped-{}", MAX_OWNED_QUERIES + 9))
@@ -295,10 +257,7 @@ mod tests {
             owned.submission_ended(id, true);
         }
         assert_eq!(owned.len(), MAX_OWNED_QUERIES + 10);
-        assert_eq!(
-            owned.kill_target(&ids[0]),
-            target(&ids[0], Some("n1"), false)
-        );
+        assert_eq!(owned.kill_target(&ids[0]), target(Some("n1"), false));
 
         // Abandoned queries are evictable even while others are being read.
         for i in 0..5 {

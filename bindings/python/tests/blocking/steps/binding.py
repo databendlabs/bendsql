@@ -519,7 +519,7 @@ def _(context):
         print("SKIP")
         return
     previous_id = context.conn.last_query_id()
-    # Wait for the first response so we get the server-side ID even if rewritten.
+    # Wait for the first response so the query is registered before KILL.
     rows = context.conn.query_iter(
         "SELECT sleep(0.5), number FROM numbers(15000000000)"
     )

@@ -478,7 +478,7 @@ async def _(context):
     import asyncio
 
     previous_id = context.conn.last_query_id()
-    # Wait for the first response so we get the server-side ID even if rewritten.
+    # Wait for the first response so the query is registered before KILL.
     rows = await context.conn.query_iter(
         "SELECT sleep(0.5), number FROM numbers(15000000000)"
     )

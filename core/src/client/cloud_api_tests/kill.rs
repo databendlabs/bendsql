@@ -498,11 +498,11 @@ async fn corrupt_arrow_batch_still_records_the_server_query_id() {
     assert!(format!("{err}").contains("arrow batch"), "{err}");
     assert_eq!(client.last_query_id().as_deref(), Some("server-id"));
     drop(submission);
-    // Both IDs now reach the server-side query.
     let owned = client.owned_queries.lock();
-    for id in ["server-id", "client-id"] {
-        assert_eq!(owned.kill_target(id).unwrap().query_id, "server-id");
-    }
+    let target = owned.kill_target("server-id").unwrap();
+    assert_eq!(target.node_id.as_deref(), Some("n1"));
+    assert!(!target.retry_not_found);
+    assert!(owned.kill_target("client-id").is_none());
     // No result handle exists for a failed response, so it must not pin the
     // entry against eviction.
     assert_eq!(owned.is_reading("server-id"), Some(false));
@@ -567,23 +567,29 @@ async fn kill_retries_until_the_query_is_registered() {
 }
 
 #[tokio::test]
-async fn kill_follows_the_server_id_from_the_first_response() {
+async fn kill_retry_uses_the_sticky_node_from_the_first_response() {
     for cloud in [false, true] {
         let gate = Arc::new(Notify::new());
         let kills = Arc::new(AtomicUsize::new(0));
         let counted = kills.clone();
         let server = MockServer::with_query_gate(
-            move |request| {
-                if request.path.ends_with("/kill") {
+            move |request| match request.path.as_str() {
+                "/v1/query" => {
+                    MockReply::json(running_reply(&request.headers["x-databend-query-id"]))
+                }
+                path if path.ends_with("/kill") => {
                     counted.fetch_add(1, Ordering::SeqCst);
+                    if request
+                        .headers
+                        .get("x-databend-sticky-node")
+                        .is_some_and(|node| node == "n1")
+                    {
+                        ok_reply()
+                    } else {
+                        not_found_reply()
+                    }
                 }
-                match request.path.as_str() {
-                    // The gateway rewrites the client ID and does not know it.
-                    "/v1/query" => MockReply::json(running_reply("q1")),
-                    "/v1/query/q1/kill" => ok_reply(),
-                    path if path.ends_with("/kill") => not_found_reply(),
-                    path => panic!("unexpected {path}"),
-                }
+                path => panic!("unexpected {path}"),
             },
             Some(gate.clone()),
         )
@@ -606,26 +612,19 @@ async fn kill_follows_the_server_id_from_the_first_response() {
             .unwrap()
             .unwrap();
 
-        let kills: Vec<(String, Option<String>)> = server
-            .requests
-            .lock()
-            .iter()
-            .filter(|r| r.path.ends_with("/kill"))
-            .map(|r| {
-                (
-                    r.path.clone(),
-                    r.headers.get("x-databend-sticky-node").cloned(),
-                )
-            })
-            .collect();
-        let (last, earlier) = kills.split_last().unwrap();
-        assert_eq!(
-            last,
-            &("/v1/query/q1/kill".to_string(), Some("n1".to_string()))
-        );
-        let client_kill = format!("/v1/query/{sent_id}/kill");
-        assert!(earlier.iter().all(|(path, _)| *path == client_kill));
-        drop(query.await.unwrap().unwrap());
+        let pages = query.await.unwrap().unwrap();
+        {
+            let requests = server.requests.lock();
+            let (last, earlier) = requests[1..].split_last().unwrap();
+            let path = format!("/v1/query/{sent_id}/kill");
+            assert!(!earlier.is_empty());
+            assert!(earlier
+                .iter()
+                .all(|r| r.path == path && !r.headers.contains_key("x-databend-sticky-node")));
+            assert_eq!(last.path, path);
+            assert_eq!(last.headers["x-databend-sticky-node"], "n1");
+        }
+        drop(pages);
     }
 }
 
