@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use databend_driver::Client;
+use url::Url;
 
 use crate::common::DEFAULT_DSN;
 
@@ -51,6 +52,36 @@ async fn set_timezone_with_dsn() {
     let row = row.unwrap();
     let (val,): (String,) = row.try_into().unwrap();
     assert_eq!(val, "Europe/London");
+}
+
+#[tokio::test]
+async fn change_password_with_basic_auth() {
+    let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
+    if dsn.starts_with("databend+flight://") {
+        return;
+    }
+    let admin = Client::new(dsn.to_string()).get_conn().await.unwrap();
+    admin
+        .exec("DROP USER IF EXISTS change_password_test")
+        .await
+        .unwrap();
+    admin
+        .exec("CREATE USER change_password_test IDENTIFIED BY 'test-old-password'")
+        .await
+        .unwrap();
+
+    let mut dsn = Url::parse(dsn).unwrap();
+    dsn.set_username("change_password_test").unwrap();
+    dsn.set_password(Some("test-old-password")).unwrap();
+    dsn.query_pairs_mut()
+        .append_pair("session_token", "disable");
+    let conn = Client::new(dsn.into()).get_conn().await.unwrap();
+    conn.exec(r"ALTER USER USER() IDENTIFIED BY 'test''new\\password';")
+        .await
+        .unwrap();
+    let row = conn.query_row("SELECT 1").await.unwrap().unwrap();
+    assert_eq!(<(i64,)>::try_from(row).unwrap(), (1,));
+    admin.exec("DROP USER change_password_test").await.unwrap();
 }
 
 #[tokio::test]

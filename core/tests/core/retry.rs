@@ -15,10 +15,13 @@
 use std::io;
 use std::sync::{Arc, Mutex};
 
+use base64::prelude::{Engine, BASE64_STANDARD};
 use databend_client::{APIClient, Error};
+use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
+use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -58,6 +61,15 @@ fn ok_query_response(value: &str) -> String {
   "kill_uri": null
 }}"#
     )
+}
+
+fn password_change_response(state: &str, next_uri: Option<&str>) -> Value {
+    let mut response: Value = serde_json::from_str(&ok_query_response("")).unwrap();
+    response["schema"] = json!([]);
+    response["data"] = json!([]);
+    response["state"] = json!(state);
+    response["next_uri"] = json!(next_uri);
+    response
 }
 
 fn unauthorized_json_body() -> String {
@@ -241,6 +253,138 @@ fn create_temp_token_file(initial_token: &str) -> std::path::PathBuf {
     ));
     std::fs::write(&path, initial_token).unwrap();
     path
+}
+
+fn password_change_dsn(port: u16) -> String {
+    let mut dsn = url::Url::parse(&build_dsn(port, 1, "")).unwrap();
+    dsn.set_username("alice").unwrap();
+    dsn.set_password(Some("old")).unwrap();
+    dsn.into()
+}
+
+fn assert_basic_password(request: &RecordedRequest, expected: &str) {
+    let credentials = BASE64_STANDARD.encode(format!("alice:{expected}"));
+    assert_eq!(request.authorization, Some(format!("Basic {credentials}")));
+}
+
+#[tokio::test]
+async fn password_change_updates_auth_before_final_and_next_query() {
+    let handler: Arc<ResponseHandler> = Arc::new(|idx, req| {
+        let (method, path, password, body) = match idx {
+            0 => (
+                "POST",
+                "/v1/query",
+                "old",
+                password_change_response("Succeeded", Some("/v1/query/query-id/final")).to_string(),
+            ),
+            1 => (
+                "GET",
+                "/v1/query/query-id/final",
+                "new",
+                password_change_response("Succeeded", None).to_string(),
+            ),
+            2 => ("POST", "/v1/query", "new", ok_query_response("1")),
+            _ => panic!("unexpected request index: {idx}"),
+        };
+        assert_eq!(req.method, method);
+        assert_eq!(req.path, path);
+        assert_basic_password(req, password);
+        (200, "application/json", body)
+    });
+    let (port, requests, server) = spawn_test_server(handler);
+    let client = APIClient::new(&password_change_dsn(port), None)
+        .await
+        .unwrap();
+
+    let mut pages = client
+        .start_query("ALTER USER USER() IDENTIFIED BY 'new'", true, None)
+        .await
+        .unwrap();
+    while let Some(page) = pages.next().await {
+        page.unwrap();
+    }
+    client.query_all("SELECT 1", None).await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 3);
+    server.abort();
+}
+
+#[tokio::test]
+async fn password_change_poll_retries_with_new_password_after_401() {
+    let poll_uri = "/v1/query/query-id/page/1";
+    let handler: Arc<ResponseHandler> = Arc::new(move |idx, req| {
+        let (method, path, password, status, body) = match idx {
+            0 => (
+                "POST",
+                "/v1/query",
+                "old",
+                200,
+                password_change_response("Running", Some(poll_uri)).to_string(),
+            ),
+            1 => ("GET", poll_uri, "old", 401, unauthorized_json_body()),
+            2 => (
+                "GET",
+                poll_uri,
+                "new",
+                200,
+                password_change_response("Succeeded", None).to_string(),
+            ),
+            3 => ("POST", "/v1/query", "new", 200, ok_query_response("1")),
+            _ => panic!("unexpected request index: {idx}"),
+        };
+        assert_eq!(req.method, method);
+        assert_eq!(req.path, path);
+        assert_basic_password(req, password);
+        (status, "application/json", body)
+    });
+    let (port, requests, server) = spawn_test_server(handler);
+    let client = APIClient::new(&password_change_dsn(port), None)
+        .await
+        .unwrap();
+
+    client
+        .query_all("ALTER USER 'alice' IDENTIFIED BY 'new'", None)
+        .await
+        .unwrap();
+    client.query_all("SELECT 1", None).await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 4);
+    server.abort();
+}
+
+#[tokio::test]
+async fn password_change_failure_and_other_user_keep_old_credentials() {
+    let poll_uri = "/v1/query/query-id/page/1";
+    let handler: Arc<ResponseHandler> = Arc::new(move |idx, req| {
+        assert_basic_password(req, "old");
+        let body = match idx {
+            0 => password_change_response("Running", Some(poll_uri)).to_string(),
+            1 => {
+                assert_eq!(req.path, poll_uri);
+                let mut response = password_change_response("Failed", None);
+                response["error"] = json!({"code": 1006, "message": "password rejected"});
+                response.to_string()
+            }
+            2 => password_change_response("Succeeded", None).to_string(),
+            3 => ok_query_response("1"),
+            _ => panic!("unexpected request index: {idx}"),
+        };
+        (200, "application/json", body)
+    });
+    let (port, requests, server) = spawn_test_server(handler);
+    let client = APIClient::new(&password_change_dsn(port), None)
+        .await
+        .unwrap();
+
+    let result = client
+        .query_all("ALTER USER USER() IDENTIFIED BY 'bad'", None)
+        .await;
+    assert!(matches!(result, Err(Error::QueryFailed(_))));
+    client
+        .query_all("ALTER USER bob IDENTIFIED BY 'new'", None)
+        .await
+        .unwrap();
+    client.query_all("SELECT 1", None).await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 4);
+    server.abort();
 }
 
 #[tokio::test]

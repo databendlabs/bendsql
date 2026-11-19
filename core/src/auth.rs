@@ -15,7 +15,12 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use databend_common_ast::ast::{AuthType, Statement};
+use databend_common_ast::parser::statement::{statement, statement_body};
+use databend_common_ast::parser::token::{TokenKind, Tokenizer};
+use databend_common_ast::parser::{run_parser, tokenize_sql, Dialect, ParseMode};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use parking_lot::RwLock;
 use reqwest::RequestBuilder;
 use serde::Serialize;
 
@@ -30,30 +35,89 @@ pub trait Auth: Sync + Send {
         false
     }
     fn username(&self) -> String;
+    fn as_basic(&self) -> Option<&BasicAuth> {
+        None
+    }
 }
 
-#[derive(Clone)]
 pub struct BasicAuth {
     username: String,
-    password: SensitiveString,
+    password: RwLock<SensitiveString>,
 }
 
 impl BasicAuth {
     pub fn new(username: impl ToString, password: impl ToString) -> Self {
         Self {
             username: username.to_string(),
-            password: SensitiveString(password.to_string()),
+            password: RwLock::new(SensitiveString(password.to_string())),
         }
+    }
+
+    pub fn set_password(&self, password: SensitiveString) {
+        *self.password.write() = password;
+    }
+
+    pub fn wrap_with_password(
+        &self,
+        builder: RequestBuilder,
+        password: &SensitiveString,
+    ) -> RequestBuilder {
+        builder.basic_auth(&self.username, Some(password.inner()))
+    }
+
+    pub fn password_change(&self, sql: &str, sql_dialect: Option<&str>) -> Option<SensitiveString> {
+        // Avoid tokenizing the full query unless it starts with ALTER USER.
+        let mut prefix = Tokenizer::new(sql);
+        if prefix.next()?.ok()?.kind != TokenKind::ALTER
+            || prefix.next()?.ok()?.kind != TokenKind::USER
+        {
+            return None;
+        }
+        let dialect = match sql_dialect {
+            Some(dialect) if dialect.eq_ignore_ascii_case("mysql") => Dialect::MySQL,
+            Some(dialect) if dialect.eq_ignore_ascii_case("hive") => Dialect::Hive,
+            _ => Dialect::PostgreSQL,
+        };
+        let tokens = tokenize_sql(sql).ok()?;
+        // parse_sql's debug round-trip formats the AST, which is lossy for escaped passwords.
+        let stmt = run_parser(&tokens, dialect, ParseMode::Default, false, |input| {
+            let (rest, stmt) = statement_body(input)?;
+            let rest = match rest[0].kind {
+                TokenKind::SemiColon => rest.slice(1..),
+                TokenKind::FORMAT => statement(input)?.0,
+                _ => rest,
+            };
+            Ok((rest, stmt))
+        })
+        .ok()?;
+        let Statement::AlterUser(stmt) = stmt else {
+            return None;
+        };
+        if stmt.user.is_some_and(|user| user.username != self.username) {
+            return None;
+        }
+        let auth = stmt.auth_option?;
+        if !matches!(
+            auth.auth_type,
+            None | Some(AuthType::Sha256Password | AuthType::DoubleSha1Password)
+        ) {
+            return None;
+        }
+        auth.password.map(SensitiveString::from)
     }
 }
 
 impl Auth for BasicAuth {
     fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
-        Ok(builder.basic_auth(&self.username, Some(self.password.inner())))
+        Ok(self.wrap_with_password(builder, &self.password.read()))
     }
 
     fn username(&self) -> String {
         self.username.clone()
+    }
+
+    fn as_basic(&self) -> Option<&BasicAuth> {
+        Some(self)
     }
 }
 
@@ -485,6 +549,47 @@ mod tests {
         let value: SensitiveString = serde_json::from_str(json_value).unwrap();
         let result: String = serde_json::to_string(&value).unwrap();
         assert_eq!(result, json_value);
+    }
+
+    #[test]
+    fn parse_current_user_password_change() {
+        let auth = BasicAuth::new("alice", "old");
+        for (sql, dialect, expected) in [
+            (
+                r"/* comment */ aLtEr USER USER() IDENTIFIED BY 'p''ass\\word';",
+                None,
+                r"p'ass\word",
+            ),
+            (
+                "ALTER USER 'alice'@'%' IDENTIFIED WITH sha256_password BY 'new'",
+                None,
+                "new",
+            ),
+            (
+                r#"ALTER USER alice IDENTIFIED WITH double_sha1_password BY "new""#,
+                Some("MySQL"),
+                "new",
+            ),
+        ] {
+            assert_eq!(auth.password_change(sql, dialect), Some(expected.into()));
+        }
+    }
+
+    #[test]
+    fn ignore_sql_that_does_not_change_current_password() {
+        let auth = BasicAuth::new("alice", "old");
+        for sql in [
+            "ALTER USER bob IDENTIFIED BY 'new'",
+            "ALTER USER 'ALICE' IDENTIFIED BY 'new'",
+            "ALTER USER alice WITH MUST_CHANGE_PASSWORD = TRUE",
+            "ALTER USER alice IDENTIFIED WITH no_password",
+            "ALTER USER alice IDENTIFIED WITH jwt BY 'token'",
+            "ALTER USER alice IDENTIFIED BY ?",
+            "ALTER USER alice IDENTIFIED BY 'new'; SELECT 1",
+            "SELECT 'ALTER USER alice IDENTIFIED BY ''new'''",
+        ] {
+            assert_eq!(auth.password_change(sql, None), None, "{sql}");
+        }
     }
 
     #[test]

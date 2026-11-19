@@ -17,7 +17,7 @@ use crate::error::Result;
 use crate::response::QueryResponse;
 use crate::schema::Schema;
 use crate::settings::{QueryResultFormatSettings, ResultFormatSettings};
-use crate::{APIClient, Error, QueryStats, SchemaField};
+use crate::{APIClient, Error, QueryStats, SchemaField, SensitiveString};
 use arrow_array::RecordBatch;
 use log::debug;
 use parking_lot::Mutex;
@@ -79,6 +79,7 @@ pub struct Pages {
     next_page_future: Option<PageFut>,
     node_id: Option<String>,
     next_uri: Option<String>,
+    pending_password: Option<SensitiveString>,
 
     result_timeout_secs: Option<u64>,
     last_access_time: Arc<Mutex<Instant>>,
@@ -91,6 +92,16 @@ impl Pages {
         record_batches: Vec<RecordBatch>,
         need_progress: bool,
     ) -> Result<Self> {
+        Self::new_with_password_change(client, first_response, record_batches, need_progress, None)
+    }
+
+    pub(crate) fn new_with_password_change(
+        client: Arc<APIClient>,
+        first_response: QueryResponse,
+        record_batches: Vec<RecordBatch>,
+        need_progress: bool,
+        pending_password: Option<SensitiveString>,
+    ) -> Result<Self> {
         let mut s = Self {
             query_id: first_response.id.clone(),
             need_progress,
@@ -99,12 +110,21 @@ impl Pages {
             node_id: first_response.node_id.clone(),
             first_page: None,
             next_uri: first_response.next_uri.clone(),
+            pending_password,
             result_timeout_secs: first_response.result_timeout_secs,
             last_access_time: Arc::new(Mutex::new(Instant::now())),
         };
-        let first_page = Page::from_response(first_response, record_batches);
-        s.first_page = Some(first_page);
+        s.update_password_on_success(&first_response);
+        s.first_page = Some(Page::from_response(first_response, record_batches));
         Ok(s)
+    }
+
+    fn update_password_on_success(&mut self, response: &QueryResponse) {
+        if response.state == "Succeeded" {
+            if let Some(password) = self.pending_password.take() {
+                self.client.apply_password_change(password);
+            }
+        }
     }
 
     pub fn add_back(&mut self, page: Page) {
@@ -177,6 +197,7 @@ impl Stream for Pages {
         match self.next_page_future {
             Some(ref mut next_page) => match Pin::new(next_page).poll(cx) {
                 Poll::Ready(Ok((resp, batches))) => {
+                    self.update_password_on_success(&resp);
                     self.next_uri = resp.next_uri.clone();
                     self.next_page_future = None;
                     if self.next_uri.is_none() {
@@ -194,6 +215,7 @@ impl Stream for Pages {
                 Poll::Ready(Err(e)) => {
                     self.next_page_future = None;
                     self.next_uri = None;
+                    self.pending_password = None;
                     self.client.unregister_query_for_heartbeat(&self.query_id);
                     Poll::Ready(Some(Err(e)))
                 }
@@ -205,8 +227,16 @@ impl Stream for Pages {
                     let next_uri = next_uri.clone();
                     let query_id = self.query_id.clone();
                     let node_id = self.node_id.clone();
+                    let pending_password = self.pending_password.clone();
                     self.next_page_future = Some(Box::pin(async move {
-                        client.query_page(&query_id, &next_uri, &node_id).await
+                        client
+                            .query_page_with_password_change(
+                                &query_id,
+                                &next_uri,
+                                &node_id,
+                                pending_password.as_ref(),
+                            )
+                            .await
                     }));
                     self.poll_next(cx)
                 }

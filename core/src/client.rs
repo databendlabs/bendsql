@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth};
+use crate::auth::{
+    AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth, SensitiveString,
+};
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
 use crate::cloud_api::{is_cloud_webapi_host, CloudApiAuth, DEFAULT_CLOUD_WEBAPI_HOST};
@@ -807,8 +809,8 @@ impl APIClient {
         params: Option<serde_json::Value>,
     ) -> Result<Pages> {
         info!("start query: {}", crate::mask::mask_secrets(sql));
-        let (resp, batches) = self.start_query_inner(sql, None, false, params).await?;
-        Pages::new(self.clone(), resp, batches, need_progress)
+        self.start_query_pages(sql, false, need_progress, params)
+            .await
     }
 
     pub fn finalize_query(self: &Arc<Self>, query_id: &str) {
@@ -837,6 +839,45 @@ impl APIClient {
         } else {
             self.auth.wrap(builder)
         }
+    }
+
+    pub(crate) fn apply_password_change(&self, password: SensitiveString) {
+        if let Some(auth) = self.auth.as_basic() {
+            auth.set_password(password);
+        }
+    }
+
+    async fn start_query_pages(
+        self: &Arc<Self>,
+        sql: &str,
+        force_json_body: bool,
+        need_progress: bool,
+        params: Option<serde_json::Value>,
+    ) -> Result<Pages> {
+        let pending_password = if self.session_token_info.is_none() {
+            self.auth.as_basic().and_then(|auth| {
+                let dialect = self
+                    .session_state
+                    .lock()
+                    .settings
+                    .as_ref()
+                    .and_then(|s| s.get("sql_dialect"))
+                    .cloned();
+                auth.password_change(sql, dialect.as_deref())
+            })
+        } else {
+            None
+        };
+        let (resp, batches) = self
+            .start_query_inner(sql, None, force_json_body, params)
+            .await?;
+        Pages::new_with_password_change(
+            self.clone(),
+            resp,
+            batches,
+            need_progress,
+            pending_password,
+        )
     }
 
     async fn start_query_inner(
@@ -1006,9 +1047,20 @@ impl APIClient {
         next_uri: &str,
         node_id: &Option<String>,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
+        self.query_page_with_password_change(query_id, next_uri, node_id, None)
+            .await
+    }
+
+    pub(crate) async fn query_page_with_password_change(
+        &self,
+        query_id: &str,
+        next_uri: &str,
+        node_id: &Option<String>,
+        pending_password: Option<&SensitiveString>,
+    ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
         let accept_arrow = self.capability.arrow_data && self.query_result_format == "arrow";
         let response = self
-            .send_page_request(query_id, next_uri, node_id, accept_arrow)
+            .send_page_request(query_id, next_uri, node_id, accept_arrow, pending_password)
             .await?;
         self.handle_page(response, None).await
     }
@@ -1019,6 +1071,7 @@ impl APIClient {
         next_uri: &str,
         node_id: &Option<String>,
         accept_arrow: bool,
+        pending_password: Option<&SensitiveString>,
     ) -> Result<HttpResponseData> {
         info!("query page: {next_uri}");
         let endpoint = self.endpoint.join(next_uri)?;
@@ -1026,25 +1079,48 @@ impl APIClient {
         if accept_arrow {
             headers.insert(ACCEPT, HeaderValue::from_static(CONTENT_TYPE_ARROW_OR_JSON));
         }
-        let mut builder = self.cli.get(endpoint.clone());
-        builder = self
-            .wrap_auth_or_session_token(builder)?
-            .headers(headers.clone())
-            .timeout(self.page_request_timeout);
-        if let Some(node_id) = node_id {
-            builder = builder.header(HEADER_STICKY_NODE, node_id)
+        let builder = || {
+            let mut builder = self
+                .cli
+                .get(endpoint.clone())
+                .headers(headers.clone())
+                .timeout(self.page_request_timeout);
+            if let Some(node_id) = node_id {
+                builder = builder.header(HEADER_STICKY_NODE, node_id);
+            }
+            builder
+        };
+        let request = self.wrap_auth_or_session_token(builder())?.build()?;
+        let mut response = self
+            .query_request_helper(
+                request,
+                self.transport.retry_page_503(),
+                true,
+                true,
+                RequestKind::QueryPage,
+                None,
+            )
+            .await?;
+        // The server may have changed the password before we receive the Succeeded page.
+        // In that case, retry only this poll with the pending password, never the ALTER itself.
+        if let (StatusCode::UNAUTHORIZED, Some(password), Some(auth)) =
+            (response.status, pending_password, self.auth.as_basic())
+        {
+            if endpoint.origin() == self.endpoint.origin() {
+                let request = auth.wrap_with_password(builder(), password).build()?;
+                response = self
+                    .query_request_helper(
+                        request,
+                        false,
+                        false,
+                        false,
+                        RequestKind::QueryPage,
+                        None,
+                    )
+                    .await?;
+            }
         }
-        let request = builder.build()?;
-
-        self.query_request_helper(
-            request,
-            self.transport.retry_page_503(),
-            true,
-            true,
-            RequestKind::QueryPage,
-            None,
-        )
-        .await
+        Ok(response)
     }
 
     /// Kill a query by ID.
@@ -1186,7 +1262,7 @@ impl APIClient {
                 break;
             }
             let response = self
-                .send_page_request(&resp.id, &next_uri, &resp.node_id, false)
+                .send_page_request(&resp.id, &next_uri, &resp.node_id, false, None)
                 .await?;
             resp = self.decode_detached_page(response)?;
         }
@@ -1273,10 +1349,9 @@ impl APIClient {
         force_json_body: bool,
         params: Option<serde_json::Value>,
     ) -> Result<Page> {
-        let (resp, batches) = self
-            .start_query_inner(sql, None, force_json_body, params)
+        let mut pages = self
+            .start_query_pages(sql, force_json_body, false, params)
             .await?;
-        let mut pages = Pages::new(self.clone(), resp, batches, false)?;
         let mut all = Page::default();
         while let Some(page) = pages.next().await {
             all.update(page?);
