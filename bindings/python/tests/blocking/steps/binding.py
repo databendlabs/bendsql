@@ -518,50 +518,29 @@ def _(context):
     if server is None or tuple(map(int, server.groups())) <= (1, 2, 965):
         print("SKIP")
         return
-    import threading
-
-    other = context.client.get_conn()
-    errors = []
-    # version() above is itself a query; wait for the long query's own ID.
     previous_id = context.conn.last_query_id()
-
-    def run():
-        try:
-            context.conn.query_all(
-                "SELECT sleep(0.5), number FROM numbers(15000000000)"
-            )
-        except Exception as err:
-            errors.append(err)
-
-    worker = threading.Thread(target=run)
-    worker.start()
-    query_id = previous_id
-    for _ in range(100):
-        query_id = context.conn.last_query_id()
-        if query_id not in (None, previous_id):
-            break
-        sleep(0.05)
-    assert query_id not in (None, previous_id), (
-        "query id must be available before the result"
+    # Wait for the first response so we get the server-side ID even if rewritten.
+    rows = context.conn.query_iter(
+        "SELECT sleep(0.5), number FROM numbers(15000000000)"
     )
-    # The server may not have registered the query yet.
-    for _ in range(50):
+    try:
+        query_id = context.conn.last_query_id()
+        assert query_id not in (None, previous_id), (
+            "expected the long query's server-side ID"
+        )
+        other = context.client.get_conn()
         try:
             other.kill_query(query_id)
-            break
-        except Exception as err:
-            if "1053" not in str(err):
-                raise
-            sleep(0.1)
-    else:
-        raise AssertionError("query was never found by KILL QUERY")
-    worker.join(timeout=30)
-    assert not worker.is_alive(), "the killed query must finish"
-    assert len(errors) == 1, "the killed query must fail"
-    message = str(errors[0]).lower()
-    assert "cancel" in message or "abort" in message, message
-    assert other.last_query_id() is None, "KILL must not change last_query_id"
-    other.close()
+            assert other.last_query_id() is None, "KILL must not change last_query_id"
+            deadline = time.monotonic() + 30
+            with tc.assertRaisesRegex(Exception, r"(?i)cancel|abort"):
+                for _ in rows:
+                    if time.monotonic() >= deadline:
+                        break
+        finally:
+            other.close()
+    finally:
+        rows.close()
 
 
 @then("Query should not timeout")

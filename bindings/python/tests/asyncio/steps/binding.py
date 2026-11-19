@@ -477,38 +477,31 @@ async def _(context):
         return
     import asyncio
 
-    other = await context.client.get_conn()
-    # version() above is itself a query; wait for the long query's own ID.
     previous_id = context.conn.last_query_id()
-    task = asyncio.ensure_future(
-        context.conn.query_all("SELECT sleep(0.5), number FROM numbers(15000000000)")
+    # Wait for the first response so we get the server-side ID even if rewritten.
+    rows = await context.conn.query_iter(
+        "SELECT sleep(0.5), number FROM numbers(15000000000)"
     )
-    query_id = previous_id
-    for _ in range(100):
-        await asyncio.sleep(0.05)
+    try:
         query_id = context.conn.last_query_id()
-        if query_id not in (None, previous_id):
-            break
-    assert query_id not in (None, previous_id), (
-        "query id must be available before the result"
-    )
-    # The server may not have registered the query yet.
-    for _ in range(50):
+        assert query_id not in (None, previous_id), (
+            "expected the long query's server-side ID"
+        )
+        other = await context.client.get_conn()
         try:
             await other.kill_query(query_id)
-            break
-        except Exception as err:
-            if "1053" not in str(err):
-                raise
-            await asyncio.sleep(0.1)
-    else:
-        raise AssertionError("query was never found by KILL QUERY")
-    with tc.assertRaises(Exception) as cm:
-        await asyncio.wait_for(task, timeout=30)
-    message = str(cm.exception).lower()
-    assert "cancel" in message or "abort" in message, message
-    assert other.last_query_id() is None, "KILL must not change last_query_id"
-    await other.close()
+            assert other.last_query_id() is None, "KILL must not change last_query_id"
+
+            async def drain():
+                async for _ in rows:
+                    pass
+
+            with tc.assertRaisesRegex(Exception, r"(?i)cancel|abort"):
+                await asyncio.wait_for(drain(), timeout=30)
+        finally:
+            await other.close()
+    finally:
+        rows.close()
 
 
 @then("Query should not timeout")

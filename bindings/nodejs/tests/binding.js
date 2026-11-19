@@ -497,37 +497,27 @@ Then("killQuery from another connection should cancel the query", { timeout: 600
     console.log("SKIP");
     return;
   }
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const other = await this.client.getConn();
-  // version() above is itself a query; wait for the long query's own ID.
   const previousId = this.conn.lastQueryId();
-  const query = this.conn.queryAll("SELECT sleep(0.5), number FROM numbers(15000000000)").then(
-    () => null,
-    (err) => err,
-  );
-  let queryId = previousId;
-  for (let i = 0; i < 100 && (queryId === null || queryId === previousId); i++) {
-    queryId = this.conn.lastQueryId();
-    if (queryId === null || queryId === previousId) await sleep(50);
-  }
-  assert.ok(queryId !== null && queryId !== previousId, "query id must be available before the result");
-  // The server may not have registered the query yet.
-  let killed = false;
-  for (let i = 0; i < 50 && !killed; i++) {
+  // Wait for the first response so we get the server-side ID even if a gateway rewrites it.
+  const rows = await this.conn.queryIter("SELECT sleep(0.5), number FROM numbers(15000000000)");
+  try {
+    const queryId = this.conn.lastQueryId();
+    assert.ok(queryId != null && queryId !== previousId, "expected the long query's server-side ID");
+    const other = await this.client.getConn();
     try {
       await other.killQuery(queryId);
-      killed = true;
-    } catch (err) {
-      if (!err.message.includes("1053")) throw err;
-      await sleep(100);
+      assert.equal(other.lastQueryId(), null, "KILL must not change lastQueryId");
+      await assert.rejects(async () => {
+        while ((await rows.next()) != null) {
+          // Consume buffered rows until the server reports cancellation.
+        }
+      }, /cancel|abort/i);
+    } finally {
+      await other.close();
     }
+  } finally {
+    rows.close();
   }
-  assert.ok(killed, "query was never found by KILL QUERY");
-  const err = await query;
-  assert.ok(err instanceof Error, "the killed query must fail");
-  assert.match(err.message.toLowerCase(), /cancel|abort/);
-  assert.equal(other.lastQueryId(), null, "KILL must not change lastQueryId");
-  await other.close();
 });
 
 Then("Query should not timeout", { timeout: 30000 }, async function () {
