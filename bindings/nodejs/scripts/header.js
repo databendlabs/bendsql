@@ -16,10 +16,10 @@
 
 const fs = require("fs");
 
-let files = ["generated.js", "index.d.ts"];
+const files = ["generated.js", "native.d.ts"];
 
-for (path of files) {
-  let data = fs.readFileSync(path, "utf8");
+for (const path of files) {
+  const data = fs.readFileSync(path, "utf8");
   fs.writeFileSync(
     path,
     `/*
