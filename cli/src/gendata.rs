@@ -23,9 +23,26 @@ use databend_driver::RowStatsIterator;
 use databend_driver::Schema;
 use databend_driver::{NumberValue, Row, RowWithStats, Value};
 use serde_json::Value as JsonValue;
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use tempfile::tempdir;
+
+pub(crate) fn duckdb_version() -> Result<String> {
+    duckdb_version_at(Path::new("duckdb"))
+}
+
+fn duckdb_version_at(executable: &Path) -> Result<String> {
+    match Command::new(executable).arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        }
+        _ => Err(anyhow!(
+            "DuckDB CLI is not available. Install DuckDB with your package manager or follow \
+             https://duckdb.org/docs/stable/installation/, then ensure duckdb is on PATH."
+        )),
+    }
+}
 
 impl Session {
     pub(crate) async fn gendata(
@@ -34,13 +51,7 @@ impl Session {
         scale: f32,
         drop_override: bool,
     ) -> Result<RowStatsIterator> {
-        // Check if duckdb is available
-        let duckdb_check = Command::new("duckdb").arg("--version").output();
-        if duckdb_check.is_err() {
-            return Err(anyhow!(
-                "DuckDB is not installed. Please install it first by running: !install duckdb"
-            ));
-        }
+        duckdb_version()?;
 
         let temp_dir = tempdir()?;
         let db_path = temp_dir.path().join("gendata.db");
@@ -243,4 +254,31 @@ fn gendata_schema() -> Schema {
             data_type: DataType::Number(NumberDataType::UInt64),
         },
     ])
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn duckdb_version_checks_the_local_executable() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("duckdb");
+        let check_unavailable = || {
+            let error = duckdb_version_at(&path).unwrap_err().to_string();
+            assert!(error.contains("https://duckdb.org/docs/stable/installation/"));
+        };
+        check_unavailable();
+        std::fs::write(&path, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        check_unavailable();
+
+        std::fs::write(
+            &path,
+            "#!/bin/sh\n[ \"$#\" = 1 ] && [ \"$1\" = --version ] || exit 1\nprintf 'DuckDB test version\\n'\n",
+        )
+        .unwrap();
+        assert_eq!(duckdb_version_at(&path).unwrap(), "DuckDB test version");
+    }
 }
