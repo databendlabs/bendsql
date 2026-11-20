@@ -16,6 +16,9 @@
 
 import type { Readable } from "node:stream";
 
+// native.d.ts is generated, but this public list is maintained by hand.
+// When a new #[napi] type is part of the public API, re-export it here.
+// Use `export type` unless index.js also exports the value at runtime.
 // index.js exports Client at runtime; the other names are available only as types.
 export { Client } from "./native";
 export type {

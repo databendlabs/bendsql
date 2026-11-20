@@ -201,3 +201,9 @@ Commit any changes to `native.d.ts` after rebuilding; do not edit it by hand.
 `index.d.ts` is the public entry point. It reuses the native types and adds types
 for the methods implemented by `index.js`. `pnpm run test:types` checks that
 public entry point without connecting to a database.
+
+New methods on existing classes need no change in `index.d.ts`. When you add a
+`#[napi]` struct or enum that users should reference, re-export it from
+`index.d.ts` and import it in `tests/types/basic.ts`. Use `export type` for
+type-only names. A value that users can import at runtime must also be exported
+from `index.js`.
