@@ -78,15 +78,20 @@ jobs:
         working-directory: bindings/nodejs
         shell: bash
         env:
-          NAPI_TARGET: ${{ matrix.target }}
+          RUST_TARGET: ${{ matrix.target }}
           MACOSX_DEPLOYMENT_TARGET: 10.12
         run: |
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            pnpm napi build --platform --target=$NAPI_TARGET --js generated.js
+            pnpm run build:debug
           else
-            pnpm napi build --platform --target=$NAPI_TARGET --release --js generated.js
+            pnpm run build
           fi
-          pnpm node ./scripts/header.js
+      - name: Check generated types
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        working-directory: bindings/nodejs
+        run: |
+          pnpm run test:types
+          git diff --exit-code -- native.d.ts
       - name: strip for macos
         if: endsWith(matrix.target, '-apple-darwin')
         working-directory: bindings/nodejs

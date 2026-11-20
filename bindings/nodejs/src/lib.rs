@@ -80,8 +80,6 @@ pub struct Connection {
     opts: ValueOptions,
 }
 
-pub type Params = serde_json::Value;
-
 impl Connection {
     pub fn new(inner: databend_driver::Connection, opts: ValueOptions) -> Self {
         Self {
@@ -106,7 +104,7 @@ impl Connection {
     }
 
     #[napi]
-    pub fn format_sql(&self, sql: String, params: Option<Params>) -> Result<String> {
+    pub fn format_sql(&self, sql: String, params: Option<serde_json::Value>) -> Result<String> {
         Ok(self.inner.format_sql(&sql, params))
     }
 
@@ -130,7 +128,7 @@ impl Connection {
 
     /// Execute a SQL query, return the number of affected rows.
     #[napi]
-    pub async fn exec(&self, sql: String, params: Option<Params>) -> Result<i64> {
+    pub async fn exec(&self, sql: String, params: Option<serde_json::Value>) -> Result<i64> {
         let result = if let Some(p) = params {
             self.inner.exec(&sql).bind(p).await
         } else {
@@ -141,7 +139,11 @@ impl Connection {
 
     /// Execute a SQL query, and only return the first row.
     #[napi]
-    pub async fn query_row(&self, sql: String, params: Option<Params>) -> Result<Option<Row>> {
+    pub async fn query_row(
+        &self,
+        sql: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<Option<Row>> {
         let ret = if let Some(p) = params {
             self.inner.query(&sql).bind(p).one().await
         } else {
@@ -154,7 +156,11 @@ impl Connection {
 
     /// Execute a SQL query and fetch all data into the result
     #[napi]
-    pub async fn query_all(&self, sql: String, params: Option<Params>) -> Result<Vec<Row>> {
+    pub async fn query_all(
+        &self,
+        sql: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<Vec<Row>> {
         let rows = if let Some(p) = params {
             self.inner.query(&sql).bind(p).all().await
         } else {
@@ -169,7 +175,11 @@ impl Connection {
 
     /// Execute a SQL query, and return all rows.
     #[napi]
-    pub async fn query_iter(&self, sql: String, params: Option<Params>) -> Result<RowIterator> {
+    pub async fn query_iter(
+        &self,
+        sql: String,
+        params: Option<serde_json::Value>,
+    ) -> Result<RowIterator> {
         let iterator = if let Some(p) = params {
             self.inner.query(&sql).bind(p).iter().await
         } else {
@@ -188,7 +198,7 @@ impl Connection {
     pub async fn query_iter_ext(
         &self,
         sql: String,
-        params: Option<Params>,
+        params: Option<serde_json::Value>,
     ) -> Result<RowIteratorExt> {
         let iterator = if let Some(p) = params {
             self.inner.query(&sql).bind(p).iter_ext().await
@@ -502,13 +512,6 @@ impl RowIterator {
             row.map(|r| Row::new(r, self.opts.clone()))
                 .map_err(format_napi_error)
         })
-    }
-
-    /// Return a Readable Stream for the query result.
-    /// Should be used with `ObjectMode` set to `true`.
-    #[napi(ts_return_type = "import('stream').Readable")]
-    pub fn stream(&self) {
-        unreachable!()
     }
 }
 

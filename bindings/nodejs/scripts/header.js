@@ -16,10 +16,10 @@
 
 const fs = require("fs");
 
-let files = ["generated.js", "index.d.ts"];
+const files = ["generated.js", "native.d.ts"];
 
-for (path of files) {
-  let data = fs.readFileSync(path, "utf8");
+for (const path of files) {
+  const data = fs.readFileSync(path, "utf8");
   fs.writeFileSync(
     path,
     `/*
@@ -40,18 +40,4 @@ for (path of files) {
 
 ` + data,
   );
-}
-
-// index.js yields every result from next() except the null EOF sentinel.
-const declarationsPath = "index.d.ts";
-const declarations = fs.readFileSync(declarationsPath, "utf8");
-if (!declarations.includes("export interface RowIterator {")) {
-  const asyncIteratorDeclaration = `type RowIteratorItem = Exclude<Awaited<ReturnType<RowIterator['next']>>, null>
-
-export interface RowIterator {
-  [Symbol.asyncIterator](): AsyncGenerator<RowIteratorItem, void, unknown>
-}
-
-`;
-  fs.writeFileSync(declarationsPath, declarations.replace(/^export /m, `${asyncIteratorDeclaration}$&`));
 }

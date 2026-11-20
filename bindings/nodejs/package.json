@@ -35,6 +35,7 @@
   ],
   "files": [
     "index.d.ts",
+    "native.d.ts",
     "index.js",
     "generated.js",
     "LICENSE"
@@ -51,12 +52,12 @@
     "node": ">= 16"
   },
   "scripts": {
-    "build": "napi build --platform --target=$NAPI_TARGET --release --js generated.js && node ./scripts/header.js",
-    "build:debug": "napi build --platform --target=$NAPI_TARGET --js generated.js && node ./scripts/header.js",
+    "build": "napi build --platform --release --js generated.js --dts native.d.ts && node ./scripts/header.js",
+    "build:debug": "napi build --platform --js generated.js --dts native.d.ts && node ./scripts/header.js",
     "docs": "typedoc",
     "format": "prettier --write .",
     "test": "npm run test:types && cucumber-js",
-    "test:types": "tsc --noEmit --strict --target es2022 --module commonjs --moduleResolution node --skipLibCheck tests/types/basic.ts",
+    "test:types": "tsc --noEmit --strict --target es2022 --module commonjs --moduleResolution node tests/types/basic.ts",
     "test:cloud": "python3 ../tests/cloud_dsn.py --node node",
     "prepublishOnly": "napi prepublish -t npm --skip-gh-release"
   },
