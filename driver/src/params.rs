@@ -53,7 +53,7 @@ pub fn json_value_to_sql_string(v: &serde_json::Value) -> String {
             }
         }
         serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => format!("'{}'", s.replace('\'', "''")),
+        serde_json::Value::String(s) => quote_sql_string(s),
         serde_json::Value::Array(arr) => {
             let items: Vec<String> = arr.iter().map(json_value_to_sql_string).collect();
             format!("[{}]", items.join(", "))
@@ -63,9 +63,14 @@ pub fn json_value_to_sql_string(v: &serde_json::Value) -> String {
             // string literal. Recursively emitting SQL literals for each value
             // would break the surrounding literal, e.g. {"a":"b"} would become
             // '{"a": 'b'}'::JSON.
-            format!("'{}'::JSON", v.to_string().replace('\'', "''"))
+            format!("{}::JSON", quote_sql_string(&v.to_string()))
         }
     }
+}
+
+fn quote_sql_string(value: &str) -> String {
+    // Databend string literals interpret backslashes as well as doubled quotes.
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
 }
 
 impl Params {
@@ -328,6 +333,64 @@ impl From<serde_json::Value> for Params {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use databend_common_ast::ast::{Expr, Literal};
+    use databend_common_ast::parser::{parse_expr, tokenize_sql};
+    use serde_json::json;
+
+    fn bound_expr(params: Params, query: &str) -> Expr {
+        let sql = params.replace(query);
+        let tokens = tokenize_sql(sql.strip_prefix("SELECT ").unwrap()).unwrap();
+        parse_expr(&tokens, Dialect::PostgreSQL).unwrap()
+    }
+
+    fn string_literal(expr: Expr) -> String {
+        match expr {
+            Expr::Literal {
+                value: Literal::String(value),
+                ..
+            } => value,
+            other => panic!("expected one string literal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_bound_strings_preserve_backslashes_and_quotes() {
+        for value in ["O'Reilly", r"C:\new\temp", r"C:\temp\", r"C:\O'Reilly"] {
+            for placeholder in ["?", "$1", ":path"] {
+                let params = if placeholder == ":path" {
+                    params! {path => value}
+                } else {
+                    params! {value}
+                };
+                let query = format!("SELECT {placeholder}");
+                assert_eq!(string_literal(bound_expr(params, &query)), value);
+            }
+        }
+    }
+
+    #[test]
+    fn test_bound_json_preserves_escapes() {
+        let value = json!({"quoted\"key": {"paths": [r"C:\new\temp", r"C:\O'Reilly\"]}});
+        let params = Params::QuestionParams(vec![value.clone()]);
+        let Expr::Cast { expr, .. } = bound_expr(params, "SELECT ?") else {
+            panic!("expected a JSON cast");
+        };
+        let decoded: serde_json::Value = serde_json::from_str(&string_literal(*expr)).unwrap();
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn test_bound_array_stays_a_sql_array() {
+        let values = [r"C:\new\temp", "O'Reilly"];
+        let params = Params::QuestionParams(vec![json!(values)]);
+        let Expr::Array { exprs, .. } = bound_expr(params, "SELECT ?") else {
+            panic!("expected a SQL array");
+        };
+        assert_eq!(
+            exprs.into_iter().map(string_literal).collect::<Vec<_>>(),
+            values
+        );
+    }
 
     #[test]
     fn test_object_param_is_valid_json_literal() {
