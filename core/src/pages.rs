@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::client::QueryState;
+use crate::client::{PasswordChange, QueryState};
 use crate::error::Result;
 use crate::response::QueryResponse;
 use crate::schema::Schema;
@@ -79,6 +79,7 @@ pub struct Pages {
     next_page_future: Option<PageFut>,
     node_id: Option<String>,
     next_uri: Option<String>,
+    password_change: Option<PasswordChange>,
 
     result_timeout_secs: Option<u64>,
     last_access_time: Arc<Mutex<Instant>>,
@@ -91,6 +92,16 @@ impl Pages {
         record_batches: Vec<RecordBatch>,
         need_progress: bool,
     ) -> Result<Self> {
+        Self::new_with_password_change(client, first_response, record_batches, need_progress, None)
+    }
+
+    pub(crate) fn new_with_password_change(
+        client: Arc<APIClient>,
+        first_response: QueryResponse,
+        record_batches: Vec<RecordBatch>,
+        need_progress: bool,
+        password_change: Option<PasswordChange>,
+    ) -> Result<Self> {
         let mut s = Self {
             query_id: first_response.id.clone(),
             need_progress,
@@ -99,12 +110,28 @@ impl Pages {
             node_id: first_response.node_id.clone(),
             first_page: None,
             next_uri: first_response.next_uri.clone(),
+            password_change,
             result_timeout_secs: first_response.result_timeout_secs,
             last_access_time: Arc::new(Mutex::new(Instant::now())),
         };
-        let first_page = Page::from_response(first_response, record_batches);
-        s.first_page = Some(first_page);
+        s.handle_password_change_response(&first_response)?;
+        s.first_page = Some(Page::from_response(first_response, record_batches));
         Ok(s)
+    }
+
+    fn handle_password_change_response(&mut self, response: &QueryResponse) -> Result<()> {
+        if response.state == "Succeeded" {
+            if let Some(change) = self.password_change.take() {
+                change.succeed();
+            }
+        } else if response.next_uri.is_none() {
+            if let Some(change) = self.password_change.take() {
+                return Err(change.finish_error(Error::Decode(
+                    "password change ended without a terminal query response".into(),
+                )));
+            }
+        }
+        Ok(())
     }
 
     pub fn add_back(&mut self, page: Page) {
@@ -183,6 +210,9 @@ impl Stream for Pages {
                         self.client.unregister_query_for_heartbeat(&self.query_id);
                         self.client.forget_owned_query(&self.query_id);
                     }
+                    if let Err(error) = self.handle_password_change_response(&resp) {
+                        return Poll::Ready(Some(Err(error)));
+                    }
                     if resp.data.is_empty() && !self.need_progress {
                         self.poll_next(cx)
                     } else {
@@ -195,7 +225,11 @@ impl Stream for Pages {
                     self.next_page_future = None;
                     self.next_uri = None;
                     self.client.unregister_query_for_heartbeat(&self.query_id);
-                    Poll::Ready(Some(Err(e)))
+                    let error = match self.password_change.take() {
+                        Some(change) => change.finish_error(e),
+                        None => e,
+                    };
+                    Poll::Ready(Some(Err(error)))
                 }
                 Poll::Pending => Poll::Pending,
             },
@@ -205,8 +239,17 @@ impl Stream for Pages {
                     let next_uri = next_uri.clone();
                     let query_id = self.query_id.clone();
                     let node_id = self.node_id.clone();
+                    let change = self.password_change.as_ref();
+                    let pending_password = change.map(|change| change.password().clone());
                     self.next_page_future = Some(Box::pin(async move {
-                        client.query_page(&query_id, &next_uri, &node_id).await
+                        client
+                            .query_page_with_password_change(
+                                &query_id,
+                                &next_uri,
+                                &node_id,
+                                pending_password.as_ref(),
+                            )
+                            .await
                     }));
                     self.poll_next(cx)
                 }

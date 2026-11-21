@@ -15,10 +15,13 @@
 use std::io;
 use std::sync::{Arc, Mutex};
 
+use base64::prelude::{Engine, BASE64_STANDARD};
 use databend_client::{APIClient, Error};
+use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
+use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -58,6 +61,15 @@ fn ok_query_response(value: &str) -> String {
   "kill_uri": null
 }}"#
     )
+}
+
+fn password_change_response(state: &str, next_uri: Option<&str>) -> Value {
+    let mut response: Value = serde_json::from_str(&ok_query_response("")).unwrap();
+    response["schema"] = json!([]);
+    response["data"] = json!([]);
+    response["state"] = json!(state);
+    response["next_uri"] = json!(next_uri);
+    response
 }
 
 fn unauthorized_json_body() -> String {
@@ -241,6 +253,217 @@ fn create_temp_token_file(initial_token: &str) -> std::path::PathBuf {
     ));
     std::fs::write(&path, initial_token).unwrap();
     path
+}
+
+fn password_change_dsn(port: u16) -> String {
+    let mut dsn = url::Url::parse(&build_dsn(port, 1, "")).unwrap();
+    dsn.set_username("alice").unwrap();
+    dsn.set_password(Some("old")).unwrap();
+    dsn.into()
+}
+
+fn assert_basic_password(request: &RecordedRequest, expected: &str) {
+    let credentials = BASE64_STANDARD.encode(format!("alice:{expected}"));
+    assert_eq!(request.authorization, Some(format!("Basic {credentials}")));
+}
+
+#[tokio::test]
+async fn password_change_updates_auth_before_final_and_next_query() {
+    let handler: Arc<ResponseHandler> = Arc::new(|idx, req| {
+        let (method, path, password, body) = match idx {
+            0 => (
+                "POST",
+                "/v1/query",
+                "old",
+                password_change_response("Succeeded", Some("/v1/query/query-id/final")).to_string(),
+            ),
+            1 => (
+                "GET",
+                "/v1/query/query-id/final",
+                "new",
+                password_change_response("Succeeded", None).to_string(),
+            ),
+            2 => ("POST", "/v1/query", "new", ok_query_response("1")),
+            _ => panic!("unexpected request index: {idx}"),
+        };
+        assert_eq!(req.method, method);
+        assert_eq!(req.path, path);
+        assert_basic_password(req, password);
+        (200, "application/json", body)
+    });
+    let (port, requests, server) = spawn_test_server(handler);
+    let client = APIClient::new(&password_change_dsn(port), None)
+        .await
+        .unwrap();
+
+    let mut pages = client
+        .start_query("ALTER USER USER() IDENTIFIED BY 'new'", true, None)
+        .await
+        .unwrap();
+    while let Some(page) = pages.next().await {
+        page.unwrap();
+    }
+    client.query_all("SELECT 1", None).await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 3);
+    server.abort();
+}
+
+#[tokio::test]
+async fn password_change_poll_retries_with_new_password_after_401() {
+    let poll_uri = "/v1/query/query-id/page/1";
+    let handler: Arc<ResponseHandler> = Arc::new(move |idx, req| {
+        let (method, path, password, status, body) = match idx {
+            0 => (
+                "POST",
+                "/v1/query",
+                "old",
+                200,
+                password_change_response("Running", Some(poll_uri)).to_string(),
+            ),
+            1 => ("GET", poll_uri, "old", 401, unauthorized_json_body()),
+            2 => (
+                "GET",
+                poll_uri,
+                "new",
+                200,
+                password_change_response("Succeeded", None).to_string(),
+            ),
+            3 => ("POST", "/v1/query", "new", 200, ok_query_response("1")),
+            _ => panic!("unexpected request index: {idx}"),
+        };
+        assert_eq!(req.method, method);
+        assert_eq!(req.path, path);
+        assert_basic_password(req, password);
+        (status, "application/json", body)
+    });
+    let (port, requests, server) = spawn_test_server(handler);
+    let client = APIClient::new(&password_change_dsn(port), None)
+        .await
+        .unwrap();
+
+    let mut pages = client
+        .start_query("ALTER USER 'alice' IDENTIFIED BY 'new'", false, None)
+        .await
+        .unwrap();
+    // Even the same target password is rejected before sending a second ALTER.
+    let overlap = client
+        .query_all("ALTER USER USER() IDENTIFIED BY 'new'", None)
+        .await;
+    assert!(
+        matches!(overlap, Err(Error::BadArgument(message)) if message.contains("already in progress"))
+    );
+    assert_eq!(requests.lock().unwrap().len(), 1);
+
+    while let Some(page) = pages.next().await {
+        page.unwrap();
+    }
+    client.query_all("SELECT 1", None).await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 4);
+    server.abort();
+}
+
+#[tokio::test]
+async fn password_change_failure_and_other_user_keep_old_credentials() {
+    let poll_uri = "/v1/query/query-id/page/1";
+    let handler: Arc<ResponseHandler> = Arc::new(move |idx, req| {
+        assert_basic_password(req, if idx < 4 { "old" } else { "new" });
+        let body = match idx {
+            0 => password_change_response("Running", Some(poll_uri)).to_string(),
+            1 => {
+                assert_eq!(req.path, poll_uri);
+                let mut response = password_change_response("Failed", None);
+                response["error"] = json!({"code": 1006, "message": "password rejected"});
+                response.to_string()
+            }
+            2 | 3 => password_change_response("Succeeded", None).to_string(),
+            4 => ok_query_response("1"),
+            _ => panic!("unexpected request index: {idx}"),
+        };
+        (200, "application/json", body)
+    });
+    let (port, requests, server) = spawn_test_server(handler);
+    let client = APIClient::new(&password_change_dsn(port), None)
+        .await
+        .unwrap();
+
+    let result = client
+        .query_all("ALTER USER USER() IDENTIFIED BY 'bad'", None)
+        .await;
+    assert!(matches!(result, Err(Error::QueryFailed(_))));
+    client
+        .query_all("ALTER USER bob IDENTIFIED BY 'new'", None)
+        .await
+        .unwrap();
+    client
+        .query_all("ALTER USER USER() IDENTIFIED BY 'new'", None)
+        .await
+        .unwrap();
+    client.query_all("SELECT 1", None).await.unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 5);
+    server.abort();
+}
+
+#[tokio::test]
+async fn dropping_unconfirmed_password_change_requires_reconnect_before_another_change() {
+    let handler: Arc<ResponseHandler> = Arc::new(|idx, req| {
+        assert_eq!(idx, 0);
+        assert_eq!(req.path, "/v1/query");
+        assert_basic_password(req, "old");
+        let response = password_change_response("Running", Some("/v1/query/query-id/page/1"));
+        (200, "application/json", response.to_string())
+    });
+    let (port, requests, server) = spawn_test_server(handler);
+    let client = APIClient::new(&password_change_dsn(port), None)
+        .await
+        .unwrap();
+
+    let pages = client
+        .start_query("ALTER USER USER() IDENTIFIED BY 'new'", false, None)
+        .await
+        .unwrap();
+    drop(pages);
+
+    let result = client
+        .query_all("ALTER USER USER() IDENTIFIED BY 'other'", None)
+        .await;
+    assert!(matches!(result, Err(Error::BadArgument(message)) if message.contains("reconnect")));
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    server.abort();
+}
+
+#[tokio::test]
+async fn cancelling_password_change_before_first_response_leaves_outcome_unknown() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = APIClient::new(
+        &password_change_dsn(listener.local_addr().unwrap().port()),
+        None,
+    )
+    .await
+    .unwrap();
+    let submitting_client = client.clone();
+    let submission = tokio::spawn(async move {
+        submitting_client
+            .query_all("ALTER USER USER() IDENTIFIED BY 'new'", None)
+            .await
+    });
+
+    // Read the submission, but leave the socket open without responding.
+    let (mut stream, _) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+    assert_basic_password(&read_request(&mut stream).await.unwrap(), "old");
+    submission.abort();
+    assert!(matches!(submission.await, Err(error) if error.is_cancelled()));
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.query_all("ALTER USER USER() IDENTIFIED BY 'other'", None),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(result, Err(Error::BadArgument(message)) if message.contains("reconnect")));
 }
 
 #[tokio::test]

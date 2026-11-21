@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::auth::{AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth};
+use crate::auth::{
+    looks_like_alter_user, AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth,
+    SensitiveString,
+};
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
 use crate::cloud_api::{is_cloud_webapi_host, CloudApiAuth, DEFAULT_CLOUD_WEBAPI_HOST};
@@ -125,6 +128,7 @@ struct QuerySubmission<'a> {
     client: &'a APIClient,
     query_id: String,
     may_have_reached_server: bool,
+    password_change_sent: Option<&'a mut bool>,
 }
 
 impl<'a> QuerySubmission<'a> {
@@ -143,6 +147,7 @@ impl<'a> QuerySubmission<'a> {
             client,
             query_id,
             may_have_reached_server: false,
+            password_change_sent: None,
         }
     }
 
@@ -161,6 +166,9 @@ impl<'a> QuerySubmission<'a> {
 
 impl Drop for QuerySubmission<'_> {
     fn drop(&mut self) {
+        if let Some(sent) = self.password_change_sent.take() {
+            *sent = self.may_have_reached_server;
+        }
         self.rollback_query_id();
         // Release ownership only after an unsent ID is no longer visible.
         self.client
@@ -192,6 +200,81 @@ impl QuerySubmission<'_> {
     }
 }
 
+#[derive(Default)]
+enum PasswordChangeState {
+    #[default]
+    Idle,
+    InFlight,
+    Unknown,
+}
+
+const PASSWORD_CHANGE_UNKNOWN: &str =
+    "password change outcome is unknown; reconnect with the current password";
+
+/// Held from before submission until the server confirms the outcome. Dropping a
+/// possibly sent change without confirmation must not let a second ALTER race it.
+pub(crate) struct PasswordChange {
+    client: Arc<APIClient>,
+    password: SensitiveString,
+    may_have_reached_server: bool,
+}
+
+impl PasswordChange {
+    fn begin(client: Arc<APIClient>, password: SensitiveString) -> Result<Self> {
+        {
+            let mut state = client.password_change_state.lock();
+            match *state {
+                PasswordChangeState::Idle => *state = PasswordChangeState::InFlight,
+                PasswordChangeState::InFlight => {
+                    return Err(Error::BadArgument(
+                        "another password change is already in progress on this connection".into(),
+                    ));
+                }
+                PasswordChangeState::Unknown => {
+                    return Err(Error::BadArgument(PASSWORD_CHANGE_UNKNOWN.into()));
+                }
+            }
+        }
+        Ok(Self {
+            client,
+            password,
+            may_have_reached_server: false,
+        })
+    }
+
+    pub(crate) fn password(&self) -> &SensitiveString {
+        &self.password
+    }
+
+    pub(crate) fn succeed(mut self) {
+        if let Some(auth) = self.client.auth.as_basic() {
+            auth.set_password(std::mem::take(&mut self.password));
+        }
+        self.may_have_reached_server = false;
+    }
+
+    pub(crate) fn finish_error(mut self, error: Error) -> Error {
+        if matches!(&error, Error::QueryFailed(_)) {
+            self.may_have_reached_server = false;
+        }
+        if self.may_have_reached_server {
+            Error::Request(format!("{PASSWORD_CHANGE_UNKNOWN}: {error}"))
+        } else {
+            error
+        }
+    }
+}
+
+impl Drop for PasswordChange {
+    fn drop(&mut self) {
+        *self.client.password_change_state.lock() = if self.may_have_reached_server {
+            PasswordChangeState::Unknown
+        } else {
+            PasswordChangeState::Idle
+        };
+    }
+}
+
 pub struct APIClient {
     pub(crate) session_id: String,
     cli: HttpClient,
@@ -202,6 +285,7 @@ pub struct APIClient {
     endpoint: Url,
 
     auth: Arc<dyn Auth>,
+    password_change_state: Mutex<PasswordChangeState>,
     transport: Transport,
 
     /// Tenant ID used only in Databend Cloud management mode.
@@ -807,8 +891,8 @@ impl APIClient {
         params: Option<serde_json::Value>,
     ) -> Result<Pages> {
         info!("start query: {}", crate::mask::mask_secrets(sql));
-        let (resp, batches) = self.start_query_inner(sql, None, false, params).await?;
-        Pages::new(self.clone(), resp, batches, need_progress)
+        self.start_query_pages(sql, false, need_progress, params)
+            .await
     }
 
     pub fn finalize_query(self: &Arc<Self>, query_id: &str) {
@@ -839,12 +923,65 @@ impl APIClient {
         }
     }
 
+    async fn start_query_pages(
+        self: &Arc<Self>,
+        sql: &str,
+        force_json_body: bool,
+        need_progress: bool,
+        params: Option<serde_json::Value>,
+    ) -> Result<Pages> {
+        let pending_password = if self.session_token_info.is_none() {
+            self.auth
+                .as_basic()
+                .filter(|_| looks_like_alter_user(sql))
+                .and_then(|auth| {
+                    let dialect = self
+                        .session_state
+                        .lock()
+                        .settings
+                        .as_ref()
+                        .and_then(|s| s.get("sql_dialect"))
+                        .cloned();
+                    auth.password_change(sql, dialect.as_deref())
+                })
+        } else {
+            None
+        };
+        let mut change = pending_password
+            .map(|password| PasswordChange::begin(self.clone(), password))
+            .transpose()?;
+        match self
+            .submit_query(sql, None, force_json_body, params, change.as_mut())
+            .await
+        {
+            Ok((resp, batches)) => {
+                Pages::new_with_password_change(self.clone(), resp, batches, need_progress, change)
+            }
+            Err(error) => Err(match change {
+                Some(change) => change.finish_error(error),
+                None => error,
+            }),
+        }
+    }
+
     async fn start_query_inner(
         &self,
         sql: &str,
         stage_attachment_config: Option<StageAttachmentConfig<'_>>,
         force_json_body: bool,
         params: Option<serde_json::Value>,
+    ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
+        self.submit_query(sql, stage_attachment_config, force_json_body, params, None)
+            .await
+    }
+
+    async fn submit_query(
+        &self,
+        sql: &str,
+        stage_attachment_config: Option<StageAttachmentConfig<'_>>,
+        force_json_body: bool,
+        params: Option<serde_json::Value>,
+        password_change: Option<&mut PasswordChange>,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
         self.transport
             .validate_query_payload(stage_attachment_config.is_some(), params.is_some())?;
@@ -865,6 +1002,9 @@ impl APIClient {
         // headers
         let query_id = self.gen_query_id();
         let mut submission = QuerySubmission::new(self, query_id.clone());
+        let is_password_change = password_change.is_some();
+        submission.password_change_sent =
+            password_change.map(|change| &mut change.may_have_reached_server);
         let mut headers = self.make_headers(Some(&query_id))?;
         if self.capability.arrow_data && self.query_result_format == "arrow" && !force_json_body {
             debug!("accept arrow data");
@@ -884,15 +1024,21 @@ impl APIClient {
             .timeout(self.page_request_timeout)
             .build()?;
         let response = self
-            .query_request_helper(
+            .query_request_helper_with_replay(
                 request,
                 true,
                 true,
                 true,
                 RequestKind::QueryStart,
                 Some(&mut submission),
+                !is_password_change && self.transport.allow_replay(&RequestKind::QueryStart),
             )
             .await?;
+        // A submission rejected by authentication did not execute. Password
+        // changes cannot be replayed after an attempt may have reached the server.
+        if is_password_change && response.status == StatusCode::UNAUTHORIZED {
+            submission.may_have_reached_server = false;
+        }
         // Without a decoded response the query stays owned under this ID.
         self.handle_page(response, Some(&query_id)).await
     }
@@ -1006,9 +1152,20 @@ impl APIClient {
         next_uri: &str,
         node_id: &Option<String>,
     ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
+        self.query_page_with_password_change(query_id, next_uri, node_id, None)
+            .await
+    }
+
+    pub(crate) async fn query_page_with_password_change(
+        &self,
+        query_id: &str,
+        next_uri: &str,
+        node_id: &Option<String>,
+        pending_password: Option<&SensitiveString>,
+    ) -> Result<(QueryResponse, Vec<RecordBatch>)> {
         let accept_arrow = self.capability.arrow_data && self.query_result_format == "arrow";
         let response = self
-            .send_page_request(query_id, next_uri, node_id, accept_arrow)
+            .send_page_request(query_id, next_uri, node_id, accept_arrow, pending_password)
             .await?;
         self.handle_page(response, None).await
     }
@@ -1019,6 +1176,7 @@ impl APIClient {
         next_uri: &str,
         node_id: &Option<String>,
         accept_arrow: bool,
+        pending_password: Option<&SensitiveString>,
     ) -> Result<HttpResponseData> {
         info!("query page: {next_uri}");
         let endpoint = self.endpoint.join(next_uri)?;
@@ -1026,25 +1184,48 @@ impl APIClient {
         if accept_arrow {
             headers.insert(ACCEPT, HeaderValue::from_static(CONTENT_TYPE_ARROW_OR_JSON));
         }
-        let mut builder = self.cli.get(endpoint.clone());
-        builder = self
-            .wrap_auth_or_session_token(builder)?
-            .headers(headers.clone())
-            .timeout(self.page_request_timeout);
-        if let Some(node_id) = node_id {
-            builder = builder.header(HEADER_STICKY_NODE, node_id)
+        let builder = || {
+            let mut builder = self
+                .cli
+                .get(endpoint.clone())
+                .headers(headers.clone())
+                .timeout(self.page_request_timeout);
+            if let Some(node_id) = node_id {
+                builder = builder.header(HEADER_STICKY_NODE, node_id);
+            }
+            builder
+        };
+        let request = self.wrap_auth_or_session_token(builder())?.build()?;
+        let mut response = self
+            .query_request_helper(
+                request,
+                self.transport.retry_page_503(),
+                true,
+                true,
+                RequestKind::QueryPage,
+                None,
+            )
+            .await?;
+        // The server may have changed the password before we receive the Succeeded page.
+        // In that case, retry only this poll with the pending password, never the ALTER itself.
+        if let (StatusCode::UNAUTHORIZED, Some(password), Some(auth)) =
+            (response.status, pending_password, self.auth.as_basic())
+        {
+            if endpoint.origin() == self.endpoint.origin() {
+                let request = auth.wrap_with_password(builder(), password).build()?;
+                response = self
+                    .query_request_helper(
+                        request,
+                        false,
+                        false,
+                        false,
+                        RequestKind::QueryPage,
+                        None,
+                    )
+                    .await?;
+            }
         }
-        let request = builder.build()?;
-
-        self.query_request_helper(
-            request,
-            self.transport.retry_page_503(),
-            true,
-            true,
-            RequestKind::QueryPage,
-            None,
-        )
-        .await
+        Ok(response)
     }
 
     /// Kill a query by ID.
@@ -1186,7 +1367,7 @@ impl APIClient {
                 break;
             }
             let response = self
-                .send_page_request(&resp.id, &next_uri, &resp.node_id, false)
+                .send_page_request(&resp.id, &next_uri, &resp.node_id, false, None)
                 .await?;
             resp = self.decode_detached_page(response)?;
         }
@@ -1273,10 +1454,9 @@ impl APIClient {
         force_json_body: bool,
         params: Option<serde_json::Value>,
     ) -> Result<Page> {
-        let (resp, batches) = self
-            .start_query_inner(sql, None, force_json_body, params)
+        let mut pages = self
+            .start_query_pages(sql, force_json_body, false, params)
             .await?;
-        let mut pages = Pages::new(self.clone(), resp, batches, false)?;
         let mut all = Page::default();
         while let Some(page) = pages.next().await {
             all.update(page?);
@@ -2152,6 +2332,7 @@ impl Default for APIClient {
             tenant: None,
             warehouse: Mutex::new(None),
             auth: Arc::new(BasicAuth::new(DEFAULT_USERNAME, "")) as Arc<dyn Auth>,
+            password_change_state: Default::default(),
             transport: Transport::default(),
             session_state: Mutex::new(SessionState::default()),
             wait_time_secs: None,

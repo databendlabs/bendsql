@@ -15,7 +15,12 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use databend_common_ast::ast::{AuthType, Statement};
+use databend_common_ast::parser::statement::{statement, statement_body};
+use databend_common_ast::parser::token::{is_ident_continue, TokenKind};
+use databend_common_ast::parser::{run_parser, tokenize_sql, Dialect, ParseMode};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use parking_lot::RwLock;
 use reqwest::RequestBuilder;
 use serde::Serialize;
 
@@ -30,30 +35,121 @@ pub trait Auth: Sync + Send {
         false
     }
     fn username(&self) -> String;
+    fn as_basic(&self) -> Option<&BasicAuth> {
+        None
+    }
 }
 
-#[derive(Clone)]
+/// Cheap filter before reading session settings or invoking the SQL parser.
+pub(crate) fn looks_like_alter_user(sql: &str) -> bool {
+    skip_sql_trivia(sql)
+        .and_then(|sql| strip_keyword(sql, "ALTER"))
+        .and_then(skip_sql_trivia)
+        .and_then(|sql| strip_keyword(sql, "USER"))
+        .is_some()
+}
+
+fn skip_sql_trivia(mut sql: &str) -> Option<&str> {
+    loop {
+        // Match the whitespace and comment boundaries in the Databend lexer.
+        sql = sql.trim_start_matches([' ', '\t', '\r', '\n', '\x0c']);
+        if let Some(comment) = sql.strip_prefix("--") {
+            sql = comment
+                .find(['\n', '\x0c'])
+                .map_or("", |end| &comment[end..]);
+        } else if sql.starts_with("/*+") {
+            // Hints are not ordinary comments. Let the server handle this SQL.
+            return None;
+        } else if let Some(comment) = sql.strip_prefix("/*") {
+            sql = comment.split_once("*/")?.1;
+        } else {
+            return Some(sql);
+        }
+    }
+}
+
+fn strip_keyword<'a>(sql: &'a str, keyword: &str) -> Option<&'a str> {
+    if !sql.get(..keyword.len())?.eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+    let rest = &sql[keyword.len()..];
+    if rest.chars().next().is_some_and(is_ident_continue) {
+        return None;
+    }
+    Some(rest)
+}
+
 pub struct BasicAuth {
     username: String,
-    password: SensitiveString,
+    password: RwLock<SensitiveString>,
 }
 
 impl BasicAuth {
     pub fn new(username: impl ToString, password: impl ToString) -> Self {
         Self {
             username: username.to_string(),
-            password: SensitiveString(password.to_string()),
+            password: RwLock::new(SensitiveString(password.to_string())),
         }
+    }
+
+    pub fn set_password(&self, password: SensitiveString) {
+        *self.password.write() = password;
+    }
+
+    pub fn wrap_with_password(
+        &self,
+        builder: RequestBuilder,
+        password: &SensitiveString,
+    ) -> RequestBuilder {
+        builder.basic_auth(&self.username, Some(password.inner()))
+    }
+
+    pub fn password_change(&self, sql: &str, sql_dialect: Option<&str>) -> Option<SensitiveString> {
+        let dialect = match sql_dialect {
+            Some(dialect) if dialect.eq_ignore_ascii_case("mysql") => Dialect::MySQL,
+            Some(dialect) if dialect.eq_ignore_ascii_case("hive") => Dialect::Hive,
+            _ => Dialect::PostgreSQL,
+        };
+        let tokens = tokenize_sql(sql).ok()?;
+        // parse_sql's debug round-trip formats the AST, which is lossy for escaped passwords.
+        let stmt = run_parser(&tokens, dialect, ParseMode::Default, false, |input| {
+            let (rest, stmt) = statement_body(input)?;
+            let rest = match rest[0].kind {
+                TokenKind::SemiColon => rest.slice(1..),
+                TokenKind::FORMAT => statement(input)?.0,
+                _ => rest,
+            };
+            Ok((rest, stmt))
+        })
+        .ok()?;
+        let Statement::AlterUser(stmt) = stmt else {
+            return None;
+        };
+        if stmt.user.is_some_and(|user| user.username != self.username) {
+            return None;
+        }
+        let auth = stmt.auth_option?;
+        if !matches!(
+            auth.auth_type,
+            None | Some(AuthType::Sha256Password | AuthType::DoubleSha1Password)
+        ) {
+            return None;
+        }
+        auth.password.map(SensitiveString::from)
     }
 }
 
 impl Auth for BasicAuth {
     fn wrap(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
-        Ok(builder.basic_auth(&self.username, Some(self.password.inner())))
+        Ok(self.wrap_with_password(builder, &self.password.read()))
     }
 
     fn username(&self) -> String {
         self.username.clone()
+    }
+
+    fn as_basic(&self) -> Option<&BasicAuth> {
+        Some(self)
     }
 }
 
@@ -485,6 +581,79 @@ mod tests {
         let value: SensitiveString = serde_json::from_str(json_value).unwrap();
         let result: String = serde_json::to_string(&value).unwrap();
         assert_eq!(result, json_value);
+    }
+
+    #[test]
+    fn detects_alter_user_prefix_without_parsing_sql() {
+        for sql in [
+            "ALTER USER alice",
+            " \t/* comment */ aLtEr/* inner */uSeR USER()",
+            "-- leading comment\nalter -- inner comment\x0cuser 'alice'",
+        ] {
+            assert!(looks_like_alter_user(sql), "{sql}");
+        }
+        let many_comments = format!("{}ALTER USER alice", "/* comment */".repeat(4096));
+        assert!(looks_like_alter_user(&many_comments));
+
+        for sql in [
+            "SELECT 'ALTER USER'",
+            "ALTER TABLE users",
+            "ALTERATION USER alice",
+            "ALTER USER_NAME alice",
+            "ALTER USER$1 alice",
+            "ALTER USER名 alice",
+            "abéc ALTER USER alice",
+            "ALTER abéc",
+            "/* unterminated ALTER USER alice",
+            "ALTER /* unterminated USER alice",
+            "-- ALTER USER alice",
+            "/*+ hint */ ALTER USER alice",
+            "ALTER /*+ hint */ USER alice",
+        ] {
+            assert!(!looks_like_alter_user(sql), "{sql}");
+        }
+    }
+
+    #[test]
+    fn parse_current_user_password_change() {
+        let auth = BasicAuth::new("alice", "old");
+        for (sql, dialect, expected) in [
+            (
+                r"/* comment */ aLtEr/* inner */USER USER() IDENTIFIED BY 'p''ass\\word';",
+                None,
+                r"p'ass\word",
+            ),
+            (
+                "ALTER USER 'alice'@'%' IDENTIFIED WITH sha256_password BY 'new'",
+                None,
+                "new",
+            ),
+            (
+                r#"ALTER USER alice IDENTIFIED WITH double_sha1_password BY "new""#,
+                Some("MySQL"),
+                "new",
+            ),
+        ] {
+            assert!(looks_like_alter_user(sql));
+            assert_eq!(auth.password_change(sql, dialect), Some(expected.into()));
+        }
+    }
+
+    #[test]
+    fn ignore_sql_that_does_not_change_current_password() {
+        let auth = BasicAuth::new("alice", "old");
+        for sql in [
+            "ALTER USER bob IDENTIFIED BY 'new'",
+            "ALTER USER 'ALICE' IDENTIFIED BY 'new'",
+            "ALTER USER alice WITH MUST_CHANGE_PASSWORD = TRUE",
+            "ALTER USER alice IDENTIFIED WITH no_password",
+            "ALTER USER alice IDENTIFIED WITH jwt BY 'token'",
+            "ALTER USER alice IDENTIFIED BY ?",
+            "ALTER USER alice IDENTIFIED BY 'new'; SELECT 1",
+            "SELECT 'ALTER USER alice IDENTIFIED BY ''new'''",
+        ] {
+            assert_eq!(auth.password_change(sql, None), None, "{sql}");
+        }
     }
 
     #[test]
