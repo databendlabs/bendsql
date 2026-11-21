@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use crate::auth::{
-    AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth, SensitiveString,
+    looks_like_alter_user, AccessTokenAuth, AccessTokenFileAuth, Auth, BasicAuth, KeyPairAuth,
+    SensitiveString,
 };
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
@@ -930,16 +931,19 @@ impl APIClient {
         params: Option<serde_json::Value>,
     ) -> Result<Pages> {
         let pending_password = if self.session_token_info.is_none() {
-            self.auth.as_basic().and_then(|auth| {
-                let dialect = self
-                    .session_state
-                    .lock()
-                    .settings
-                    .as_ref()
-                    .and_then(|s| s.get("sql_dialect"))
-                    .cloned();
-                auth.password_change(sql, dialect.as_deref())
-            })
+            self.auth
+                .as_basic()
+                .filter(|_| looks_like_alter_user(sql))
+                .and_then(|auth| {
+                    let dialect = self
+                        .session_state
+                        .lock()
+                        .settings
+                        .as_ref()
+                        .and_then(|s| s.get("sql_dialect"))
+                        .cloned();
+                    auth.password_change(sql, dialect.as_deref())
+                })
         } else {
             None
         };

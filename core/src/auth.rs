@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use databend_common_ast::ast::{AuthType, Statement};
 use databend_common_ast::parser::statement::{statement, statement_body};
-use databend_common_ast::parser::token::{TokenKind, Tokenizer};
+use databend_common_ast::parser::token::{is_ident_continue, TokenKind};
 use databend_common_ast::parser::{run_parser, tokenize_sql, Dialect, ParseMode};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use parking_lot::RwLock;
@@ -38,6 +38,45 @@ pub trait Auth: Sync + Send {
     fn as_basic(&self) -> Option<&BasicAuth> {
         None
     }
+}
+
+/// Cheap filter before reading session settings or invoking the SQL parser.
+pub(crate) fn looks_like_alter_user(sql: &str) -> bool {
+    skip_sql_trivia(sql)
+        .and_then(|sql| strip_keyword(sql, "ALTER"))
+        .and_then(skip_sql_trivia)
+        .and_then(|sql| strip_keyword(sql, "USER"))
+        .is_some()
+}
+
+fn skip_sql_trivia(mut sql: &str) -> Option<&str> {
+    loop {
+        // Match the whitespace and comment boundaries in the Databend lexer.
+        sql = sql.trim_start_matches([' ', '\t', '\r', '\n', '\x0c']);
+        if let Some(comment) = sql.strip_prefix("--") {
+            sql = comment
+                .find(['\n', '\x0c'])
+                .map_or("", |end| &comment[end..]);
+        } else if sql.starts_with("/*+") {
+            // Hints are not ordinary comments. Let the server handle this SQL.
+            return None;
+        } else if let Some(comment) = sql.strip_prefix("/*") {
+            sql = comment.split_once("*/")?.1;
+        } else {
+            return Some(sql);
+        }
+    }
+}
+
+fn strip_keyword<'a>(sql: &'a str, keyword: &str) -> Option<&'a str> {
+    if !sql.get(..keyword.len())?.eq_ignore_ascii_case(keyword) {
+        return None;
+    }
+    let rest = &sql[keyword.len()..];
+    if rest.chars().next().is_some_and(is_ident_continue) {
+        return None;
+    }
+    Some(rest)
 }
 
 pub struct BasicAuth {
@@ -66,13 +105,6 @@ impl BasicAuth {
     }
 
     pub fn password_change(&self, sql: &str, sql_dialect: Option<&str>) -> Option<SensitiveString> {
-        // Avoid tokenizing the full query unless it starts with ALTER USER.
-        let mut prefix = Tokenizer::new(sql);
-        if prefix.next()?.ok()?.kind != TokenKind::ALTER
-            || prefix.next()?.ok()?.kind != TokenKind::USER
-        {
-            return None;
-        }
         let dialect = match sql_dialect {
             Some(dialect) if dialect.eq_ignore_ascii_case("mysql") => Dialect::MySQL,
             Some(dialect) if dialect.eq_ignore_ascii_case("hive") => Dialect::Hive,
@@ -552,11 +584,42 @@ mod tests {
     }
 
     #[test]
+    fn detects_alter_user_prefix_without_parsing_sql() {
+        for sql in [
+            "ALTER USER alice",
+            " \t/* comment */ aLtEr/* inner */uSeR USER()",
+            "-- leading comment\nalter -- inner comment\x0cuser 'alice'",
+        ] {
+            assert!(looks_like_alter_user(sql), "{sql}");
+        }
+        let many_comments = format!("{}ALTER USER alice", "/* comment */".repeat(4096));
+        assert!(looks_like_alter_user(&many_comments));
+
+        for sql in [
+            "SELECT 'ALTER USER'",
+            "ALTER TABLE users",
+            "ALTERATION USER alice",
+            "ALTER USER_NAME alice",
+            "ALTER USER$1 alice",
+            "ALTER USER名 alice",
+            "abéc ALTER USER alice",
+            "ALTER abéc",
+            "/* unterminated ALTER USER alice",
+            "ALTER /* unterminated USER alice",
+            "-- ALTER USER alice",
+            "/*+ hint */ ALTER USER alice",
+            "ALTER /*+ hint */ USER alice",
+        ] {
+            assert!(!looks_like_alter_user(sql), "{sql}");
+        }
+    }
+
+    #[test]
     fn parse_current_user_password_change() {
         let auth = BasicAuth::new("alice", "old");
         for (sql, dialect, expected) in [
             (
-                r"/* comment */ aLtEr USER USER() IDENTIFIED BY 'p''ass\\word';",
+                r"/* comment */ aLtEr/* inner */USER USER() IDENTIFIED BY 'p''ass\\word';",
                 None,
                 r"p'ass\word",
             ),
@@ -571,6 +634,7 @@ mod tests {
                 "new",
             ),
         ] {
+            assert!(looks_like_alter_user(sql));
             assert_eq!(auth.password_change(sql, dialect), Some(expected.into()));
         }
     }
