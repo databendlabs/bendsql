@@ -188,6 +188,11 @@ prompt = ":) "
 | `!ask question` | Ask AI explicitly |
 | `!sql query` | Execute SQL explicitly |
 | `!context [clear]` | Inspect or clear query/dialogue context |
+| `!install duckdb` | Check for the DuckDB CLI on `PATH`; does not install it |
+
+`GENDATA` requires the DuckDB CLI. If it is missing, install it with your package
+manager or follow the [DuckDB installation guide](https://duckdb.org/docs/stable/installation/).
+BendSQL does not download or run an installer for you.
 
 ## Interactive SQL + AI
 

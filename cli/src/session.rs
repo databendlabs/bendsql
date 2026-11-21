@@ -1042,7 +1042,9 @@ impl Session {
                 println!("{:#?}", self.settings);
             }
             "!install duckdb" => {
-                return self.install_duckdb().await;
+                println!("Checking DuckDB installation...");
+                let version = crate::gendata::duckdb_version()?;
+                println!("DuckDB is already installed: {version}");
             }
             other => {
                 if other.starts_with("!set") {
@@ -1076,63 +1078,6 @@ impl Session {
             }
         }
         Ok(Some(ServerStats::default()))
-    }
-
-    async fn install_duckdb(&self) -> Result<Option<ServerStats>> {
-        use std::process::Command;
-
-        println!("Installing DuckDB...");
-
-        // Check if duckdb is already installed
-        if let Ok(output) = Command::new("duckdb").arg("--version").output() {
-            if output.status.success() {
-                let version = String::from_utf8_lossy(&output.stdout);
-                println!("DuckDB is already installed: {}", version.trim());
-                return Ok(Some(ServerStats::default()));
-            }
-        }
-
-        // Download and install DuckDB using the official installer
-        println!("Downloading DuckDB installer...");
-        let output = Command::new("curl")
-            .args(["-fsSL", "https://install.duckdb.org"])
-            .output()
-            .map_err(|e| anyhow!("Failed to download DuckDB installer: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("Failed to download DuckDB installer: {}", stderr));
-        }
-
-        let installer_script = String::from_utf8(output.stdout)
-            .map_err(|e| anyhow!("Invalid installer script: {}", e))?;
-
-        // Execute the installer script
-        println!("Running DuckDB installer...");
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(&installer_script)
-            .output()
-            .map_err(|e| anyhow!("Failed to execute DuckDB installer: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("DuckDB installation failed: {}", stderr));
-        }
-
-        // Verify installation
-        let output = Command::new("duckdb")
-            .arg("--version")
-            .output()
-            .map_err(|e| anyhow!("Failed to verify DuckDB installation: {}", e))?;
-
-        if output.status.success() {
-            let version = String::from_utf8_lossy(&output.stdout);
-            println!("DuckDB installed successfully: {}", version.trim());
-            Ok(Some(ServerStats::default()))
-        } else {
-            Err(anyhow!("DuckDB installation verification failed"))
-        }
     }
 
     pub async fn stream_load_stdin(&mut self, query: &str, method: LoadMethod) -> Result<()> {
