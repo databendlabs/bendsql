@@ -320,7 +320,7 @@ fn capture_stats(
 #[pymethods]
 impl BlockingDatabendCursor {
     #[getter]
-    pub fn description<'p>(&'p self, py: Python<'p>) -> PyResult<PyObject> {
+    pub fn description<'p>(&'p self, py: Python<'p>) -> PyResult<Py<PyAny>> {
         if let Some(ref schema) = self.schema {
             let mut fields = vec![];
             for field in schema.fields() {
@@ -380,7 +380,7 @@ impl BlockingDatabendCursor {
         operation: String,
         params: Option<Bound<'p, PyAny>>,
         values: Option<Bound<'p, PyAny>>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         if self.closed {
             return Err(PyException::new_err(
                 "BlockingDatabendCursor already closed",
@@ -429,12 +429,12 @@ impl BlockingDatabendCursor {
         py: Python<'p>,
         sql: String,
         seq_of_parameters: Vec<Bound<'p, PyAny>>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         self.reset();
         self.rowcount_mode = RowcountMode::Affected;
         let conn = self.conn.clone();
         if let Some(param) = seq_of_parameters.first() {
-            if param.downcast::<PyList>().is_ok() || param.downcast::<PyTuple>().is_ok() {
+            if param.cast::<PyList>().is_ok() || param.cast::<PyTuple>().is_ok() {
                 let strings = to_csv_strings(seq_of_parameters)?;
                 let strs = strings
                     .iter()
@@ -549,7 +549,7 @@ fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
     if v.is_none() {
         return Ok("".to_string());
     }
-    match v.downcast::<PyAny>() {
+    match v.cast::<PyAny>() {
         Ok(v) => {
             if let Ok(v) = v.extract::<String>() {
                 Ok(v)
@@ -561,9 +561,9 @@ fn to_csv_field(v: Bound<PyAny>) -> PyResult<String> {
                 Ok(v.to_string())
             } else {
                 // Try to convert dict-like objects to JSON string
-                if let Ok(dict) = v.downcast::<pyo3::types::PyDict>() {
+                if let Ok(dict) = v.cast::<pyo3::types::PyDict>() {
                     // Convert Python dict to JSON string
-                    let json_string = Python::with_gil(|py| {
+                    let json_string = Python::attach(|py| {
                         let json_module = py.import("json")?;
                         let dumps = json_module.getattr("dumps")?;
                         let result = dumps.call1((dict,))?;

@@ -35,13 +35,13 @@ where
     F: std::future::Future + Send,
     F::Output: Send,
 {
-    py.allow_threads(|| RUNTIME.block_on(f))
+    py.detach(|| RUNTIME.block_on(f))
 }
 
 pub(crate) fn to_sql_params(v: Option<Bound<PyAny>>) -> Params {
     match v {
         Some(v) => {
-            if let Ok(v) = v.downcast::<PyDict>() {
+            if let Ok(v) = v.cast::<PyDict>() {
                 let mut params = HashMap::new();
                 for (k, v) in v.iter() {
                     let k = k.extract::<String>().unwrap();
@@ -49,11 +49,11 @@ pub(crate) fn to_sql_params(v: Option<Bound<PyAny>>) -> Params {
                     params.insert(k, v);
                 }
                 Params::NamedParams(params)
-            } else if let Ok(v) = v.downcast::<PyList>() {
+            } else if let Ok(v) = v.cast::<PyList>() {
                 let params: Vec<serde_json::Value> =
                     v.iter().map(|v| py_to_json(v).unwrap()).collect();
                 Params::QuestionParams(params)
-            } else if let Ok(v) = v.downcast::<PyTuple>() {
+            } else if let Ok(v) = v.cast::<PyTuple>() {
                 let params: Vec<serde_json::Value> =
                     v.iter().map(|v| py_to_json(v).unwrap()).collect();
                 Params::QuestionParams(params)

@@ -24,7 +24,8 @@ use crate::asyncio::{AsyncDatabendClient, AsyncDatabendConnection};
 use crate::blocking::{BlockingDatabendClient, BlockingDatabendConnection, BlockingDatabendCursor};
 use crate::types::{ConnectionInfo, Field, Row, RowIterator, Schema, ServerStats};
 
-#[pymodule]
+// Preserve the existing GIL requirement until free-threaded use is audited.
+#[pymodule(gil_used = true)]
 fn _databend_driver(py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AsyncDatabendClient>()?;
     m.add_class::<AsyncDatabendConnection>()?;
