@@ -4,8 +4,14 @@ runs:
   using: "composite"
   steps:
 
+    - name: Install HawkEye
+      uses: taiki-e/install-action@v2
+      with:
+        tool: hawkeye@7.3.0
+
     - name: Check Apache License Header
-      uses: korandoru/hawkeye@v3
+      shell: bash
+      run: hawkeye check
 
     - name: Typos
       uses: crate-ci/typos@master
