@@ -1,11 +1,12 @@
-baseDir = "."
+[header]
+builtin = "Apache-2.0"
 
-headerPath = "Apache-2.0.txt"
-
+[files]
+root = "."
 excludes = [
     # hidden files
-    ".cargo",
-    ".github",
+    ".cargo/**",
+    ".github/**",
     ".dockerignore",
     ".gitignore",
     ".gitattributes",
@@ -22,6 +23,9 @@ excludes = [
     "**/*.hbs",
     "**/*.template",
     "**/*.cue",
+    "**/*.csv",
+    "**/*.feature",
+    "**/*.conf",
     "**/*.json",
     "**/*.sql",
     "**/*.proto",
@@ -40,9 +44,9 @@ excludes = [
 
     # frontend files
     "frontend/**",
-    "cli/frontend",
+    "cli/frontend/**",
 ]
 
-[properties]
-inceptionYear = 2021
-copyrightOwner = "Datafuse Labs"
+[props]
+inception_year = 2021
+copyright_owner = "Datafuse Labs"
