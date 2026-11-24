@@ -4,10 +4,10 @@ runs:
   using: "composite"
   steps:
 
-    - name: Install HawkEye
+    - name: Install HawkEye and cargo-binstall
       uses: taiki-e/install-action@v2
       with:
-        tool: hawkeye@7.3.0
+        tool: cargo-binstall,hawkeye@7.3.0
 
     - name: Check Apache License Header
       shell: bash
@@ -26,8 +26,6 @@ runs:
         GH_TOKEN: ${{ github.token }}
       shell: bash
       run: |
-        cargo install cargo-quickinstall
-        cargo quickinstall cargo-binstall
         cargo binstall -y cargo-machete
         cargo binstall -y cargo-deny
         cargo binstall -y cargo-xwin
