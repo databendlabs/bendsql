@@ -1245,37 +1245,110 @@ async fn cloud_rejects_invalid_response_session_headers_without_overwriting_stat
 
 #[tokio::test]
 async fn native_cookie_behavior_does_not_adopt_cloud_session_headers() {
+    const LOGIN: &str = "/v1/session/login?disable_session_token=true";
     let server = MockServer::new(|request| {
-        assert_eq!(request.headers["authorization"], "Basic cm9vdDo=");
-        assert!(request.headers["cookie"].contains("cookie_enabled=true"));
-        assert!(!request.headers.contains_key("x-databend-client-caps"));
-        assert!(!request.headers.contains_key("x-databend-session"));
-        let mut reply = MockReply::json(query_reply());
+        let mut reply = if request.path == LOGIN {
+            let mut reply = MockReply::json(json!({"version": "1.2.968"}));
+            reply.headers.extend([
+                ("Set-Cookie", "session_id=native-session; Path=/".into()),
+                ("Set-Cookie", "login_only=1; Path=/v1/session".into()),
+                (
+                    "Set-Cookie",
+                    "foreign=1; Domain=example.invalid; Path=/".into(),
+                ),
+            ]);
+            reply
+        } else {
+            MockReply::json(query_reply())
+        };
         reply
             .headers
             .push((HEADER_SESSION, "not-for-native".into()));
         reply
     })
     .await;
-    let mut client = client(&server).await;
-    client.transport = Transport::Native;
-    client.auth = Arc::new(BasicAuth::new("root", ""));
-    client.build_client(None).await.unwrap();
-    client
-        .start_query_inner("SELECT 1", None, false, None)
-        .await
+
+    let dsn = format!(
+        "databend://root@127.0.0.1:{}/default?sslmode=disable&session_token=disable",
+        server.url.port().unwrap()
+    );
+    for _ in 0..2 {
+        let mut client = APIClient::from_dsn(&dsn).await.unwrap();
+        client.build_client(None).await.unwrap();
+        client.login().await.unwrap();
+        client
+            .start_query_inner("SELECT 1", None, false, None)
+            .await
+            .unwrap();
+        client
+            .query_page("q1", "/v1/query/q1/page/0", &None)
+            .await
+            .unwrap();
+    }
+
+    let requests = server.requests.lock();
+    assert_eq!(requests.len(), 6);
+    for requests in requests.chunks_exact(3) {
+        assert_eq!(requests[0].path, LOGIN);
+        assert_eq!(requests[1].path, "/v1/query");
+        assert_eq!(requests[2].path, "/v1/query/q1/page/0");
+        // Each new client advertises cookie support but has no session cookie yet.
+        assert_eq!(requests[0].headers["cookie"], "cookie_enabled=true");
+        for request in requests {
+            assert_eq!(request.headers["authorization"], "Basic cm9vdDo=");
+            assert!(!request.headers.contains_key("x-databend-client-caps"));
+            assert!(!request.headers.contains_key("x-databend-session"));
+        }
+        for request in &requests[1..] {
+            let cookies: Vec<_> = request.headers["cookie"].split("; ").collect();
+            assert_eq!(cookies.len(), 2);
+            assert!(cookies.contains(&"cookie_enabled=true"));
+            assert!(cookies.contains(&"session_id=native-session"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_cookie_jar_does_not_send_host_only_cookies_to_another_host() {
+    let server = MockServer::new(|request| {
+        let mut reply = MockReply::json(json!({}));
+        if request.path == "/login" {
+            reply
+                .headers
+                .push(("Set-Cookie", "session_id=native-session; Path=/".into()));
+        }
+        reply
+    })
+    .await;
+    let addr = server.url.socket_addrs(|| None).unwrap()[0];
+    let mut endpoint = server.url.clone();
+    endpoint.set_host(Some("databend.test")).unwrap();
+    let mut other = endpoint.clone();
+    other.set_host(Some("other.test")).unwrap();
+    let builder = HttpClient::builder()
+        .no_proxy()
+        .resolve("databend.test", addr)
+        .resolve("other.test", addr);
+    let client = Transport::Native
+        .configure_client(builder, &endpoint)
+        .build()
         .unwrap();
-    client
-        .query_page("q1", "/v1/query/q1/page/0", &None)
-        .await
-        .unwrap();
-    let mut request = client.cli.get(server.url.clone()).build().unwrap();
-    client
-        .transport
-        .prepare_request(&mut request, &client.endpoint)
-        .unwrap();
-    assert!(!request.headers().contains_key(HEADER_SESSION));
-    assert_eq!(server.requests.lock().len(), 2);
+
+    for url in [endpoint.join("login").unwrap(), endpoint, other] {
+        client
+            .get(url)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+    }
+
+    let requests = server.requests.lock();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0].headers["cookie"], "cookie_enabled=true");
+    assert!(requests[1].headers["cookie"].contains("session_id=native-session"));
+    assert!(!requests[2].headers.contains_key("cookie"));
 }
 
 #[tokio::test]

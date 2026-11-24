@@ -18,7 +18,6 @@ mod cloud_api;
 mod auth;
 mod error;
 mod error_code;
-mod global_cookie_store;
 mod login;
 mod mask;
 mod pages;

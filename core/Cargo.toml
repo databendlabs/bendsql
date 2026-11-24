@@ -27,7 +27,6 @@ arrow-schema = { workspace = true }
 base64 = "0.22.1"
 bytes = "1.10.1"
 chrono-tz = { workspace = true }
-cookie = "0.18.1"
 databend-common-ast = "0.2.5"
 jsonwebtoken = "9"
 log = { version = "0.4", features = ["kv"] }
