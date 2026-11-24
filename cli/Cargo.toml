@@ -16,13 +16,13 @@ databend-client = { workspace = true }
 databend-driver = { workspace = true, features = ["rustls", "flight-sql"] }
 tokio-stream = { workspace = true }
 
-# The Web UI uses HTTP/1; disable HTTP/2 to avoid h2 0.3 (RUSTSEC-2026-0258).
+# The Web UI uses HTTP/1 and does not use Actix cookie handling. Keep HTTP/2 and
+# cookies disabled to avoid h2 0.3 (RUSTSEC-2026-0258) and cookie 0.16 (RUSTSEC-2026-0594).
 actix-web = { version = "4.11", default-features = false, features = [
     "macros",
     "compress-brotli",
     "compress-gzip",
     "compress-zstd",
-    "cookies",
     "unicode",
     "compat",
 ] }
