@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use chrono::{DateTime, FixedOffset, NaiveDate};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime};
 use chrono_tz::Tz;
 use databend_client::schema::{DataType, DecimalDataType, DecimalSize, NumberDataType};
 use databend_client::GeometryDataType;
@@ -98,6 +98,8 @@ pub enum Value {
     /// Microseconds from 1970-01-01 00:00:00 UTC
     Timestamp(DateTime<Tz>),
     TimestampTz(DateTime<FixedOffset>),
+    /// Wall-clock time without a timezone (`TIMESTAMP_NTZ`).
+    TimestampNtz(NaiveDateTime),
     Date(i32),
     Array(Vec<Value>),
     Map(Vec<(Value, Value)>),
@@ -136,6 +138,7 @@ impl Value {
             },
             Self::Timestamp(_) => DataType::Timestamp,
             Self::TimestampTz(_) => DataType::TimestampTz,
+            Self::TimestampNtz(_) => DataType::TimestampNtz,
             Self::Date(_) => DataType::Date,
             Self::Interval(_) => DataType::Interval,
             Self::Array(vals) => {
