@@ -31,6 +31,7 @@ pub const ARROW_EXT_TYPE_GEOGRAPHY: &str = "Geography";
 pub const ARROW_EXT_TYPE_INTERVAL: &str = "Interval";
 pub const ARROW_EXT_TYPE_VECTOR: &str = "Vector";
 pub const ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE: &str = "TimestampTz";
+pub const ARROW_EXT_TYPE_TIMESTAMP_NTZ: &str = "TimestampNtz";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NumberDataType {
@@ -81,6 +82,8 @@ pub enum DataType {
     Decimal(DecimalDataType),
     Timestamp,
     TimestampTz,
+    /// Wall-clock timestamp without a timezone.
+    TimestampNtz,
     Date,
     Nullable(Box<DataType>),
     Array(Box<DataType>),
@@ -132,6 +135,7 @@ impl std::fmt::Display for DataType {
             }
             DataType::Timestamp => write!(f, "Timestamp"),
             DataType::TimestampTz => write!(f, "Timestamp_Tz"),
+            DataType::TimestampNtz => write!(f, "Timestamp_Ntz"),
             DataType::Date => write!(f, "Date"),
             DataType::Nullable(inner) => write!(f, "Nullable({inner})"),
             DataType::Array(inner) => write!(f, "Array({inner})"),
@@ -289,6 +293,7 @@ impl TryFrom<&TypeDesc<'_>> for DataType {
                 DataType::Vector(dimension)
             }
             "Timestamp_Tz" => DataType::TimestampTz,
+            "Timestamp_Ntz" => DataType::TimestampNtz,
             _ => return Err(Error::Decode(format!("Unknown type: {desc:?}"))),
         };
         Ok(dt)
@@ -335,6 +340,7 @@ impl TryFrom<&Arc<ArrowField>> for Field {
                 ARROW_EXT_TYPE_GEOGRAPHY => DataType::Geography,
                 ARROW_EXT_TYPE_INTERVAL => DataType::Interval,
                 ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE => DataType::TimestampTz,
+                ARROW_EXT_TYPE_TIMESTAMP_NTZ => DataType::TimestampNtz,
                 ARROW_EXT_TYPE_VECTOR => match f.data_type() {
                     ArrowDataType::FixedSizeList(field, dimension) => {
                         let dimension = match field.data_type() {
@@ -523,6 +529,43 @@ mod test {
     use std::vec;
 
     use super::*;
+
+    #[test]
+    fn decodes_timestamp_ntz_from_type_desc_and_arrow() {
+        for (input, expected) in [
+            ("Timestamp_Ntz", "Timestamp_Ntz"),
+            ("Timestamp_Ntz NULL", "Nullable(Timestamp_Ntz)"),
+            ("Nullable(Timestamp_Ntz)", "Nullable(Timestamp_Ntz)"),
+            (
+                "Array(Timestamp_Ntz NULL)",
+                "Array(Nullable(Timestamp_Ntz))",
+            ),
+        ] {
+            let desc = parse_type_desc(input).unwrap();
+            assert_eq!(DataType::try_from(&desc).unwrap().to_string(), expected);
+        }
+
+        // The server sends TIMESTAMP_NTZ as a plain Arrow timestamp plus the
+        // extension key; without the key it is a TIMESTAMP.
+        let arrow_type = ArrowDataType::Timestamp(arrow_schema::TimeUnit::Microsecond, None);
+        let ntz = Arc::new(
+            ArrowField::new("ts", arrow_type.clone(), false).with_metadata(
+                std::collections::HashMap::from([(
+                    EXTENSION_KEY.to_string(),
+                    ARROW_EXT_TYPE_TIMESTAMP_NTZ.to_string(),
+                )]),
+            ),
+        );
+        assert!(matches!(
+            Field::try_from(&ntz).unwrap().data_type,
+            DataType::TimestampNtz
+        ));
+        let plain = Arc::new(ArrowField::new("ts", arrow_type, false));
+        assert!(matches!(
+            Field::try_from(&plain).unwrap().data_type,
+            DataType::Timestamp
+        ));
+    }
 
     #[test]
     fn rejects_decimal_and_vector_without_args() {

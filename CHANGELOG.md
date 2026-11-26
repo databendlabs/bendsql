@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Types
+
+- Decode Databend's `TIMESTAMP_NTZ` (a wall-clock timestamp without a
+  timezone) as `Value::TimestampNtz(NaiveDateTime)`, from both JSON
+  (`Timestamp_Ntz`) and Arrow (the `TimestampNtz` extension) results. The
+  session timezone is never applied. Older drivers fail on these columns with
+  `Unknown type: Timestamp_Ntz`. Python returns a naive `datetime`; Node.js
+  returns a `Date` that holds the wall clock in UTC, so read it with the
+  `getUTC*` methods. `NaiveDateTime::try_from(Value)` accepts both
+  `Timestamp` and `TimestampNtz`.
+
 ### Query cancellation
 
 - `kill_query` / `killQuery` can kill queries started by other connections or

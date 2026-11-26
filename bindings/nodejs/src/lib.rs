@@ -345,6 +345,17 @@ impl ToNapiValue for Value<'_> {
                 )?;
                 Ok(js_date)
             }
+            databend_driver::Value::TimestampNtz(dt) => {
+                // A JS Date is an instant, so the wall clock is stored as UTC:
+                // read it back with the `getUTC*` methods.
+                let mut js_date = std::ptr::null_mut();
+                let millis = dt.and_utc().timestamp_millis() as f64;
+                check_status!(
+                    unsafe { sys::napi_create_date(env, millis, &mut js_date) },
+                    "Failed to convert timestamp_ntz into napi value",
+                )?;
+                Ok(js_date)
+            }
             databend_driver::Value::Date(_) => {
                 let inner = val.inner.clone();
                 let v = NaiveDate::try_from(inner).map_err(format_napi_error)?;

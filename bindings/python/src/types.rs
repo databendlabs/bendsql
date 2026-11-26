@@ -88,6 +88,8 @@ impl<'py> IntoPyObject<'py> for Value {
                 }
             }
             databend_driver::Value::TimestampTz(t) => t.into_bound_py_any(py)?,
+            // A naive `datetime`: the value carries no timezone.
+            databend_driver::Value::TimestampNtz(t) => t.into_bound_py_any(py)?,
             databend_driver::Value::Date(_) => {
                 let d = NaiveDate::try_from(self.0)
                     .map_err(|e| PyException::new_err(format!("failed to convert date: {e}")))?;

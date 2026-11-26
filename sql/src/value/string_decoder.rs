@@ -113,6 +113,10 @@ impl TryFrom<(&DataType, String, &ResultFormatSettings)> for Value {
                 let t = DateTime::parse_from_str(v.as_str(), TIMESTAMP_TIMEZONE_FORMAT)?;
                 Ok(Self::TimestampTz(t))
             }
+            DataType::TimestampNtz => Ok(Self::TimestampNtz(NaiveDateTime::parse_from_str(
+                v.as_str(),
+                TIMESTAMP_FORMAT,
+            )?)),
             DataType::Date => Ok(Self::Date(
                 NaiveDate::parse_from_str(v.as_str(), "%Y-%m-%d")?.num_days_from_ce()
                     - DAYS_FROM_CE,
@@ -130,9 +134,7 @@ impl TryFrom<(&DataType, String, &ResultFormatSettings)> for Value {
             DataType::Interval => Ok(Self::Interval(v)),
             DataType::Array(_) | DataType::Map(_) | DataType::Tuple(_) | DataType::Vector(_) => {
                 let mut reader = Cursor::new(v.as_str());
-                let decoder = ValueDecoder {
-                    settings: settings.clone(),
-                };
+                let mut decoder = ValueDecoder::new(settings.clone());
                 decoder.read_field(t, &mut reader)
             }
             DataType::Nullable(inner) => match inner.as_ref() {
@@ -152,12 +154,20 @@ impl TryFrom<(&DataType, String, &ResultFormatSettings)> for Value {
 }
 
 struct ValueDecoder {
-    pub settings: ResultFormatSettings,
+    settings: ResultFormatSettings,
+    scratch: Vec<u8>,
 }
 
 impl ValueDecoder {
+    fn new(settings: ResultFormatSettings) -> Self {
+        Self {
+            settings,
+            scratch: Vec::new(),
+        }
+    }
+
     pub(super) fn read_field<R: AsRef<[u8]>>(
-        &self,
+        &mut self,
         ty: &DataType,
         reader: &mut Cursor<R>,
     ) -> Result<Value> {
@@ -183,6 +193,7 @@ impl ValueDecoder {
             DataType::Binary => self.read_binary(reader),
             DataType::Timestamp => self.read_timestamp(reader),
             DataType::TimestampTz => self.read_timestamp_tz(reader),
+            DataType::TimestampNtz => self.read_timestamp_ntz(reader),
             DataType::Date => self.read_date(reader),
             DataType::Bitmap => self.read_bitmap(reader),
             DataType::Variant => self.read_variant(reader),
@@ -300,38 +311,63 @@ impl ValueDecoder {
         Ok(Value::String(String::from_utf8(buf)?))
     }
 
-    fn read_binary<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
-        let text = self.read_binary_text(reader)?;
-        Ok(Value::Binary(parse_binary_value(&text, &self.settings)?))
+    fn read_binary<R: AsRef<[u8]>>(&mut self, reader: &mut Cursor<R>) -> Result<Value> {
+        if let Some(quote @ (b'"' | b'\'')) = reader.peek_byte() {
+            self.scratch.clear();
+            reader.read_quoted_text(&mut self.scratch, quote)?;
+            let text = std::str::from_utf8(&self.scratch)?;
+            return Ok(Value::Binary(parse_binary_value(text, &self.settings)?));
+        }
+
+        let buf = reader.fill_buf()?;
+        let n = collect_binary_token(buf);
+        if n == 0 {
+            return Err(ConvertError::new("binary", String::from_utf8_lossy(buf).into()).into());
+        }
+        let text = std::str::from_utf8(&buf[..n])?;
+        let result = parse_binary_value(text, &self.settings);
+        reader.consume(n);
+        Ok(Value::Binary(result?))
     }
 
-    fn read_date<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
-        let mut buf = Vec::new();
-        if reader.read_quoted_text(&mut buf, b'"').is_err() {
-            reader.read_quoted_text(&mut buf, b'\'')?;
+    fn read_quoted_text_into_scratch<R: AsRef<[u8]>>(
+        &mut self,
+        reader: &mut Cursor<R>,
+    ) -> Result<()> {
+        self.scratch.clear();
+        if reader.read_quoted_text(&mut self.scratch, b'"').is_err() {
+            reader.read_quoted_text(&mut self.scratch, b'\'')?;
         }
-        let v = std::str::from_utf8(&buf)?;
+        Ok(())
+    }
+
+    fn read_date<R: AsRef<[u8]>>(&mut self, reader: &mut Cursor<R>) -> Result<Value> {
+        self.read_quoted_text_into_scratch(reader)?;
+        let v = std::str::from_utf8(&self.scratch)?;
         let days = NaiveDate::parse_from_str(v, "%Y-%m-%d")?.num_days_from_ce() - DAYS_FROM_CE;
         Ok(Value::Date(days))
     }
 
-    fn read_timestamp<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
-        let mut buf = Vec::new();
-        if reader.read_quoted_text(&mut buf, b'"').is_err() {
-            reader.read_quoted_text(&mut buf, b'\'')?;
-        }
-        let v = std::str::from_utf8(&buf)?;
+    fn read_timestamp<R: AsRef<[u8]>>(&mut self, reader: &mut Cursor<R>) -> Result<Value> {
+        self.read_quoted_text_into_scratch(reader)?;
+        let v = std::str::from_utf8(&self.scratch)?;
         parse_timestamp(v, &self.settings.timezone)
     }
 
-    fn read_timestamp_tz<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
-        let mut buf = Vec::new();
-        if reader.read_quoted_text(&mut buf, b'"').is_err() {
-            reader.read_quoted_text(&mut buf, b'\'')?;
-        }
-        let v = std::str::from_utf8(&buf)?;
+    fn read_timestamp_tz<R: AsRef<[u8]>>(&mut self, reader: &mut Cursor<R>) -> Result<Value> {
+        self.read_quoted_text_into_scratch(reader)?;
+        let v = std::str::from_utf8(&self.scratch)?;
         let t = DateTime::parse_from_str(v, TIMESTAMP_TIMEZONE_FORMAT)?;
         Ok(Value::TimestampTz(t))
+    }
+
+    fn read_timestamp_ntz<R: AsRef<[u8]>>(&mut self, reader: &mut Cursor<R>) -> Result<Value> {
+        self.read_quoted_text_into_scratch(reader)?;
+        let v = std::str::from_utf8(&self.scratch)?;
+        Ok(Value::TimestampNtz(NaiveDateTime::parse_from_str(
+            v,
+            TIMESTAMP_FORMAT,
+        )?))
     }
 
     fn read_interval<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -381,7 +417,7 @@ impl ValueDecoder {
     }
 
     fn read_nullable<R: AsRef<[u8]>>(
-        &self,
+        &mut self,
         ty: &DataType,
         reader: &mut Cursor<R>,
     ) -> Result<Value> {
@@ -403,7 +439,11 @@ impl ValueDecoder {
         Ok(Value::EmptyArray)
     }
 
-    fn read_array<R: AsRef<[u8]>>(&self, ty: &DataType, reader: &mut Cursor<R>) -> Result<Value> {
+    fn read_array<R: AsRef<[u8]>>(
+        &mut self,
+        ty: &DataType,
+        reader: &mut Cursor<R>,
+    ) -> Result<Value> {
         let mut vals = Vec::new();
         reader.must_ignore_byte(b'[')?;
         for idx in 0.. {
@@ -441,7 +481,7 @@ impl ValueDecoder {
         Ok(Value::Vector(vals))
     }
 
-    fn read_map<R: AsRef<[u8]>>(&self, ty: &DataType, reader: &mut Cursor<R>) -> Result<Value> {
+    fn read_map<R: AsRef<[u8]>>(&mut self, ty: &DataType, reader: &mut Cursor<R>) -> Result<Value> {
         const KEY: usize = 0;
         const VALUE: usize = 1;
         let mut kvs = Vec::new();
@@ -471,7 +511,7 @@ impl ValueDecoder {
     }
 
     fn read_tuple<R: AsRef<[u8]>>(
-        &self,
+        &mut self,
         tys: &[DataType],
         reader: &mut Cursor<R>,
     ) -> Result<Value> {
@@ -497,24 +537,6 @@ impl ValueDecoder {
         let raw: Box<RawValue> = Box::<RawValue>::deserialize(&mut deserializer)?;
         reader.set_position((start + raw.get().len()) as u64);
         Ok(raw.to_string())
-    }
-
-    fn read_binary_text<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<String> {
-        let quote = reader.peek_byte();
-        if matches!(quote, Some(b'"') | Some(b'\'')) {
-            let mut buf = Vec::new();
-            reader.read_quoted_text(&mut buf, quote.unwrap())?;
-            return Ok(String::from_utf8(buf)?);
-        }
-
-        let buf = reader.fill_buf()?;
-        let n = collect_binary_token(buf);
-        if n == 0 {
-            return Err(ConvertError::new("binary", String::from_utf8_lossy(buf).into()).into());
-        }
-        let text = std::str::from_utf8(&buf[..n])?.to_owned();
-        reader.consume(n);
-        Ok(text)
     }
 }
 
@@ -649,6 +671,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn decode_timestamp_ntz_ignores_session_timezone() {
+        let expected =
+            NaiveDateTime::parse_from_str("2024-03-10 02:30:00.123456", "%Y-%m-%d %H:%M:%S%.6f")
+                .unwrap();
+        // 02:30 does not exist in New York on this day, but the wall clock does.
+        let settings = ResultFormatSettings {
+            timezone: "America/New_York".parse().unwrap(),
+            ..ResultFormatSettings::default()
+        };
+
+        let top = Value::try_from((
+            &DataType::TimestampNtz,
+            "2024-03-10 02:30:00.123456".to_string(),
+            &settings,
+        ))
+        .unwrap();
+        assert_eq!(top, Value::TimestampNtz(expected));
+        assert_eq!(top.to_string(), "2024-03-10 02:30:00.123456");
+        assert_eq!(NaiveDateTime::try_from(top).unwrap(), expected);
+
+        let nested = Value::try_from((
+            &DataType::Array(Box::new(DataType::Nullable(Box::new(
+                DataType::TimestampNtz,
+            )))),
+            r#"["2024-03-10 02:30:00.123456",NULL]"#.to_string(),
+            &settings,
+        ))
+        .unwrap();
+        assert_eq!(
+            nested,
+            Value::Array(vec![Value::TimestampNtz(expected), Value::Null])
+        );
+    }
+
     fn settings(binary_output_format: BinaryFormat) -> ResultFormatSettings {
         ResultFormatSettings {
             binary_output_format,
@@ -677,9 +734,7 @@ mod tests {
 
     #[test]
     fn decode_nested_base64_map_binary_key() {
-        let decoder = ValueDecoder {
-            settings: settings(BinaryFormat::Base64),
-        };
+        let mut decoder = ValueDecoder::new(settings(BinaryFormat::Base64));
         let map_ty = DataType::Map(Box::new(DataType::Tuple(vec![
             DataType::Binary,
             DataType::Number(NumberDataType::Int32),
@@ -697,9 +752,7 @@ mod tests {
 
     #[test]
     fn decode_nested_map_binary_key_and_nullable_binary() {
-        let decoder = ValueDecoder {
-            settings: settings(BinaryFormat::Hex),
-        };
+        let mut decoder = ValueDecoder::new(settings(BinaryFormat::Hex));
         let map_ty = DataType::Map(Box::new(DataType::Tuple(vec![
             DataType::Binary,
             DataType::Number(NumberDataType::Int32),

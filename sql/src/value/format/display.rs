@@ -90,6 +90,14 @@ impl Value {
                     write!(f, "\"{formatted}\"")
                 }
             }
+            Value::TimestampNtz(dt) => {
+                let formatted = dt.format(TIMESTAMP_FORMAT);
+                if raw {
+                    write!(f, "{formatted}")
+                } else {
+                    write!(f, "\"{formatted}\"")
+                }
+            }
             Value::TimestampTz(dt) => {
                 let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
                 if raw {

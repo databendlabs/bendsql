@@ -75,6 +75,7 @@ impl TryFrom<Value> for NaiveDateTime {
     fn try_from(val: Value) -> Result<Self> {
         match val {
             Value::Timestamp(dt) => Ok(dt.naive_utc()),
+            Value::TimestampNtz(dt) => Ok(dt),
             _ => Err(ConvertError::new("NaiveDateTime", format!("{val}")).into()),
         }
     }
