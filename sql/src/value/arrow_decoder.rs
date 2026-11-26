@@ -29,8 +29,8 @@ use chrono::{DateTime, FixedOffset};
 use databend_client::schema::{
     DecimalSize, ARROW_EXT_TYPE_BITMAP, ARROW_EXT_TYPE_EMPTY_ARRAY, ARROW_EXT_TYPE_EMPTY_MAP,
     ARROW_EXT_TYPE_GEOGRAPHY, ARROW_EXT_TYPE_GEOMETRY, ARROW_EXT_TYPE_INTERVAL,
-    ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE, ARROW_EXT_TYPE_VARIANT, ARROW_EXT_TYPE_VECTOR,
-    EXTENSION_KEY,
+    ARROW_EXT_TYPE_TIMESTAMP_NTZ, ARROW_EXT_TYPE_TIMESTAMP_TIMEZONE, ARROW_EXT_TYPE_VARIANT,
+    ARROW_EXT_TYPE_VECTOR, EXTENSION_KEY,
 };
 use databend_client::ResultFormatSettings;
 use ethnum::i256;
@@ -141,6 +141,24 @@ impl
                             Ok(Value::TimestampTz(timestamp.with_timezone(&offset)))
                         }
                         None => Err(ConvertError::new("Interval", format!("{array:?}")).into()),
+                    }
+                }
+                ARROW_EXT_TYPE_TIMESTAMP_NTZ => {
+                    if field.is_nullable() && array.is_null(seq) {
+                        return Ok(Value::Null);
+                    }
+                    // Civil microseconds: reading them as UTC applies no offset.
+                    match array.as_any().downcast_ref::<TimestampMicrosecondArray>() {
+                        Some(array) => {
+                            let ts = array.value(seq);
+                            let dt = DateTime::from_timestamp_micros(ts).ok_or_else(|| {
+                                Error::Parsing(format!("Invalid timestamp_micros {ts}"))
+                            })?;
+                            Ok(Value::TimestampNtz(dt.naive_utc()))
+                        }
+                        None => {
+                            Err(ConvertError::new("timestamp_ntz", format!("{array:?}")).into())
+                        }
                     }
                 }
                 ARROW_EXT_TYPE_INTERVAL => {
@@ -486,6 +504,36 @@ mod tests {
             EXTENSION_KEY.to_string(),
             ARROW_EXT_TYPE_VARIANT.to_string(),
         )]))
+    }
+
+    #[test]
+    fn decode_timestamp_ntz_ignores_session_timezone() {
+        let field = ArrowField::new(
+            "ts",
+            ArrowDataType::Timestamp(TimeUnit::Microsecond, None),
+            true,
+        )
+        .with_metadata(HashMap::from([(
+            EXTENSION_KEY.to_string(),
+            ARROW_EXT_TYPE_TIMESTAMP_NTZ.to_string(),
+        )]));
+        // 2024-03-10 02:30:00.123456 in civil microseconds.
+        let array: ArrayRef = Arc::new(TimestampMicrosecondArray::from(vec![
+            Some(1_710_037_800_123_456),
+            None,
+        ]));
+        let settings = ResultFormatSettings {
+            timezone: "Asia/Shanghai".parse().unwrap(),
+            ..ResultFormatSettings::default()
+        };
+
+        let value = Value::try_from((&field, &array, 0, &settings)).unwrap();
+        assert_eq!(value.to_string(), "2024-03-10 02:30:00.123456");
+        assert!(matches!(value, Value::TimestampNtz(_)));
+        assert_eq!(
+            Value::try_from((&field, &array, 1, &settings)).unwrap(),
+            Value::Null
+        );
     }
 
     #[test]

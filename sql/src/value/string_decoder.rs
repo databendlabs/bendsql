@@ -113,6 +113,10 @@ impl TryFrom<(&DataType, String, &ResultFormatSettings)> for Value {
                 let t = DateTime::parse_from_str(v.as_str(), TIMESTAMP_TIMEZONE_FORMAT)?;
                 Ok(Self::TimestampTz(t))
             }
+            DataType::TimestampNtz => Ok(Self::TimestampNtz(NaiveDateTime::parse_from_str(
+                v.as_str(),
+                TIMESTAMP_FORMAT,
+            )?)),
             DataType::Date => Ok(Self::Date(
                 NaiveDate::parse_from_str(v.as_str(), "%Y-%m-%d")?.num_days_from_ce()
                     - DAYS_FROM_CE,
@@ -183,6 +187,7 @@ impl ValueDecoder {
             DataType::Binary => self.read_binary(reader),
             DataType::Timestamp => self.read_timestamp(reader),
             DataType::TimestampTz => self.read_timestamp_tz(reader),
+            DataType::TimestampNtz => self.read_timestamp_ntz(reader),
             DataType::Date => self.read_date(reader),
             DataType::Bitmap => self.read_bitmap(reader),
             DataType::Variant => self.read_variant(reader),
@@ -332,6 +337,18 @@ impl ValueDecoder {
         let v = std::str::from_utf8(&buf)?;
         let t = DateTime::parse_from_str(v, TIMESTAMP_TIMEZONE_FORMAT)?;
         Ok(Value::TimestampTz(t))
+    }
+
+    fn read_timestamp_ntz<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
+        let mut buf = Vec::new();
+        if reader.read_quoted_text(&mut buf, b'"').is_err() {
+            reader.read_quoted_text(&mut buf, b'\'')?;
+        }
+        let v = std::str::from_utf8(&buf)?;
+        Ok(Value::TimestampNtz(NaiveDateTime::parse_from_str(
+            v,
+            TIMESTAMP_FORMAT,
+        )?))
     }
 
     fn read_interval<R: AsRef<[u8]>>(&self, reader: &mut Cursor<R>) -> Result<Value> {
@@ -646,6 +663,41 @@ mod tests {
         assert_eq!(
             parse_decimal("0", size()).unwrap(),
             NumberValue::Decimal64(0, size())
+        );
+    }
+
+    #[test]
+    fn decode_timestamp_ntz_ignores_session_timezone() {
+        let expected =
+            NaiveDateTime::parse_from_str("2024-03-10 02:30:00.123456", "%Y-%m-%d %H:%M:%S%.6f")
+                .unwrap();
+        // 02:30 does not exist in New York on this day, but the wall clock does.
+        let settings = ResultFormatSettings {
+            timezone: "America/New_York".parse().unwrap(),
+            ..ResultFormatSettings::default()
+        };
+
+        let top = Value::try_from((
+            &DataType::TimestampNtz,
+            "2024-03-10 02:30:00.123456".to_string(),
+            &settings,
+        ))
+        .unwrap();
+        assert_eq!(top, Value::TimestampNtz(expected));
+        assert_eq!(top.to_string(), "2024-03-10 02:30:00.123456");
+        assert_eq!(NaiveDateTime::try_from(top).unwrap(), expected);
+
+        let nested = Value::try_from((
+            &DataType::Array(Box::new(DataType::Nullable(Box::new(
+                DataType::TimestampNtz,
+            )))),
+            r#"["2024-03-10 02:30:00.123456",NULL]"#.to_string(),
+            &settings,
+        ))
+        .unwrap();
+        assert_eq!(
+            nested,
+            Value::Array(vec![Value::TimestampNtz(expected), Value::Null])
         );
     }
 

@@ -103,6 +103,10 @@ impl Value {
                 let s = dt.format(TIMESTAMP_TIMEZONE_FORMAT).to_string();
                 Self::write_string(bytes, &s, raw);
             }
+            Value::TimestampNtz(dt) => {
+                let s = dt.format(TIMESTAMP_FORMAT).to_string();
+                Self::write_string(bytes, &s, raw);
+            }
             Value::Date(i) => {
                 let s = match date_from_day_count(*i) {
                     Some(d) => format!("{}", d),

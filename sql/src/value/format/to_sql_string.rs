@@ -54,6 +54,9 @@ impl Value {
             Value::TimestampTz(dt) => {
                 serde_json::Value::String(dt.format(TIMESTAMP_TIMEZONE_FORMAT).to_string())
             }
+            Value::TimestampNtz(dt) => {
+                serde_json::Value::String(dt.format(TIMESTAMP_FORMAT).to_string())
+            }
             Value::Date(d) => match date_from_day_count(*d) {
                 Some(date) => serde_json::Value::String(date.format("%Y-%m-%d").to_string()),
                 // Out of range: emit the raw day count rather than a fake
@@ -112,6 +115,9 @@ impl Value {
             Value::TimestampTz(dt) => {
                 let formatted = dt.format(TIMESTAMP_TIMEZONE_FORMAT);
                 format!("'{formatted}'")
+            }
+            Value::TimestampNtz(dt) => {
+                format!("'{}'", dt.format(TIMESTAMP_FORMAT))
             }
             Value::Date(d) => match date_from_day_count(*d) {
                 Some(date) => format!("'{}'", date.format("%Y-%m-%d")),

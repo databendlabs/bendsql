@@ -40,6 +40,7 @@ impl TryFrom<Value> for String {
             }
             Value::Timestamp(dt) => Ok(dt.format(TIMESTAMP_FORMAT).to_string()),
             Value::TimestampTz(dt) => Ok(dt.format(TIMESTAMP_TIMEZONE_FORMAT).to_string()),
+            Value::TimestampNtz(dt) => Ok(dt.format(TIMESTAMP_FORMAT).to_string()),
             _ => Err(ConvertError::new("string", format!("{val:?}")).into()),
         }
     }
