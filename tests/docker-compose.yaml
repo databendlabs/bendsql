@@ -10,6 +10,11 @@ services:
       - "9000:9000"
     volumes:
       - ./data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
   meta:
     image: docker.io/datafuselabs/databend-meta:${DATABEND_META_VERSION:-nightly}
     volumes:
@@ -35,7 +40,7 @@ services:
       # - "8001-8003:8000" # http handler
     depends_on:
       minio:
-        condition: service_started
+        condition: service_healthy
       meta:
         condition: service_healthy
     healthcheck:
