@@ -14,8 +14,10 @@
 
 use std::collections::BTreeMap;
 
+use crate::error::{Error, Result};
 use crate::error_code::ErrorCode;
 use crate::session::SessionState;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Debug)]
@@ -45,45 +47,59 @@ impl From<&SessionState> for LoginRequest {
     }
 }
 
-fn default_session_token_ttl_in_secs() -> u64 {
-    3600
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct SessionTokenInfo {
-    pub session_token: String,
-    #[serde(default = "default_session_token_ttl_in_secs")]
-    pub session_token_ttl_in_secs: u64,
-    pub refresh_token: String,
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct LoginResponse {
-    pub version: String,
-    pub tokens: Option<SessionTokenInfo>,
-}
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize)]
 #[serde(untagged)]
-pub enum LoginResponseResult {
-    Ok(LoginResponse),
+enum LoginResponse {
     Err { error: ErrorCode },
+    Ok { version: String },
 }
 
-#[derive(Serialize, Debug)]
-pub struct RefreshSessionTokenRequest {
-    pub session_token: String,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-pub enum RefreshResponse {
-    Ok { tokens: SessionTokenInfo },
-    Err { error: ErrorCode },
+pub(crate) fn decode_login_version(body: &[u8]) -> Result<Version> {
+    // An unexpected response can still contain credentials. Do not include the
+    // body, deserializer input, or invalid version string in decode errors.
+    let response = serde_json::from_slice(body).map_err(|error| {
+        Error::Decode(format!(
+            "invalid login JSON response ({:?}, line {}, column {})",
+            error.classify(),
+            error.line(),
+            error.column()
+        ))
+    })?;
+    match response {
+        LoginResponse::Err { error } => Err(Error::AuthFailure(error)),
+        LoginResponse::Ok { version } => version
+            .parse()
+            .map_err(|_| Error::Decode("invalid server version in login response".into())),
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn login_decode_errors_do_not_include_response_values() {
+        for (body, diagnostic) in [
+            (&br#"{"tokens":"sensitive-value""#[..], "invalid login JSON"),
+            (br#"{"version":["sensitive-value"]}"#, "invalid login JSON"),
+            (
+                br#"{"version":"sensitive-value"}"#,
+                "invalid server version",
+            ),
+        ] {
+            let error = decode_login_version(body).unwrap_err().to_string();
+            assert!(error.contains(diagnostic), "{error}");
+            assert!(!error.contains("sensitive-value"));
+        }
+    }
+
+    #[test]
+    fn login_decode_preserves_structured_auth_errors() {
+        let result = decode_login_version(br#"{"error":{"code":3900,"message":"unauthorized"}}"#);
+        assert!(
+            matches!(result, Err(Error::AuthFailure(error)) if error.code == 3900 && error.message == "unauthorized")
+        );
+    }
 
     #[test]
     fn login_request_keeps_database_for_default_catalog() {

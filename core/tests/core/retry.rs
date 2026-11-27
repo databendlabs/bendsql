@@ -467,6 +467,59 @@ async fn cancelling_password_change_before_first_response_leaves_outcome_unknown
 }
 
 #[tokio::test]
+async fn native_login_ignores_session_tokens_and_does_not_refresh_on_401() {
+    for need_keep_alive in [false, true] {
+        let handler: Arc<ResponseHandler> = Arc::new(move |idx, req| {
+            assert_eq!(req.method, "POST");
+            assert_basic_password(req, "old");
+            let (path, status, body) = match idx {
+                0 => (
+                    "/v1/session/login?disable_session_token=true",
+                    200,
+                    json!({
+                        "version": "1.2.970",
+                        "tokens": {
+                            "session_token": "mock-session",
+                            "refresh_token": "mock-refresh"
+                        }
+                    })
+                    .to_string(),
+                ),
+                1 => {
+                    let mut response: Value =
+                        serde_json::from_str(&ok_query_response("1")).unwrap();
+                    response["session"] = json!({"need_keep_alive": need_keep_alive});
+                    ("/v1/query", 200, response.to_string())
+                }
+                2 => ("/v1/query", 401, logic_error_json_body(5101, "expired")),
+                3 if need_keep_alive => ("/v1/session/logout", 200, "{}".into()),
+                _ => panic!("unexpected request: {}", req.path),
+            };
+            assert_eq!(req.path, path);
+            (status, "application/json", body)
+        });
+        let (port, requests, server) = spawn_test_server(handler);
+        let dsn = format!(
+            "databend://alice:old@127.0.0.1:{port}/default?sslmode=disable&retry_delay_secs=0"
+        );
+        let client = APIClient::new(&dsn, None).await.unwrap();
+        assert!(client.capability().server_side_params);
+
+        let result = client.query_all("SELECT 1", None).await.unwrap();
+        assert_eq!(result.data, vec![vec![Some("1".to_string())]]);
+        let result = client.query_all("SELECT 1", None).await;
+        assert!(matches!(result, Err(Error::AuthFailure(error)) if error.code == 5101));
+
+        client.close().await;
+        assert_eq!(
+            requests.lock().unwrap().len(),
+            3 + usize::from(need_keep_alive)
+        );
+        server.abort();
+    }
+}
+
+#[tokio::test]
 async fn retry_503_then_success() {
     let handler: Arc<ResponseHandler> = Arc::new(|idx, req| {
         assert_eq!(req.method, "POST");

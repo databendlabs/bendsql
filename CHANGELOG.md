@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Authentication
+
+- Native REST connections use the configured credentials for every request.
+  Session-token authentication and refresh have been removed. Remove
+  `session_token` from existing DSNs; it is no longer a client option.
+  Version negotiation and keep-alive for stateful sessions are unchanged.
+- The Rust client's `RequestKind::SessionRefresh` variant has been removed.
+
 ### Query cancellation
 
 - `kill_query` / `killQuery` can kill queries started by other connections or

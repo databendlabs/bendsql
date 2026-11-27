@@ -34,7 +34,7 @@ use clap::Command;
 use percent_encoding::percent_decode;
 
 /// Connection parameters (DSN query or `--set key=value`) that carry secrets.
-const SENSITIVE_KEYS: &[&str] = &["access_token", "session_token", "cloud_api_token"];
+const SENSITIVE_KEYS: &[&str] = &["access_token", "cloud_api_token"];
 
 #[derive(Clone, Copy)]
 enum Kind {
@@ -449,19 +449,16 @@ mod tests {
     fn masks_dsn_with_url_stripped_whitespace() {
         // `url::Url::parse` drops tab/CR/LF, so these still set the secrets.
         for ws in ["\t", "\r", "\n"] {
-            let dsn =
-                format!("databend://u:p{ws}w@h/?access_{ws}token=sec{ws}ret&{ws}session_token=s");
+            let dsn = format!("databend://u:p{ws}w@h/?access_{ws}token=sec{ws}ret");
             let parsed = ConnectionArgs::from_dsn(&dsn).unwrap();
             assert_eq!(parsed.password.inner(), "pw");
             assert_eq!(parsed.args["access_token"], "secret");
-            assert_eq!(parsed.args["session_token"], "s");
             assert_eq!(
                 masked(&["bendsql", "--dsn", &dsn]),
                 [
                     "bendsql",
                     "--dsn",
-                    format!("databend://u:***@h/?access_{ws}token=*******&{ws}session_token=*")
-                        .as_str()
+                    format!("databend://u:***@h/?access_{ws}token=*******").as_str()
                 ]
             );
         }
@@ -477,7 +474,7 @@ mod tests {
                 "bendsql",
                 "--set",
                 "access_token=t",
-                "--set=session_token=s",
+                "--set=cloud_api_token=ab",
                 "--set",
                 "role=r"
             ]),
@@ -485,7 +482,7 @@ mod tests {
                 "bendsql",
                 "--set",
                 "access_token=*",
-                "--set=session_token=*",
+                "--set=cloud_api_token=**",
                 "--set",
                 "role=r"
             ]

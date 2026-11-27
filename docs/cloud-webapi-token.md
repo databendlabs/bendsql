@@ -98,9 +98,9 @@ unrelated 404/authentication failures keep their original meaning.
   `need_keep_alive`, with the latest session header and sticky-node routing.
   Logout has a bounded timeout, no retries/redirects, and no response-body logging.
   Forced process termination can still leave cleanup to server expiry.
-- Databend session-token refresh, FlightSQL, Arrow, bound parameters, stage
-  attachments/uploads and streaming load remain unsupported; presign probing is
-  disabled. `--ui` is rejected because its Python runner could expose the token.
+- FlightSQL, Arrow, bound parameters, stage attachments/uploads and streaming
+  load remain unsupported; presign probing is disabled. `--ui` is rejected because
+  its Python runner could expose the token.
 
 Tokens/session headers are sensitive; argv/DSN/Debug and AI-active logs are masked.
 Raw and JSON-escaped token echoes in errors are redacted, but SQL results are not.

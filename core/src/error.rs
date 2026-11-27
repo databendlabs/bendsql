@@ -58,7 +58,6 @@ pub enum RequestKind {
     StreamingLoad,
     Login,
     Heartbeat,
-    SessionRefresh,
     Other(String),
 }
 
@@ -73,7 +72,6 @@ impl RequestKind {
             Self::StreamingLoad => "streaming_load",
             Self::Login => "login",
             Self::Heartbeat => "heartbeat",
-            Self::SessionRefresh => "session/refresh",
             Self::Other(v) => v.as_str(),
         }
     }
@@ -96,7 +94,6 @@ impl From<&str> for RequestKind {
             "streaming_load" => Self::StreamingLoad,
             "login" => Self::Login,
             "heartbeat" => Self::Heartbeat,
-            "session/refresh" => Self::SessionRefresh,
             other => Self::Other(other.to_string()),
         }
     }

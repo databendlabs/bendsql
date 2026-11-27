@@ -139,7 +139,6 @@ async fn cloud_sticky_heartbeat_and_logout_use_current_session_without_native_to
     client.close().await;
     client.close().await;
     client.close_with_spawn();
-    assert!(client.session_token_info.is_none());
     assert_eq!(server.requests.lock().len(), 2);
 }
 

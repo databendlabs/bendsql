@@ -13,24 +13,16 @@
 // limitations under the License.
 
 use databend_driver::Client;
-use std::time::Duration;
-use tokio::time::sleep;
 
 use crate::common::DEFAULT_DSN;
 
-async fn test_temp_table(session_token_enabled: bool) {
+#[tokio::test]
+async fn temp_table_persists_across_requests() {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     if dsn.starts_with("databend+flight://") {
         return;
     }
 
-    let session_token = if session_token_enabled {
-        "enable"
-    } else {
-        "disable"
-    };
-    let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
-    let dsn = format!("{dsn}&session_token={session_token}");
     let client = Client::new(dsn.to_string());
     let conn = client.get_conn().await.unwrap();
 
@@ -49,15 +41,5 @@ async fn test_temp_table(session_token_enabled: bool) {
     let row = row.unwrap();
     let (val,): (i64,) = row.try_into().unwrap();
     assert_eq!(val, 2);
-    drop(conn);
-    sleep(Duration::from_millis(100)).await;
-}
-#[tokio::test]
-async fn test_temp_table_session_token() {
-    test_temp_table(true).await;
-}
-
-#[tokio::test]
-async fn test_temp_table_password() {
-    test_temp_table(false).await;
+    conn.close().await.unwrap();
 }

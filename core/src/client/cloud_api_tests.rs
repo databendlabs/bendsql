@@ -466,7 +466,6 @@ async fn cloud_login_is_skipped_without_importing_manage_capabilities() {
     let mut client = client(&server).await;
     client.login().await.unwrap();
     assert!(client.server_version.is_none());
-    assert!(client.session_token_info.is_none());
     assert!(!client.capability.arrow_data);
     assert!(!client.capability.server_side_params);
     assert!(!client.capability.streaming_load);
@@ -1028,12 +1027,7 @@ async fn cloud_query_lifecycle_stays_on_webapi_without_login() {
 
 #[tokio::test]
 async fn cloud_dsn_forces_login_disabled_even_when_explicitly_enabled() {
-    for option in [
-        "",
-        "&login=enable",
-        "&login=disable",
-        "&login=enable&session_token=enable",
-    ] {
+    for option in ["", "&login=enable", "&login=disable"] {
         let client = APIClient::from_dsn(&format!(
             "databend://api.databend.com/default?org={ORG}&cloud_api_token={TOKEN}{option}"
         ))
@@ -1041,7 +1035,6 @@ async fn cloud_dsn_forces_login_disabled_even_when_explicitly_enabled() {
         .unwrap();
         assert!(client.disable_login);
         assert!(client.server_version.is_none());
-        assert!(client.session_token_info.is_none());
         assert!(client.is_cloud_webapi());
     }
     for (option, disabled) in [("enable", false), ("disable", true)] {
@@ -1470,7 +1463,7 @@ async fn cloud_submission_retries_connect_errors_before_sending_bytes() {
         .build()
         .unwrap();
     let err = client
-        .query_request_helper(request, true, false, false, RequestKind::QueryStart, None)
+        .query_request_helper(request, true, RequestKind::QueryStart)
         .await
         .err()
         .unwrap();

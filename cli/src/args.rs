@@ -40,10 +40,7 @@ impl std::fmt::Debug for ConnectionArgs {
             .args
             .iter()
             .map(|(key, value)| {
-                let value = if matches!(
-                    key.as_str(),
-                    "cloud_api_token" | "access_token" | "session_token"
-                ) {
+                let value = if matches!(key.as_str(), "cloud_api_token" | "access_token") {
                     "**REDACTED**"
                 } else {
                     value.as_str()
