@@ -724,7 +724,10 @@ impl APIClient {
                 cli_builder = cli_builder.add_root_certificate(cert);
             }
         }
-        self.cli = self.transport.configure_client(cli_builder).build()?;
+        self.cli = self
+            .transport
+            .configure_client(cli_builder, &self.endpoint)
+            .build()?;
         Ok(())
     }
 

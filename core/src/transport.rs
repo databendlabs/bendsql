@@ -15,14 +15,13 @@
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use reqwest::cookie::CookieStore;
+use reqwest::cookie::Jar;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE};
 use reqwest::{ClientBuilder, Method, Request, StatusCode};
 use url::Url;
 
 use crate::cloud_api::HEADER_CLOUD_WAREHOUSE;
 use crate::error::{Error, RequestKind, Result};
-use crate::global_cookie_store::GlobalCookieStore;
 use crate::response::QueryResponse;
 
 pub(crate) const HEADER_CLIENT_CAPS: &str = "X-DATABEND-CLIENT-CAPS";
@@ -65,15 +64,11 @@ impl Transport {
         matches!(self, Self::CloudWebApi { .. })
     }
 
-    pub(crate) fn configure_client(&self, builder: ClientBuilder) -> ClientBuilder {
+    pub(crate) fn configure_client(&self, builder: ClientBuilder, endpoint: &Url) -> ClientBuilder {
         match self {
             Self::Native => {
-                let cookies = GlobalCookieStore::new();
-                let cookie = HeaderValue::from_static("cookie_enabled=true");
-                cookies.set_cookies(
-                    &mut [&cookie].into_iter(),
-                    &Url::parse("https://a.com").unwrap(),
-                );
+                let cookies = Jar::default();
+                cookies.add_cookie_str("cookie_enabled=true; Path=/", endpoint);
                 builder.cookie_provider(Arc::new(cookies))
             }
             Self::CloudWebApi { .. } => builder.redirect(reqwest::redirect::Policy::none()),
