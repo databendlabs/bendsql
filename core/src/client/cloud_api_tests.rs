@@ -1027,12 +1027,7 @@ async fn cloud_query_lifecycle_stays_on_webapi_without_login() {
 
 #[tokio::test]
 async fn cloud_dsn_forces_login_disabled_even_when_explicitly_enabled() {
-    for option in [
-        "",
-        "&login=enable",
-        "&login=disable",
-        "&login=enable&session_token=enable",
-    ] {
+    for option in ["", "&login=enable", "&login=disable"] {
         let client = APIClient::from_dsn(&format!(
             "databend://api.databend.com/default?org={ORG}&cloud_api_token={TOKEN}{option}"
         ))
@@ -1468,7 +1463,7 @@ async fn cloud_submission_retries_connect_errors_before_sending_bytes() {
         .build()
         .unwrap();
     let err = client
-        .query_request_helper(request, true, false, RequestKind::QueryStart)
+        .query_request_helper(request, true, RequestKind::QueryStart)
         .await
         .err()
         .unwrap();

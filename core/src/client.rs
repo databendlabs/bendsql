@@ -20,7 +20,7 @@ use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
 use crate::cloud_api::{is_cloud_webapi_host, CloudApiAuth, DEFAULT_CLOUD_WEBAPI_HOST};
 use crate::error_code::ResponseWithErrorCode;
-use crate::login::{LoginRequest, LoginResponseResult};
+use crate::login::{decode_login_version, LoginRequest};
 use crate::presign::{presign_upload_to_stage, PresignMode, PresignedResponse, Reader};
 use crate::response::LoadResponse;
 use crate::stage::StageLocation;
@@ -611,8 +611,6 @@ impl APIClient {
                         }
                     }
                 }
-                // Ignore the retired option rather than sending it as a SQL setting.
-                "session_token" => {}
                 "server_side_params" => {
                     client.disable_server_side_params = match v.as_ref() {
                         "disable" => true,
@@ -999,7 +997,6 @@ impl APIClient {
             .query_request_helper_with_replay(
                 request,
                 true,
-                true,
                 RequestKind::QueryStart,
                 Some(&mut submission),
                 !is_password_change && self.transport.allow_replay(&RequestKind::QueryStart),
@@ -1171,7 +1168,6 @@ impl APIClient {
             .query_request_helper(
                 request,
                 self.transport.retry_page_503(),
-                true,
                 RequestKind::QueryPage,
             )
             .await?;
@@ -1183,7 +1179,7 @@ impl APIClient {
             if endpoint.origin() == self.endpoint.origin() {
                 let request = auth.wrap_with_password(builder(), password).build()?;
                 response = self
-                    .query_request_helper(request, false, false, RequestKind::QueryPage)
+                    .query_request_helper(request, false, RequestKind::QueryPage)
                     .await?;
             }
         }
@@ -1306,14 +1302,7 @@ impl APIClient {
             .timeout(self.page_request_timeout)
             .build()?;
         let response = self
-            .query_request_helper_with_replay(
-                request,
-                true,
-                true,
-                RequestKind::QueryStart,
-                None,
-                false,
-            )
+            .query_request_helper_with_replay(request, true, RequestKind::QueryStart, None, false)
             .await?;
         let mut resp = self.decode_detached_page(response)?;
         while let Some(next_uri) = resp.next_uri.clone() {
@@ -1380,7 +1369,7 @@ impl APIClient {
                 .timeout(self.page_request_timeout)
                 .build()?;
             let response = self
-                .query_request_helper(request, true, false, request_kind.clone())
+                .query_request_helper(request, true, request_kind.clone())
                 .await?;
             if response.status != StatusCode::OK {
                 return Err(self
@@ -1390,7 +1379,7 @@ impl APIClient {
             }
             return Ok(());
         }
-        let resp = builder.headers(headers.clone()).send().await?;
+        let resp = builder.headers(headers).send().await?;
         if resp.status() != 200 {
             return Err(self
                 .auth
@@ -1666,7 +1655,7 @@ impl APIClient {
             .timeout(self.connect_timeout.saturating_add(Duration::from_secs(10)))
             .build()?;
         let response = self
-            .query_request_helper(request, true, true, RequestKind::Login)
+            .query_request_helper(request, true, RequestKind::Login)
             .await?;
         if response.status == StatusCode::NOT_FOUND {
             info!("login return 404, skip login on the old version server");
@@ -1677,28 +1666,24 @@ impl APIClient {
                 .status_body_to_error(response.status, &response.body)
                 .with_context(RequestKind::Login));
         }
-        if let Some(v) = response.headers.get(HEADER_SESSION_ID) {
-            if let Ok(s) = v.to_str() {
-                self.session_id = s.to_string();
-            }
+        let server_version = decode_login_version(&response.body).map_err(|error| {
+            self.auth
+                .sanitize_error(error)
+                .with_context(RequestKind::Login)
+        })?;
+        if let Some(session_id) = response
+            .headers
+            .get(HEADER_SESSION_ID)
+            .and_then(|value| value.to_str().ok())
+        {
+            self.session_id = session_id.to_string();
         }
-
-        let response = self.decode_response(&response.body)?;
-        match response {
-            LoginResponseResult::Err { error } => {
-                return Err(self.auth.sanitize_error(Error::AuthFailure(error)))
-            }
-            LoginResponseResult::Ok(info) => {
-                let server_version = info
-                    .version
-                    .parse()
-                    .map_err(|e| Error::Decode(format!("invalid server version: {e}")))?;
-                self.capability = self.capability_for(&server_version);
-                self.server_version = Some(server_version.clone());
-                let session_id = self.session_id.as_str();
-                info!("[session {session_id}] login success, version = {server_version}");
-            }
-        }
+        self.capability = self.capability_for(&server_version);
+        info!(
+            "[session {}] login success, version = {server_version}",
+            self.session_id
+        );
+        self.server_version = Some(server_version);
         Ok(())
     }
 
@@ -1741,7 +1726,7 @@ impl APIClient {
                 headers.insert(HEADER_STICKY_NODE, node_id.parse()?);
             }
         }
-        let builder = self.cli.post(endpoint.clone()).json(&body).headers(headers);
+        let builder = self.cli.post(endpoint).json(&body).headers(headers);
         let builder = if self.transport.is_cloud_webapi() {
             builder.timeout(self.page_request_timeout)
         } else {
@@ -1749,7 +1734,7 @@ impl APIClient {
         };
         let request = self.auth.wrap(builder)?.build()?;
         let response = self
-            .query_request_helper(request, true, true, RequestKind::Heartbeat)
+            .query_request_helper(request, true, RequestKind::Heartbeat)
             .await?;
         if response.status != StatusCode::OK {
             return Err(self
@@ -1797,7 +1782,7 @@ impl APIClient {
                 headers.insert(HEADER_STICKY_NODE, node_id.parse()?);
             }
         }
-        let builder = self.cli.post(endpoint.clone()).headers(headers.clone());
+        let builder = self.cli.post(endpoint).headers(headers);
         let builder = if self.transport.is_cloud_webapi() {
             builder.timeout(self.page_request_timeout)
         } else {
@@ -1822,14 +1807,12 @@ impl APIClient {
         &self,
         request: Request,
         retry_if_503: bool,
-        reload_auth_if_401: bool,
         request_kind: RequestKind,
     ) -> Result<HttpResponseData> {
         let allow_replay = self.transport.allow_replay(&request_kind);
         self.query_request_helper_with_replay(
             request,
             retry_if_503,
-            reload_auth_if_401,
             request_kind,
             None,
             allow_replay,
@@ -1843,7 +1826,6 @@ impl APIClient {
         &self,
         mut request: Request,
         retry_if_503: bool,
-        reload_auth_if_401: bool,
         request_kind: RequestKind,
         mut submission: Option<&mut QuerySubmission<'_>>,
         allow_replay: bool,
@@ -1965,14 +1947,10 @@ impl APIClient {
                 continue;
             }
 
-            if status == StatusCode::UNAUTHORIZED && reload_auth_if_401 && self.auth.can_reload() {
-                if retries >= max_retries.saturating_sub(1) {
-                    return Ok(HttpResponseData {
-                        status,
-                        headers,
-                        body,
-                    });
-                }
+            if status == StatusCode::UNAUTHORIZED
+                && self.auth.can_reload()
+                && retries < max_retries.saturating_sub(1)
+            {
                 retries += 1;
                 request.headers_mut().remove(reqwest::header::AUTHORIZATION);
                 let builder = RequestBuilder::from_parts(self.cli.clone(), request);
@@ -2308,16 +2286,6 @@ mod test {
 
         let client = APIClient::from_dsn("databend://app.databend.com/db1").await?;
         assert_eq!(client.current_catalog(), None);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn parse_dsn_does_not_forward_legacy_session_token() -> Result<()> {
-        for value in ["enable", "disable"] {
-            let dsn = format!("databend://localhost/?session_token={value}");
-            let client = APIClient::from_dsn(&dsn).await?;
-            assert!(client.session_state().settings.is_none());
-        }
         Ok(())
     }
 

@@ -13,13 +13,11 @@
 // limitations under the License.
 
 use databend_driver::Client;
-use std::time::Duration;
-use tokio::time::sleep;
 
 use crate::common::DEFAULT_DSN;
 
 #[tokio::test]
-async fn test_temp_table_password() {
+async fn temp_table_persists_across_requests() {
     let dsn = option_env!("TEST_DATABEND_DSN").unwrap_or(DEFAULT_DSN);
     if dsn.starts_with("databend+flight://") {
         return;
@@ -43,6 +41,5 @@ async fn test_temp_table_password() {
     let row = row.unwrap();
     let (val,): (i64,) = row.try_into().unwrap();
     assert_eq!(val, 2);
-    drop(conn);
-    sleep(Duration::from_millis(100)).await;
+    conn.close().await.unwrap();
 }

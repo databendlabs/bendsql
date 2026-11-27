@@ -5,8 +5,8 @@
 ### Authentication
 
 - Native REST connections use the configured credentials for every request.
-  Session-token authentication and its refresh endpoint are no longer used;
-  existing `session_token` DSN options are ignored and can be removed.
+  Session-token authentication and refresh have been removed. Remove
+  `session_token` from existing DSNs; it is no longer a client option.
   Version negotiation and keep-alive for stateful sessions are unchanged.
 - The Rust client's `RequestKind::SessionRefresh` variant has been removed.
 
