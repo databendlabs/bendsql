@@ -19,11 +19,8 @@ use crate::auth::{
 use crate::capability::Capability;
 use crate::client_mgr::{GLOBAL_CLIENT_MANAGER, GLOBAL_RUNTIME};
 use crate::cloud_api::{is_cloud_webapi_host, CloudApiAuth, DEFAULT_CLOUD_WEBAPI_HOST};
-use crate::error_code::{need_refresh_token, ResponseWithErrorCode};
-use crate::login::{
-    LoginRequest, LoginResponseResult, RefreshResponse, RefreshSessionTokenRequest,
-    SessionTokenInfo,
-};
+use crate::error_code::ResponseWithErrorCode;
+use crate::login::{LoginRequest, LoginResponseResult};
 use crate::presign::{presign_upload_to_stage, PresignMode, PresignedResponse, Reader};
 use crate::response::LoadResponse;
 use crate::stage::StageLocation;
@@ -297,9 +294,7 @@ pub struct APIClient {
 
     disable_login: bool,
     query_result_format: String,
-    disable_session_token: bool,
     disable_server_side_params: bool,
-    session_token_info: Option<Arc<Mutex<(SessionTokenInfo, Instant)>>>,
 
     closed: AtomicBool,
 
@@ -616,17 +611,8 @@ impl APIClient {
                         }
                     }
                 }
-                "session_token" => {
-                    client.disable_session_token = match v.as_ref() {
-                        "disable" => true,
-                        "enable" => false,
-                        _ => {
-                            return Err(Error::BadArgument(format!(
-                                "Invalid value for session_token: {v}"
-                            )))
-                        }
-                    }
-                }
+                // Ignore the retired option rather than sending it as a SQL setting.
+                "session_token" => {}
                 "server_side_params" => {
                     client.disable_server_side_params = match v.as_ref() {
                         "disable" => true,
@@ -911,18 +897,6 @@ impl APIClient {
         }
     }
 
-    fn wrap_auth_or_session_token(&self, builder: RequestBuilder) -> Result<RequestBuilder> {
-        if !self.transport.uses_native_session_tokens() {
-            return self.auth.wrap(builder);
-        }
-        if let Some(info) = &self.session_token_info {
-            let info = info.lock();
-            Ok(builder.bearer_auth(info.0.session_token.clone()))
-        } else {
-            self.auth.wrap(builder)
-        }
-    }
-
     async fn start_query_pages(
         self: &Arc<Self>,
         sql: &str,
@@ -930,23 +904,20 @@ impl APIClient {
         need_progress: bool,
         params: Option<serde_json::Value>,
     ) -> Result<Pages> {
-        let pending_password = if self.session_token_info.is_none() {
-            self.auth
-                .as_basic()
-                .filter(|_| looks_like_alter_user(sql))
-                .and_then(|auth| {
-                    let dialect = self
-                        .session_state
-                        .lock()
-                        .settings
-                        .as_ref()
-                        .and_then(|s| s.get("sql_dialect"))
-                        .cloned();
-                    auth.password_change(sql, dialect.as_deref())
-                })
-        } else {
-            None
-        };
+        let pending_password = self
+            .auth
+            .as_basic()
+            .filter(|_| looks_like_alter_user(sql))
+            .and_then(|auth| {
+                let dialect = self
+                    .session_state
+                    .lock()
+                    .settings
+                    .as_ref()
+                    .and_then(|s| s.get("sql_dialect"))
+                    .cloned();
+                auth.password_change(sql, dialect.as_deref())
+            });
         let mut change = pending_password
             .map(|password| PasswordChange::begin(self.clone(), password))
             .transpose()?;
@@ -1017,16 +988,16 @@ impl APIClient {
                 headers.insert(HEADER_STICKY_NODE, node_id.parse()?);
             }
         }
-        let mut builder = self.cli.post(endpoint.clone()).json(&req);
-        builder = self.wrap_auth_or_session_token(builder)?;
-        let request = builder
-            .headers(headers.clone())
+        let builder = self.cli.post(endpoint).json(&req);
+        let request = self
+            .auth
+            .wrap(builder)?
+            .headers(headers)
             .timeout(self.page_request_timeout)
             .build()?;
         let response = self
             .query_request_helper_with_replay(
                 request,
-                true,
                 true,
                 true,
                 RequestKind::QueryStart,
@@ -1195,15 +1166,13 @@ impl APIClient {
             }
             builder
         };
-        let request = self.wrap_auth_or_session_token(builder())?.build()?;
+        let request = self.auth.wrap(builder())?.build()?;
         let mut response = self
             .query_request_helper(
                 request,
                 self.transport.retry_page_503(),
                 true,
-                true,
                 RequestKind::QueryPage,
-                None,
             )
             .await?;
         // The server may have changed the password before we receive the Succeeded page.
@@ -1214,14 +1183,7 @@ impl APIClient {
             if endpoint.origin() == self.endpoint.origin() {
                 let request = auth.wrap_with_password(builder(), password).build()?;
                 response = self
-                    .query_request_helper(
-                        request,
-                        false,
-                        false,
-                        false,
-                        RequestKind::QueryPage,
-                        None,
-                    )
+                    .query_request_helper(request, false, false, RequestKind::QueryPage)
                     .await?;
             }
         }
@@ -1314,9 +1276,8 @@ impl APIClient {
     }
 
     /// Reuse the transport's client session (native cookie or Cloud
-    /// `X-DATABEND-SESSION`), including its normal refresh. That session
-    /// identifies the client; transaction continuation uses the SQL request's
-    /// JSON session state instead.
+    /// `X-DATABEND-SESSION`) to identify the client. Transaction continuation
+    /// uses the SQL request's JSON session state instead.
     ///
     /// Copy only the current roles into the JSON session for privilege checks,
     /// so the statement cannot join the caller's transaction. Do not apply the
@@ -1339,14 +1300,14 @@ impl APIClient {
         let headers = self.make_headers(Some(&query_id))?;
         let builder = self.cli.post(self.endpoint.join("v1/query")?).json(&req);
         let request = self
-            .wrap_auth_or_session_token(builder)?
+            .auth
+            .wrap(builder)?
             .headers(headers)
             .timeout(self.page_request_timeout)
             .build()?;
         let response = self
             .query_request_helper_with_replay(
                 request,
-                true,
                 true,
                 true,
                 RequestKind::QueryStart,
@@ -1412,14 +1373,14 @@ impl APIClient {
         if let Some(node_id) = node_id {
             builder = builder.header(HEADER_STICKY_NODE, node_id)
         }
-        builder = self.wrap_auth_or_session_token(builder)?;
+        let builder = self.auth.wrap(builder)?;
         if self.transport.retry_query_termination() {
             let request = builder
                 .headers(headers)
                 .timeout(self.page_request_timeout)
                 .build()?;
             let response = self
-                .query_request_helper(request, true, false, false, request_kind.clone(), None)
+                .query_request_helper(request, true, false, request_kind.clone())
                 .await?;
             if response.status != StatusCode::OK {
                 return Err(self
@@ -1597,9 +1558,6 @@ impl APIClient {
         size: u64,
     ) -> Result<()> {
         info!("upload to stage with stream: {stage}, size: {size}");
-        if let Some(info) = self.need_pre_refresh_session().await {
-            self.refresh_session_token(info).await?;
-        }
         let endpoint = self.endpoint.join("v1/upload_to_stage")?;
         let location = StageLocation::try_from(stage)?;
         let query_id = self.gen_query_id();
@@ -1608,8 +1566,7 @@ impl APIClient {
         let stream = Body::wrap_stream(ReaderStream::new(data));
         let part = Part::stream_with_length(stream, size).file_name(location.path);
         let form = Form::new().part("upload", part);
-        let mut builder = self.cli.put(endpoint.clone());
-        builder = self.wrap_auth_or_session_token(builder)?;
+        let builder = self.auth.wrap(self.cli.put(endpoint))?;
         let resp = builder.headers(headers).multipart(form).send().await?;
         let status = resp.status();
         if status != 200 {
@@ -1655,8 +1612,7 @@ impl APIClient {
         let body = Body::wrap_stream(ReaderStream::new(data));
         let part = Part::stream(body).file_name(file_name.to_string());
         let endpoint = self.endpoint.join("v1/streaming_load")?;
-        let mut builder = self.cli.put(endpoint.clone());
-        builder = self.wrap_auth_or_session_token(builder)?;
+        let builder = self.auth.wrap(self.cli.put(endpoint))?;
         let query_id = self.gen_query_id();
         let mut headers = self.make_headers(Some(&query_id))?;
         headers.insert(HEADER_SQL, sql.parse()?);
@@ -1697,17 +1653,20 @@ impl APIClient {
         let endpoint = self.endpoint.join("/v1/session/login")?;
         let headers = self.make_headers(None)?;
         let body = LoginRequest::from(&*self.session_state.lock());
-        let mut builder = self.cli.post(endpoint.clone()).json(&body);
-        if self.disable_session_token {
-            builder = builder.query(&[("disable_session_token", true)]);
-        }
-        let builder = self.auth.wrap(builder)?;
-        let request = builder
-            .headers(headers.clone())
+        // Keep capability negotiation without asking the server to issue tokens.
+        let builder = self
+            .cli
+            .post(endpoint)
+            .json(&body)
+            .query(&[("disable_session_token", true)]);
+        let request = self
+            .auth
+            .wrap(builder)?
+            .headers(headers)
             .timeout(self.connect_timeout.saturating_add(Duration::from_secs(10)))
             .build()?;
         let response = self
-            .query_request_helper(request, true, false, true, RequestKind::Login, None)
+            .query_request_helper(request, true, true, RequestKind::Login)
             .await?;
         if response.status == StatusCode::NOT_FOUND {
             info!("login return 404, skip login on the old version server");
@@ -1737,14 +1696,7 @@ impl APIClient {
                 self.capability = self.capability_for(&server_version);
                 self.server_version = Some(server_version.clone());
                 let session_id = self.session_id.as_str();
-                if let Some(tokens) = info.tokens {
-                    info!(
-                        "[session {session_id}] login success with session token version = {server_version}",
-                    );
-                    self.session_token_info = Some(Arc::new(Mutex::new((tokens, Instant::now()))))
-                } else {
-                    info!("[session {session_id}] login success, version = {server_version}");
-                }
+                info!("[session {session_id}] login success, version = {server_version}");
             }
         }
         Ok(())
@@ -1795,9 +1747,9 @@ impl APIClient {
         } else {
             builder
         };
-        let request = self.wrap_auth_or_session_token(builder)?.build()?;
+        let request = self.auth.wrap(builder)?.build()?;
         let response = self
-            .query_request_helper(request, true, false, true, RequestKind::Heartbeat, None)
+            .query_request_helper(request, true, true, RequestKind::Heartbeat)
             .await?;
         if response.status != StatusCode::OK {
             return Err(self
@@ -1851,8 +1803,7 @@ impl APIClient {
         } else {
             builder
         };
-        let builder = self.wrap_auth_or_session_token(builder)?;
-        let mut req = builder.build()?;
+        let mut req = self.auth.wrap(builder)?.build()?;
         // Logout uses the existing direct-send close path rather than the query
         // helper, so attach the current opaque Cloud session explicitly.
         self.transport.prepare_request(&mut req, &self.endpoint)?;
@@ -1863,123 +1814,47 @@ impl APIClient {
         if !self.transport.can_use_session_lifecycle() {
             return false;
         }
-        self.session_token_info.is_some()
-            || self.session_state.lock().need_keep_alive.unwrap_or(false)
+        self.session_state.lock().need_keep_alive.unwrap_or(false)
     }
 
-    async fn refresh_session_token(
-        &self,
-        self_login_info: Arc<parking_lot::Mutex<(SessionTokenInfo, Instant)>>,
-    ) -> Result<()> {
-        let (session_token_info, _) = { self_login_info.lock().clone() };
-        let endpoint = self.endpoint.join("/v1/session/refresh")?;
-        let body = RefreshSessionTokenRequest {
-            session_token: session_token_info.session_token.clone(),
-        };
-        let headers = self.make_headers(None)?;
-        let request = self
-            .cli
-            .post(endpoint.clone())
-            .json(&body)
-            .headers(headers.clone())
-            .bearer_auth(session_token_info.refresh_token.clone())
-            .timeout(self.connect_timeout.saturating_add(Duration::from_secs(10)))
-            .build()?;
-        let response = self
-            .query_request_helper(
-                request,
-                true,
-                false,
-                false,
-                RequestKind::SessionRefresh,
-                None,
-            )
-            .await?;
-        if response.status != StatusCode::OK {
-            return Err(self
-                .status_body_to_error(response.status, &response.body)
-                .with_context(RequestKind::SessionRefresh));
-        }
-        let response = self.decode_response(&response.body)?;
-        match response {
-            RefreshResponse::Err { error } => Err(Error::AuthFailure(error)),
-            RefreshResponse::Ok { tokens } => {
-                *self_login_info.lock() = (tokens, Instant::now());
-                Ok(())
-            }
-        }
-    }
-
-    async fn need_pre_refresh_session(&self) -> Option<Arc<Mutex<(SessionTokenInfo, Instant)>>> {
-        if let Some(info) = &self.session_token_info {
-            let (start, ttl) = {
-                let guard = info.lock();
-                (guard.1, guard.0.session_token_ttl_in_secs)
-            };
-            let expired = match start.checked_add(Duration::from_secs(ttl)) {
-                Some(expires) => Instant::now() > expires,
-                // A TTL that would overflow `Instant` is treated as expired.
-                None => true,
-            };
-            if expired {
-                return Some(info.clone());
-            }
-        }
-        None
-    }
-
-    /// Send request with retry and return raw HTTP status/headers/body.
-    ///
-    /// retry on
-    ///   - network/request/body transient errors
-    ///   - (optional) 503
-    ///
-    /// refresh databend token or reload jwt token if needed.
+    /// Send a request with the transport's default retry policy.
     async fn query_request_helper(
         &self,
         request: Request,
         retry_if_503: bool,
-        refresh_if_401: bool,
         reload_auth_if_401: bool,
         request_kind: RequestKind,
-        submission: Option<&mut QuerySubmission<'_>>,
     ) -> Result<HttpResponseData> {
-        // Only query submission can have ambiguous SQL side effects. Connect
-        // errors precede sending bytes; login/page/final can be safely repeated.
         let allow_replay = self.transport.allow_replay(&request_kind);
         self.query_request_helper_with_replay(
             request,
             retry_if_503,
-            refresh_if_401,
             reload_auth_if_401,
             request_kind,
-            submission,
+            None,
             allow_replay,
         )
         .await
     }
 
-    /// `query_request_helper` with an explicit policy: when `allow_replay` is
-    /// false, a failed attempt is retried only if it is proven unsent.
-    #[allow(clippy::too_many_arguments)]
+    /// `query_request_helper` with an explicit policy for replay after ambiguous
+    /// failures. Connect failures and authentication rejections may still be retried.
     async fn query_request_helper_with_replay(
         &self,
         mut request: Request,
         retry_if_503: bool,
-        refresh_if_401: bool,
         reload_auth_if_401: bool,
         request_kind: RequestKind,
         mut submission: Option<&mut QuerySubmission<'_>>,
         allow_replay: bool,
     ) -> Result<HttpResponseData> {
-        let mut refreshed = false;
         let mut retries = 0;
         let max_retries = self.retry_count;
         let retry_delay = Duration::from_secs(self.retry_delay_secs);
 
         loop {
-            // Refresh before each attempt: a page/final retry may follow a
-            // session refresh header received even when its body read failed.
+            // Use the latest Cloud session header on retries, even if the
+            // previous response body could not be read.
             self.transport
                 .prepare_request(&mut request, &self.endpoint)?;
             let req = request.try_clone().expect("request not cloneable");
@@ -2090,60 +1965,27 @@ impl APIClient {
                 continue;
             }
 
-            if status == StatusCode::UNAUTHORIZED {
+            if status == StatusCode::UNAUTHORIZED && reload_auth_if_401 && self.auth.can_reload() {
+                if retries >= max_retries.saturating_sub(1) {
+                    return Ok(HttpResponseData {
+                        status,
+                        headers,
+                        body,
+                    });
+                }
+                retries += 1;
                 request.headers_mut().remove(reqwest::header::AUTHORIZATION);
-                let unauthorized_error =
-                    serde_json::from_slice::<ResponseWithErrorCode>(&body).ok();
-                if let Some(session_token_info) = &self.session_token_info {
-                    let should_refresh = unauthorized_error
-                        .as_ref()
-                        .map(|r| need_refresh_token(r.error.code))
-                        .unwrap_or(false);
-                    if refresh_if_401 && should_refresh && !refreshed {
-                        Box::pin(self.refresh_session_token(session_token_info.clone())).await?;
-                        refreshed = true;
-                        retries = 0;
-                        // The Authorization header was stripped above; re-apply the
-                        // refreshed session token so the retried request is authenticated.
-                        let builder = RequestBuilder::from_parts(
-                            HttpClient::new(),
-                            request.try_clone().ok_or_else(|| {
-                                Error::BadArgument("request not cloneable".to_string())
-                            })?,
-                        );
-                        request = self.wrap_auth_or_session_token(builder)?.build()?;
-                        warn!(
-                            "retry for {} due to: session token expired and refreshed, retrying after {} seconds",
-                            request.url(),
-                            retry_delay.as_secs()
-                        );
-                        sleep(jitter(retry_delay)).await;
-                        continue;
-                    }
-                }
-                if reload_auth_if_401 && self.auth.can_reload() {
-                    if retries >= max_retries.saturating_sub(1) {
-                        return Ok(HttpResponseData {
-                            status,
-                            headers,
-                            body,
-                        });
-                    }
-                    retries += 1;
-                    let builder =
-                        RequestBuilder::from_parts(HttpClient::new(), request.try_clone().unwrap());
-                    let builder = self.auth.wrap(builder)?;
-                    request = builder.build()?;
-                    warn!(
-                        "retry {}/{} for {} due to: authentication token reloaded, retrying after {} seconds",
-                        retries,
-                        max_retries,
-                        request.url(),
-                        retry_delay.as_secs()
-                    );
-                    sleep(jitter(retry_delay)).await;
-                    continue;
-                }
+                let builder = RequestBuilder::from_parts(self.cli.clone(), request);
+                request = self.auth.wrap(builder)?.build()?;
+                warn!(
+                    "retry {}/{} for {} due to: authentication token reloaded, retrying after {} seconds",
+                    retries,
+                    max_retries,
+                    request.url(),
+                    retry_delay.as_secs()
+                );
+                sleep(jitter(retry_delay)).await;
+                continue;
             }
 
             self.transport
@@ -2344,11 +2186,9 @@ impl Default for APIClient {
             presign: Mutex::new(PresignMode::Auto),
             route_hint: RouteHintGenerator::new(),
             last_node_id: Default::default(),
-            disable_session_token: true,
             disable_server_side_params: false,
             disable_login: false,
             query_result_format: "json".to_string(),
-            session_token_info: None,
             closed: AtomicBool::new(false),
             last_query_id: Default::default(),
             owned_queries: Default::default(),
@@ -2436,49 +2276,6 @@ mod test {
         assert!(!message.contains("retry_times="), "{message}");
     }
 
-    // Run by `make -C tests test-core` after the real Databend server starts.
-    #[tokio::test]
-    #[ignore = "requires a Databend server"]
-    async fn refresh_session_token_against_server() {
-        let dsn = std::env::var("TEST_DATABEND_DSN")
-            .unwrap_or_else(|_| "databend://root:@localhost:8000/default?sslmode=disable".into());
-        let mut client = APIClient::from_dsn(&dsn).await.unwrap();
-        // Opt in for this test only; leave the default client behavior unchanged.
-        client.disable_session_token = false;
-        client.build_client(None).await.unwrap();
-        assert!(client.login().await.is_ok(), "session-token login failed");
-        let state = client
-            .session_token_info
-            .clone()
-            .expect("login must issue tokens");
-
-        for _ in 0..2 {
-            let (previous, acquired) = state.lock().clone();
-            let before = Instant::now();
-            // Exercise the production refresh request and response decoder, not
-            // a separate HTTP implementation. No need to wait for token expiry.
-            assert!(
-                client.refresh_session_token(state.clone()).await.is_ok(),
-                "session-token refresh failed"
-            );
-            {
-                let (tokens, refreshed) = &*state.lock();
-                // Do not print real credentials on assertion failures.
-                assert!(tokens.session_token != previous.session_token);
-                assert!(tokens.refresh_token != previous.refresh_token);
-                assert!(*refreshed >= before && *refreshed > acquired);
-            }
-            // Each query uses the refreshed session token; the second refresh
-            // also proves the new refresh token was saved and is usable.
-            let result = client
-                .start_query_inner("SELECT 1", None, false, None)
-                .await;
-            assert!(result.is_ok(), "query after refresh failed");
-            assert_eq!(result.unwrap().0.data, vec![vec![Some("1".into())]]);
-        }
-        client.close().await;
-    }
-
     #[tokio::test]
     async fn parse_dsn() -> Result<()> {
         let dsn = "databend://username:password@app.databend.com/test?wait_time_secs=10&max_rows_in_buffer=5000000&max_rows_per_page=10000&warehouse=wh&sslmode=disable";
@@ -2511,6 +2308,16 @@ mod test {
 
         let client = APIClient::from_dsn("databend://app.databend.com/db1").await?;
         assert_eq!(client.current_catalog(), None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn parse_dsn_does_not_forward_legacy_session_token() -> Result<()> {
+        for value in ["enable", "disable"] {
+            let dsn = format!("databend://localhost/?session_token={value}");
+            let client = APIClient::from_dsn(&dsn).await?;
+            assert!(client.session_state().settings.is_none());
+        }
         Ok(())
     }
 

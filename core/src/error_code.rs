@@ -15,13 +15,6 @@
 use serde::Deserialize;
 use std::fmt::{Display, Formatter};
 
-const SESSION_TOKEN_EXPIRED: u16 = 5101;
-const SESSION_TOKEN_NOT_FOUND: u16 = 5103;
-
-pub fn need_refresh_token(code: u16) -> bool {
-    code == SESSION_TOKEN_EXPIRED || code == SESSION_TOKEN_NOT_FOUND
-}
-
 #[derive(Deserialize, Debug, Clone)]
 pub struct ErrorCode {
     pub code: u16,

@@ -45,39 +45,14 @@ impl From<&SessionState> for LoginRequest {
     }
 }
 
-fn default_session_token_ttl_in_secs() -> u64 {
-    3600
-}
-
-#[derive(Deserialize, Debug, Clone)]
-pub struct SessionTokenInfo {
-    pub session_token: String,
-    #[serde(default = "default_session_token_ttl_in_secs")]
-    pub session_token_ttl_in_secs: u64,
-    pub refresh_token: String,
-}
-
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug)]
 pub struct LoginResponse {
     pub version: String,
-    pub tokens: Option<SessionTokenInfo>,
 }
 #[derive(Deserialize, Debug)]
 #[serde(untagged)]
 pub enum LoginResponseResult {
     Ok(LoginResponse),
-    Err { error: ErrorCode },
-}
-
-#[derive(Serialize, Debug)]
-pub struct RefreshSessionTokenRequest {
-    pub session_token: String,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-pub enum RefreshResponse {
-    Ok { tokens: SessionTokenInfo },
     Err { error: ErrorCode },
 }
 
